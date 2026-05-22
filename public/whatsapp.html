@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Conversas — PROSPERKT CRM</title>
+<meta name="description" content="Central de conversas WhatsApp integrada ao CRM PROSPERKT.">
+<link rel="stylesheet" href="/css/design-system.css">
+<style>
+/* ─── LAYOUT PRINCIPAL ─── */
+.wa-layout{display:flex;height:calc(100vh - 0px);overflow:hidden;gap:0}
+
+/* ─── PAINEL ESQUERDO — LISTA DE CONVERSAS ─── */
+.wa-sidebar{width:340px;min-width:280px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.wa-sidebar-header{padding:16px;border-bottom:1px solid var(--border);background:var(--surface)}
+.wa-sidebar-title{font-size:.9rem;font-weight:800;color:var(--text-primary);margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.wa-badge-online{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);display:inline-block}
+.wa-search{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;color:var(--text-primary);font-family:inherit;font-size:.82rem;padding:8px 12px 8px 34px;outline:none;width:100%;transition:border-color .2s}
+.wa-search:focus{border-color:var(--green)}
+.wa-search-wrap{position:relative}
+.wa-search-icon{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-muted);pointer-events:none}
+.wa-filters{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.wa-filter-btn{padding:3px 10px;border-radius:20px;border:1px solid var(--border);background:none;color:var(--text-muted);font-size:.7rem;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s}
+.wa-filter-btn.active,.wa-filter-btn:hover{background:var(--green);border-color:var(--green);color:#0D0D0D}
+.wa-conv-list{flex:1;overflow-y:auto;padding:6px}
+.wa-conv-item{display:flex;align-items:center;gap:12px;padding:12px;border-radius:12px;cursor:pointer;transition:all .2s;position:relative;margin-bottom:2px}
+.wa-conv-item:hover{background:var(--surface-2)}
+.wa-conv-item.active{background:rgba(108,255,78,.08);border-left:3px solid var(--green)}
+.wa-conv-avatar{width:44px;height:44px;border-radius:50%;background:var(--grad-brand);display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;color:#0D0D0D;flex-shrink:0;position:relative}
+.wa-conv-status-dot{position:absolute;bottom:1px;right:1px;width:10px;height:10px;border-radius:50%;background:var(--green);border:2px solid var(--surface)}
+.wa-conv-info{flex:1;min-width:0}
+.wa-conv-name{font-size:.84rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px}
+.wa-conv-preview{font-size:.73rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wa-conv-preview.enviada::before{content:'✓ ';color:var(--green)}
+.wa-conv-meta{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0}
+.wa-conv-time{font-size:.67rem;color:var(--text-muted)}
+.wa-unread-badge{background:var(--green);color:#0D0D0D;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:.62rem;font-weight:800}
+.wa-empty-list{text-align:center;padding:40px 20px;color:var(--text-muted);font-size:.85rem}
+
+/* ─── ÁREA CENTRAL — CHAT ─── */
+.wa-chat{flex:1;display:flex;flex-direction:column;background:#0D0D0D;position:relative;min-width:0}
+.wa-chat-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text-muted);gap:14px;text-align:center}
+.wa-chat-empty-icon{font-size:4rem;opacity:.3}
+
+/* ─── HEADER DO CHAT ─── */
+.wa-chat-header{background:var(--surface);border-bottom:1px solid var(--border);padding:12px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+.wa-chat-avatar{width:40px;height:40px;border-radius:50%;background:var(--grad-brand);display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:700;color:#0D0D0D;flex-shrink:0}
+.wa-chat-info{flex:1}
+.wa-chat-name{font-size:.9rem;font-weight:700}
+.wa-chat-sub{font-size:.72rem;color:var(--text-muted);margin-top:1px}
+.wa-chat-sub .online{color:var(--green)}
+.wa-chat-actions{display:flex;gap:8px}
+.wa-icon-btn{background:none;border:none;color:var(--text-muted);cursor:pointer;padding:6px;border-radius:8px;transition:all .15s;display:flex;align-items:center;justify-content:center}
+.wa-icon-btn:hover{background:var(--surface-2);color:var(--text-primary)}
+
+/* ─── MENSAGENS ─── */
+.wa-messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:4px;background:repeating-linear-gradient(135deg,rgba(108,255,78,.006) 0px,rgba(108,255,78,.006) 2px,transparent 2px,transparent 16px)}
+.wa-date-sep{text-align:center;margin:12px 0;position:relative}
+.wa-date-sep span{background:rgba(255,255,255,.07);backdrop-filter:blur(8px);border:1px solid var(--border);border-radius:20px;padding:3px 14px;font-size:.7rem;color:var(--text-muted);font-weight:600}
+.wa-msg{display:flex;margin-bottom:2px;max-width:100%}
+.wa-msg.recebida{justify-content:flex-start}
+.wa-msg.enviada{justify-content:flex-end}
+.wa-bubble{max-width:70%;min-width:80px;padding:8px 12px;border-radius:16px;position:relative;word-break:break-word}
+.wa-msg.recebida .wa-bubble{background:var(--surface);border:1px solid var(--border);border-top-left-radius:4px}
+.wa-msg.enviada .wa-bubble{background:linear-gradient(135deg,#1a5c12,#22740e);border:1px solid rgba(108,255,78,.2);border-bottom-right-radius:4px}
+.wa-bubble-text{font-size:.84rem;line-height:1.45;color:var(--text-primary)}
+.wa-bubble-footer{display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:4px}
+.wa-bubble-time{font-size:.62rem;color:rgba(255,255,255,.45)}
+.wa-bubble-status{font-size:.7rem}
+.wa-bubble-status.enviado{color:rgba(255,255,255,.4)}
+.wa-bubble-status.entregue{color:rgba(255,255,255,.5)}
+.wa-bubble-status.lido{color:#4FC3F7}
+/* Áudio */
+.wa-audio{display:flex;align-items:center;gap:10px;padding:4px 0}
+.wa-audio-play{width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.1);border:none;color:var(--text-primary);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s}
+.wa-audio-play:hover{background:rgba(255,255,255,.2)}
+.wa-audio-bar{flex:1;height:3px;background:rgba(255,255,255,.2);border-radius:2px;position:relative}
+.wa-audio-bar-fill{height:100%;background:var(--green);border-radius:2px;width:0%}
+/* Imagem */
+.wa-img{max-width:240px;border-radius:10px;cursor:pointer;transition:opacity .2s}
+.wa-img:hover{opacity:.85}
+/* Sistema */
+.wa-msg.sistema{justify-content:center}
+.wa-msg.sistema .wa-bubble{background:rgba(255,255,255,.05);border:none;font-size:.72rem;color:var(--text-muted);text-align:center}
+/* Digitando */
+.wa-typing{display:flex;align-items:center;gap:4px;padding:10px 14px;background:var(--surface);border-radius:16px;border-top-left-radius:4px;width:fit-content;margin-bottom:4px;display:none}
+.wa-typing.visible{display:flex}
+.wa-typing span{width:6px;height:6px;border-radius:50%;background:var(--text-muted);animation:waTyping 1.4s infinite ease-in-out}
+.wa-typing span:nth-child(1){animation-delay:0s}
+.wa-typing span:nth-child(2){animation-delay:.2s}
+.wa-typing span:nth-child(3){animation-delay:.4s}
+@keyframes waTyping{0%,60%,100%{transform:scale(.8);opacity:.4}30%{transform:scale(1);opacity:1}}
+
+/* ─── INPUT ─── */
+.wa-input-bar{background:var(--surface);border-top:1px solid var(--border);padding:12px 16px;display:flex;align-items:flex-end;gap:10px;flex-shrink:0}
+.wa-input-wrap{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:24px;padding:10px 16px;display:flex;align-items:flex-end;gap:8px;transition:border-color .2s}
+.wa-input-wrap:focus-within{border-color:var(--green)}
+.wa-textarea{flex:1;background:none;border:none;outline:none;color:var(--text-primary);font-family:inherit;font-size:.875rem;resize:none;max-height:100px;overflow-y:auto;line-height:1.4;min-height:20px}
+.wa-textarea::placeholder{color:var(--text-muted)}
+.wa-send-btn{width:44px;height:44px;border-radius:50%;background:var(--grad-brand);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .2s;box-shadow:0 0 0 rgba(108,255,78,0)}
+.wa-send-btn:hover{box-shadow:0 0 16px rgba(108,255,78,.4);transform:scale(1.06)}
+.wa-send-btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none}
+.wa-attach-btn{background:none;border:none;color:var(--text-muted);cursor:pointer;padding:6px;border-radius:50%;transition:all .15s}
+.wa-attach-btn:hover{color:var(--green);background:rgba(108,255,78,.1)}
+
+/* ─── PAINEL DIREITO — DETALHES DO LEAD ─── */
+.wa-info-panel{width:280px;min-width:240px;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0;display:none}
+.wa-info-panel.open{display:flex}
+.wa-info-header{padding:16px;border-bottom:1px solid var(--border)}
+.wa-info-section{padding:14px 16px;border-bottom:1px solid var(--border)}
+.wa-info-label{font-size:.62rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
+.wa-info-value{font-size:.84rem;color:var(--text-primary);font-weight:500}
+
+/* ─── MODAL NOVA CONVERSA ─── */
+.modal-ov{position:fixed;inset:0;background:rgba(0,0,0,.8);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:900;padding:16px;opacity:0;pointer-events:none;transition:opacity .2s}
+.modal-ov.open{opacity:1;pointer-events:all}
+.modal-box{background:var(--surface);border:1px solid var(--border-hover);border-radius:20px;padding:28px;width:100%;max-width:440px;box-shadow:var(--shadow-lg);transform:translateY(20px);transition:transform .3s cubic-bezier(.16,1,.3,1)}
+.modal-ov.open .modal-box{transform:translateY(0)}
+
+/* Scrollbar estilo WA */
+.wa-messages::-webkit-scrollbar,.wa-conv-list::-webkit-scrollbar{width:4px}
+.wa-messages::-webkit-scrollbar-thumb,.wa-conv-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+</style>
+</head>
+<body>
+<div class="app-layout">
+  <div id="sidebar-container"></div>
+  <main class="main-content animate-fade" style="padding:0;overflow:hidden;display:flex;flex-direction:column">
+
+    <!-- Topbar -->
+    <div style="padding:14px 20px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+      <div>
+        <h1 style="font-size:1.1rem;font-weight:800;margin:0">Conversas</h1>
+        <p style="font-size:.75rem;color:var(--text-muted);margin:0">Central de mensagens integrada ao CRM</p>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <span id="ultima-att" style="font-size:.72rem;color:var(--text-muted)"></span>
+        <button class="btn btn-secondary btn-sm" id="btn-refresh" title="Atualizar">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        </button>
+        <button class="btn btn-primary btn-sm" id="btn-nova-conv">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Nova Conversa
+        </button>
+      </div>
+    </div>
+
+    <!-- Layout principal WA -->
+    <div class="wa-layout" style="flex:1">
+
+      <!-- Sidebar conversas -->
+      <div class="wa-sidebar">
+        <div class="wa-sidebar-header">
+          <div class="wa-sidebar-title">
+            <span class="wa-badge-online"></span>
+            Conversas
+            <span id="conv-count" style="font-size:.72rem;color:var(--text-muted);font-weight:400;margin-left:auto"></span>
+          </div>
+          <div class="wa-search-wrap">
+            <svg class="wa-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input class="wa-search" id="busca-conv" placeholder="Buscar conversa...">
+          </div>
+          <div class="wa-filters">
+            <button class="wa-filter-btn active" data-status="">Todas</button>
+            <button class="wa-filter-btn" data-status="ABERTA">Abertas</button>
+            <button class="wa-filter-btn" data-status="AGUARDANDO">Aguardando</button>
+            <button class="wa-filter-btn" data-status="FECHADA">Fechadas</button>
+          </div>
+        </div>
+        <div class="wa-conv-list" id="conv-list">
+          <div class="wa-empty-list">
+            <div style="font-size:2rem;opacity:.3;margin-bottom:8px">💬</div>
+            Carregando conversas...
+          </div>
+        </div>
+      </div>
+
+      <!-- Área de chat -->
+      <div class="wa-chat" id="wa-chat">
+        <div class="wa-chat-empty" id="chat-empty">
+          <div class="wa-chat-empty-icon">💬</div>
+          <div style="font-size:1rem;font-weight:700;color:var(--text-secondary)">Selecione uma conversa</div>
+          <div style="font-size:.82rem;color:var(--text-muted);max-width:260px">Escolha uma conversa à esquerda ou crie uma nova para começar.</div>
+        </div>
+
+        <!-- Header do chat (oculto até abrir conversa) -->
+        <div class="wa-chat-header" id="chat-header" style="display:none">
+          <div class="wa-chat-avatar" id="chat-avatar">??</div>
+          <div class="wa-chat-info">
+            <div class="wa-chat-name" id="chat-nome">—</div>
+            <div class="wa-chat-sub">
+              <span id="chat-tel" style="margin-right:8px"></span>
+              <span id="chat-status-text"></span>
+            </div>
+          </div>
+          <div class="wa-chat-actions">
+            <button class="wa-icon-btn" id="btn-info-panel" title="Ver detalhes do lead">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            </button>
+            <button class="wa-icon-btn" id="btn-fechar-conv" title="Fechar conversa" style="color:var(--pink)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Mensagens (oculto até abrir conversa) -->
+        <div class="wa-messages" id="wa-messages" style="display:none">
+          <!-- Digitando -->
+          <div class="wa-typing" id="wa-typing">
+            <span></span><span></span><span></span>
+          </div>
+        </div>
+
+        <!-- Input (oculto até abrir conversa) -->
+        <div class="wa-input-bar" id="wa-input-bar" style="display:none">
+          <button class="wa-attach-btn" id="btn-attach" title="Anexar arquivo">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          </button>
+          <div class="wa-input-wrap">
+            <textarea class="wa-textarea" id="msg-input" placeholder="Escrever mensagem..." rows="1"></textarea>
+          </div>
+          <button class="wa-send-btn" id="btn-send" disabled title="Enviar mensagem">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0D0D0D" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+          <input type="file" id="file-input" style="display:none" accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx">
+        </div>
+      </div>
+
+      <!-- Painel de detalhes do lead -->
+      <div class="wa-info-panel" id="info-panel">
+        <div class="wa-info-header">
+          <div style="font-size:.85rem;font-weight:800;margin-bottom:12px">Detalhes do Lead</div>
+          <button class="wa-icon-btn" id="btn-fechar-info" style="float:right;margin-top:-28px">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="wa-info-section">
+          <div class="wa-info-label">Nome</div>
+          <div class="wa-info-value" id="info-nome">—</div>
+        </div>
+        <div class="wa-info-section">
+          <div class="wa-info-label">Telefone</div>
+          <div class="wa-info-value" id="info-tel">—</div>
+        </div>
+        <div class="wa-info-section">
+          <div class="wa-info-label">Empresa</div>
+          <div class="wa-info-value" id="info-empresa">—</div>
+        </div>
+        <div class="wa-info-section">
+          <div class="wa-info-label">Vendedor responsável</div>
+          <div class="wa-info-value" id="info-vendedor">—</div>
+        </div>
+        <div class="wa-info-section">
+          <div class="wa-info-label">Status da conversa</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+            <button class="wa-filter-btn" data-conv-status="ABERTA" id="conv-status-aberta">Aberta</button>
+            <button class="wa-filter-btn" data-conv-status="AGUARDANDO" id="conv-status-aguardando">Aguardando</button>
+            <button class="wa-filter-btn" data-conv-status="FECHADA" id="conv-status-fechada">Fechada</button>
+          </div>
+        </div>
+        <div class="wa-info-section" id="info-lead-link-wrap" style="display:none">
+          <a id="info-lead-link" href="#" target="_blank" class="btn btn-primary btn-sm" style="width:100%;text-align:center;display:block">
+            Ver Lead no CRM →
+          </a>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<!-- Modal Nova Conversa -->
+<div class="modal-ov" id="modal-ov">
+  <div class="modal-box">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+      <h3 style="font-size:1rem;font-weight:800">Nova Conversa</h3>
+      <button class="wa-icon-btn" id="modal-close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="modal-alert" class="alert" style="display:none;margin-bottom:14px"></div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="input-group">
+        <label class="input-label">Telefone *</label>
+        <input id="nc-tel" class="input" type="tel" placeholder="Ex: 11999998888">
+      </div>
+      <div class="input-group">
+        <label class="input-label">Nome do contato</label>
+        <input id="nc-nome" class="input" placeholder="Ex: João Silva">
+      </div>
+      <div class="input-group">
+        <label class="input-label">Lead vinculado (opcional)</label>
+        <select id="nc-lead" class="input">
+          <option value="">— sem lead —</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px;justify-content:flex-end">
+      <button class="btn btn-secondary" id="modal-cancelar">Cancelar</button>
+      <button class="btn btn-primary" id="modal-salvar">Abrir Conversa</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+<script src="/js/auth.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/sidebar.js"></script>
+<script src="/js/whatsapp.js"></script>
+</body>
+</html>

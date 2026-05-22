@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Funis de Vendas — PROSPERKT CRM</title>
+<link rel="stylesheet" href="/css/design-system.css">
+<style>
+/* ── Grid de funis ── */
+.funis-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+.funil-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;transition:all .2s;position:relative;overflow:hidden}
+.funil-card:hover{border-color:var(--border-hover);transform:translateY(-2px);box-shadow:var(--shadow-md)}
+.funil-card-bar{position:absolute;top:0;left:0;right:0;height:3px;border-radius:14px 14px 0 0}
+.funil-name{font-size:1rem;font-weight:700;margin-bottom:4px}
+.funil-meta{font-size:.8rem;color:var(--text-muted);margin-bottom:12px}
+.funil-actions{display:flex;gap:8px;margin-top:12px}
+.color-dot{width:12px;height:12px;border-radius:50%;flex-shrink:0}
+
+/* ── Modal simples (criar/editar funil) ── */
+.modal-ov{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;z-index:900;padding:16px;opacity:0;pointer-events:none;transition:opacity .2s}
+.modal-ov.open{opacity:1;pointer-events:all}
+.modal-box{background:var(--surface);border:1px solid var(--border-hover);border-radius:20px;padding:32px;width:100%;max-width:440px;box-shadow:var(--shadow-lg);transform:translateY(16px);transition:transform .3s cubic-bezier(.16,1,.3,1)}
+.modal-ov.open .modal-box{transform:translateY(0)}
+.mh{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+.mf{display:flex;gap:12px;margin-top:24px;justify-content:flex-end}
+.xl{border:none;background:none;color:var(--text-muted);cursor:pointer;padding:4px;border-radius:6px}
+.xl:hover{color:var(--text-primary)}
+.fg{display:flex;flex-direction:column;gap:14px}
+
+/* ── Drawer lateral (editor de pipeline) ── */
+.drawer-ov{position:fixed;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(4px);z-index:1000;opacity:0;pointer-events:none;transition:opacity .25s}
+.drawer-ov.open{opacity:1;pointer-events:all}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:520px;max-width:100vw;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .3s cubic-bezier(.16,1,.3,1);z-index:1001}
+.drawer-ov.open .drawer{transform:translateX(0)}
+.drawer-head{padding:24px;border-bottom:1px solid var(--border);flex-shrink:0}
+.drawer-title{font-size:1.1rem;font-weight:800;margin-bottom:2px}
+.drawer-sub{font-size:.8125rem;color:var(--text-muted)}
+.drawer-body{flex:1;overflow-y:auto;padding:20px}
+.drawer-foot{padding:16px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;flex-shrink:0}
+
+/* ── Etapas list ── */
+.etapas-list{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+.etapa-row{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;transition:all .15s;user-select:none}
+.etapa-row.dragging{opacity:.4}
+.etapa-row.drag-over{border-color:var(--green);background:var(--green-dim)}
+.etapa-handle{cursor:grab;color:var(--text-muted);flex-shrink:0}
+.etapa-handle:active{cursor:grabbing}
+.etapa-color-btn{width:18px;height:18px;border-radius:50%;border:2px solid rgba(255,255,255,.2);cursor:pointer;flex-shrink:0;transition:transform .15s}
+.etapa-color-btn:hover{transform:scale(1.2)}
+.etapa-name-input{flex:1;background:none;border:none;color:var(--text-primary);font-family:inherit;font-size:.875rem;font-weight:600;outline:none;min-width:0}
+.etapa-name-input:focus{color:var(--green)}
+.etapa-sla{width:52px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text-muted);font-family:inherit;font-size:.75rem;padding:3px 6px;text-align:center;outline:none}
+.etapa-sla:focus{border-color:var(--green);color:var(--text-primary)}
+.etapa-badge{font-size:.65rem;padding:2px 7px;border-radius:20px;font-weight:700;flex-shrink:0}
+.etapa-badge.ganho{background:rgba(108,255,78,.15);color:var(--green)}
+.etapa-badge.perdido{background:rgba(225,0,152,.15);color:var(--pink)}
+.etapa-del{border:none;background:none;color:var(--text-muted);cursor:pointer;padding:4px;border-radius:6px;flex-shrink:0;transition:color .15s}
+.etapa-del:hover{color:var(--pink)}
+
+/* ── Seção info funil no drawer ── */
+.drawer-section{margin-bottom:20px}
+.drawer-section-title{font-size:.75rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.drawer-section-title::after{content:'';flex:1;height:1px;background:var(--border)}
+.funil-inline-row{display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:end}
+
+/* ── Cor picker inline ── */
+.color-swatches{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.cswatch{width:24px;height:24px;border-radius:6px;cursor:pointer;border:2px solid transparent;transition:all .15s;flex-shrink:0}
+.cswatch:hover{transform:scale(1.15)}
+.cswatch.sel{border-color:#fff;transform:scale(1.2)}
+
+/* ── Confirmação excluir leads ── */
+.del-confirm{background:rgba(225,0,152,.07);border:1px solid rgba(225,0,152,.25);border-radius:10px;padding:14px;margin-top:8px;display:none}
+.del-confirm.show{display:block}
+</style>
+</head>
+<body>
+<div class="app-layout">
+<div id="sidebar-container"></div>
+<main class="main-content animate-fade">
+
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
+  <div>
+    <h1 class="page-title">Funis de Vendas</h1>
+    <p class="page-subtitle">Gerencie os canais de aquisição e suas pipelines</p>
+  </div>
+  <button class="btn btn-primary" id="btn-novo" style="display:none">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    Novo Funil
+  </button>
+</div>
+
+<div id="funis-grid" class="funis-grid"></div>
+</main>
+</div>
+
+<!-- Modal simples: criar/editar funil -->
+<div class="modal-ov" id="modal-ov">
+<div class="modal-box">
+  <div class="mh">
+    <h3 id="modal-title">Novo Funil</h3>
+    <button class="xl" id="modal-close"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+  </div>
+  <div id="modal-alert" class="alert" style="display:none;margin-bottom:16px"></div>
+  <div class="fg">
+    <input type="hidden" id="f-id">
+    <div class="input-group"><label class="input-label">Nome do funil *</label><input id="f-nome" class="input" placeholder="Ex: Instagram"></div>
+    <div class="input-group">
+      <label class="input-label">Cor</label>
+      <div class="color-swatches" id="modal-swatches"></div>
+      <input type="color" id="f-cor" style="margin-top:8px;width:40px;height:32px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);cursor:pointer">
+    </div>
+    <div class="input-group"><label class="input-label">Descrição (opcional)</label><input id="f-desc" class="input" placeholder="Leads vindos do..."></div>
+    <div class="input-group"><label class="input-label">Status</label>
+      <select id="f-ativo" class="input"><option value="1">Ativo</option><option value="0">Inativo</option></select>
+    </div>
+  </div>
+  <div class="mf">
+    <button class="btn btn-secondary" id="modal-cancelar">Cancelar</button>
+    <button class="btn btn-primary" id="modal-salvar">
+      <span id="modal-salvar-txt">Salvar</span>
+      <div class="spinner hidden" id="modal-spinner"></div>
+    </button>
+  </div>
+</div>
+</div>
+
+<!-- Drawer lateral: editor de pipeline -->
+<div class="drawer-ov" id="drawer-ov">
+<div class="drawer" id="drawer">
+  <div class="drawer-head">
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div class="drawer-title" id="drawer-title">Editar Pipeline</div>
+        <div class="drawer-sub" id="drawer-sub">Carregando...</div>
+      </div>
+      <button class="xl" id="drawer-close"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+  </div>
+
+  <div class="drawer-body">
+    <!-- Seção: dados do funil -->
+    <div class="drawer-section">
+      <div class="drawer-section-title">Configurações do Funil</div>
+      <div class="fg">
+        <div class="funil-inline-row">
+          <div class="input-group" style="margin:0"><label class="input-label">Nome</label><input id="df-nome" class="input" placeholder="Nome do funil"></div>
+          <div class="input-group" style="margin:0"><label class="input-label">Status</label>
+            <select id="df-ativo" class="input" style="min-width:90px"><option value="1">Ativo</option><option value="0">Inativo</option></select>
+          </div>
+          <div class="input-group" style="margin:0"><label class="input-label">Cor</label>
+            <input type="color" id="df-cor" style="width:44px;height:36px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);cursor:pointer;display:block">
+          </div>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="df-salvar-funil" style="align-self:flex-start">Salvar dados do funil</button>
+      </div>
+    </div>
+
+    <!-- Seção: etapas -->
+    <div class="drawer-section">
+      <div class="drawer-section-title">Etapas da Pipeline</div>
+      <div id="etapas-list" class="etapas-list"></div>
+      <button class="btn btn-ghost btn-sm" id="btn-add-etapa" style="width:100%;border:1px dashed var(--border);justify-content:center">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Adicionar etapa
+      </button>
+    </div>
+
+    <div id="drawer-alert" class="alert" style="display:none;margin-top:12px"></div>
+  </div>
+
+  <div class="drawer-foot">
+    <button class="btn btn-secondary" id="drawer-cancelar">Fechar</button>
+    <button class="btn btn-primary" id="drawer-salvar-ordem">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+      Salvar Ordem
+    </button>
+  </div>
+</div>
+</div>
+
+<div id="toast-container"></div>
+<script src="/js/auth.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/sidebar.js"></script>
+<script src="/js/funis.js"></script>
+</body>
+</html>

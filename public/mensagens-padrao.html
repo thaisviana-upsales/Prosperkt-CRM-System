@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Mensagens Padrão — PROSPERKT CRM</title>
+<meta name="description" content="Biblioteca de scripts e mensagens padrão para a equipe de vendas.">
+<link rel="stylesheet" href="/css/design-system.css">
+<style>
+/* ── Filtros sticky ── */
+.mp-filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:20px}
+.mp-cat-chip{padding:4px 12px;border-radius:20px;border:1px solid var(--border);background:none;color:var(--text-muted);font-size:.72rem;font-weight:700;cursor:pointer;font-family:inherit;transition:all .15s;white-space:nowrap}
+.mp-cat-chip.active,.mp-cat-chip:hover{background:rgba(108,255,78,.12);border-color:var(--green);color:var(--green)}
+
+/* ── Grid de cards ── */
+.mp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px}
+.mp-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;transition:all .2s;position:relative;overflow:hidden;display:flex;flex-direction:column;gap:12px}
+.mp-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--grad-brand);opacity:0;transition:opacity .2s}
+.mp-card:hover::before{opacity:1}
+.mp-card:hover{border-color:var(--border-hover);box-shadow:var(--shadow-md)}
+.mp-card.inactive{opacity:.55}
+.mp-card.inactive::before{background:var(--border-hover);opacity:1}
+
+/* ── Texto preview ── */
+.mp-texto{font-size:.8rem;color:var(--text-muted);line-height:1.55;max-height:72px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;background:var(--surface-2);border-radius:8px;padding:10px 12px;white-space:pre-wrap;word-break:break-word}
+
+/* ── Category badge ── */
+.mp-cat-badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:.66rem;font-weight:700;background:rgba(59,139,255,.1);color:#3B8BFF;border:1px solid rgba(59,139,255,.2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ── Status toggle ── */
+.toggle{position:relative;width:40px;height:22px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;inset:0;background:var(--surface-2);border:1px solid var(--border);border-radius:50px;cursor:pointer;transition:.2s}
+.toggle-slider::before{content:'';position:absolute;height:14px;width:14px;left:3px;bottom:3px;background:var(--text-muted);border-radius:50%;transition:.2s}
+.toggle input:checked+.toggle-slider{background:rgba(108,255,78,.15);border-color:var(--green)}
+.toggle input:checked+.toggle-slider::before{background:var(--green);transform:translateX(18px)}
+
+/* ── Modal ── */
+.mp-modal-ov{position:fixed;inset:0;background:rgba(0,0,0,.78);backdrop-filter:blur(10px);z-index:900;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:.25s}
+.mp-modal-ov.open{opacity:1;pointer-events:all}
+.mp-modal-box{background:var(--surface);border:1px solid var(--border);border-radius:20px;width:min(700px,96vw);max-height:92vh;overflow-y:auto;transform:scale(.95);transition:.25s}
+.mp-modal-ov.open .mp-modal-box{transform:scale(1)}
+.mp-modal-hd{padding:22px 26px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px}
+.mp-modal-body{padding:22px 26px;display:flex;flex-direction:column;gap:18px}
+.mp-modal-ft{padding:16px 26px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end}
+
+/* ── Variáveis chips ── */
+.var-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.var-chip{padding:4px 10px;border-radius:20px;font-size:.7rem;font-weight:700;background:rgba(108,255,78,.08);color:var(--green);cursor:pointer;border:1px solid rgba(108,255,78,.2);transition:all .15s}
+.var-chip:hover{background:rgba(108,255,78,.2)}
+
+/* ── Phone preview ── */
+.phone-preview{background:#0b141a;border-radius:14px;padding:14px;max-width:340px}
+.phone-bubble{background:#005c4b;border-radius:12px 12px 0 12px;padding:10px 14px;color:#e9edef;font-size:.82rem;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-width:92%;margin-left:auto}
+.phone-meta{text-align:right;font-size:.66rem;color:#8696a0;margin-top:4px}
+
+/* ── Empty state ── */
+.mp-empty{text-align:center;padding:80px 24px;color:var(--text-muted)}
+.mp-empty-icon{font-size:3rem;opacity:.18;margin-bottom:14px}
+
+/* ── Search bar ── */
+.mp-search{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:10px 16px 10px 38px;color:var(--text-primary);font-family:inherit;font-size:.875rem;outline:none;width:240px;transition:border-color .2s}
+.mp-search:focus{border-color:var(--green)}
+.mp-search-wrap{position:relative}
+.mp-search-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text-muted);pointer-events:none}
+
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="app-layout">
+  <div id="sidebar-container"></div>
+  <main class="main-content animate-fade" style="padding:24px 28px">
+
+    <!-- Header -->
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:24px">
+      <div style="display:flex;align-items:center;gap:16px">
+        <div style="width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#1a3a6b,#3B8BFF);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+            <polyline points="10 9 9 9 8 9"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="page-title" style="font-size:1.35rem;margin-bottom:3px">Mensagens Padrão</h1>
+          <p class="page-subtitle">Biblioteca de scripts para uso na conversa com leads</p>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <div class="mp-search-wrap">
+          <svg class="mp-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input class="mp-search" id="busca-input" placeholder="Buscar mensagem...">
+        </div>
+        <button class="btn btn-primary" id="btn-nova" style="display:none">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Nova Mensagem
+        </button>
+      </div>
+    </div>
+
+    <!-- Info vendedor -->
+    <div id="info-perm" style="display:none;background:rgba(59,139,255,.06);border:1px solid rgba(59,139,255,.2);border-radius:12px;padding:12px 18px;margin-bottom:20px;font-size:.82rem;color:#3B8BFF;display:flex;align-items:center;gap:10px">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      Você pode usar estas mensagens nas conversas WhatsApp. Para criar novas, contate um Gestor ou Admin.
+    </div>
+
+    <!-- Filtros de categoria -->
+    <div class="mp-filters" id="cat-filters">
+      <button class="mp-cat-chip active" data-cat="">Todas</button>
+    </div>
+
+    <!-- Estatísticas -->
+    <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 20px;min-width:120px;flex:1">
+        <div style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:4px">Total</div>
+        <div id="stat-total" style="font-size:1.6rem;font-weight:800">—</div>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 20px;min-width:120px;flex:1">
+        <div style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:4px">Ativas</div>
+        <div id="stat-ativas" style="font-size:1.6rem;font-weight:800;color:var(--green)">—</div>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 20px;min-width:120px;flex:1">
+        <div style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:4px">Categorias</div>
+        <div id="stat-cats" style="font-size:1.6rem;font-weight:800;color:#3B8BFF">—</div>
+      </div>
+    </div>
+
+    <!-- Grid -->
+    <div class="mp-grid" id="mp-grid">
+      <div class="mp-empty">
+        <div class="mp-empty-icon">📋</div>
+        <div style="font-size:.9rem">Carregando mensagens...</div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- ── Modal Criar/Editar ── -->
+<div class="mp-modal-ov" id="modal-form-ov">
+  <div class="mp-modal-box">
+    <div class="mp-modal-hd">
+      <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#1a3a6b,#3B8BFF);display:flex;align-items:center;justify-content:center">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      </div>
+      <div>
+        <div id="modal-form-titulo" style="font-size:1rem;font-weight:800">Nova Mensagem Padrão</div>
+        <div style="font-size:.72rem;color:var(--text-muted)">Configure e salve o script</div>
+      </div>
+      <button id="btn-modal-form-close" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;padding:6px;border-radius:8px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="mp-modal-body">
+      <input type="hidden" id="f-id">
+
+      <div class="form-group">
+        <label class="form-label">Título *</label>
+        <input type="text" id="f-titulo" class="form-input" placeholder="Ex: Primeiro contato — Tráfego Pago">
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group">
+          <label class="form-label">Categoria *</label>
+          <select id="f-categoria" class="form-input"></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Funil aplicável</label>
+          <select id="f-funil" class="form-input">
+            <option value="">Todos os funis</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Variáveis dinâmicas</label>
+        <div class="var-chips">
+          <span class="var-chip" data-var="[nome_lead]">[nome_lead]</span>
+          <span class="var-chip" data-var="[nome_vendedor]">[nome_vendedor]</span>
+          <span class="var-chip" data-var="[nome_empresa]">[nome_empresa]</span>
+          <span class="var-chip" data-var="[telefone_lead]">[telefone_lead]</span>
+          <span class="var-chip" data-var="[funil]">[funil]</span>
+          <span class="var-chip" data-var="[etapa]">[etapa]</span>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Texto da mensagem *</label>
+        <textarea id="f-texto" class="form-input" style="min-height:130px;resize:vertical;line-height:1.6" placeholder="Digite o script da mensagem..."></textarea>
+        <span style="font-size:.7rem;color:var(--text-muted);margin-top:4px;display:block">Clique nas variáveis acima para inserir no cursor</span>
+      </div>
+
+      <!-- Preview -->
+      <div>
+        <label class="form-label" style="margin-bottom:8px">Preview</label>
+        <div class="phone-preview">
+          <div class="phone-bubble" id="f-preview"><em style="opacity:.35">A mensagem aparecerá aqui...</em></div>
+          <div class="phone-meta">Agora ✓✓</div>
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:10px">
+        <label class="toggle">
+          <input type="checkbox" id="f-ativo" checked>
+          <span class="toggle-slider"></span>
+        </label>
+        <span style="font-size:.875rem;font-weight:600">Mensagem ativa</span>
+      </div>
+
+      <div id="form-alert" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="mp-modal-ft">
+      <button class="btn btn-secondary" id="btn-modal-form-cancelar">Cancelar</button>
+      <button class="btn btn-primary" id="btn-modal-form-salvar">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        Salvar
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal Confirmar Exclusão ── -->
+<div class="mp-modal-ov" id="modal-del-ov">
+  <div class="mp-modal-box" style="max-width:420px">
+    <div class="mp-modal-hd">
+      <div style="width:36px;height:36px;border-radius:10px;background:rgba(225,0,152,.15);display:flex;align-items:center;justify-content:center">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--pink)" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+      </div>
+      <div style="font-size:1rem;font-weight:800">Excluir mensagem?</div>
+    </div>
+    <div class="mp-modal-body" style="color:var(--text-muted);font-size:.875rem">
+      Esta ação não pode ser desfeita.
+    </div>
+    <div class="mp-modal-ft">
+      <button class="btn btn-secondary" id="btn-del-cancelar">Cancelar</button>
+      <button class="btn" id="btn-del-confirmar" style="background:var(--pink);color:#fff">Excluir</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+<script src="/js/auth.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/sidebar.js"></script>
+<script src="/js/mensagens-padrao.js"></script>
+</body>
+</html>

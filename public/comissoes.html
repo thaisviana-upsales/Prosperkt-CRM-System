@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Comissões — PROSPERKT CRM</title>
+<link rel="stylesheet" href="/css/design-system.css">
+<style>
+/* Tabs */
+.tabs{display:flex;gap:4px;padding:4px;background:var(--surface);border:1px solid var(--border);border-radius:12px;width:fit-content;margin-bottom:20px}
+.tab-btn{padding:8px 20px;border:none;border-radius:8px;cursor:pointer;font-family:inherit;font-size:.875rem;font-weight:600;color:var(--text-muted);background:none;transition:all .15s}
+.tab-btn.active{background:var(--grad-brand);color:#0D0D0D}
+.tab-content{display:none}.tab-content.active{display:block}
+/* Filtros */
+.fbar{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:20px}
+.fg{display:flex;flex-direction:column;gap:4px}
+.fl{font-size:.6875rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em}
+.fs{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:inherit;font-size:.875rem;padding:7px 12px;outline:none;min-width:130px}
+.fs:focus{border-color:var(--green)}
+/* Summary */
+.summary-bar{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:20px}
+.sum-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px;position:relative;overflow:hidden}
+.sum-card::after{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.sum-card.green::after{background:var(--green)}.sum-card.pink::after{background:var(--pink)}.sum-card.blue::after{background:#3B8BFF}.sum-card.gold::after{background:#FFB627}
+.sum-label{font-size:.6rem;color:var(--text-muted);text-transform:uppercase;font-weight:600;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sum-val{font-size:.95rem;font-weight:800;line-height:1.1}
+/* Ranking Vendedor */
+.rank-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:10px;transition:border-color .2s}
+.rank-card:hover{border-color:var(--border-hover)}
+.rank-head{display:flex;align-items:center;gap:14px;padding:14px 18px;cursor:pointer}
+.rank-pos{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:800;flex-shrink:0;background:var(--surface-2);color:var(--text-muted)}
+.rank-pos.gold{background:rgba(255,182,39,.2);color:#FFB627}.rank-pos.silver{background:rgba(200,200,200,.1);color:#aaa}.rank-pos.bronze{background:rgba(205,127,50,.1);color:#cd7f32}
+.rank-avatar{width:36px;height:36px;border-radius:50%;background:var(--grad-brand);display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;color:#0D0D0D;flex-shrink:0}
+.rank-info{flex:1;min-width:0}
+.rank-name{font-size:.9375rem;font-weight:700;margin-bottom:1px}
+.rank-detail{font-size:.75rem;color:var(--text-muted)}
+.rank-vals{display:grid;grid-template-columns:repeat(3,auto);gap:20px;text-align:right}
+.rv{display:flex;flex-direction:column;align-items:flex-end}
+.rv-val{font-size:1rem;font-weight:800;line-height:1.1}
+.rv-lbl{font-size:.65rem;color:var(--text-muted);text-transform:uppercase;margin-top:1px}
+.rank-meta-badge{font-size:.65rem;font-weight:700;padding:2px 8px;border-radius:20px;background:rgba(108,255,78,.15);color:var(--green);flex-shrink:0;white-space:nowrap}
+.rank-body{display:none;border-top:1px solid var(--border);padding:0}
+.rank-body.open{display:block}
+/* Tabela items */
+.items-table{width:100%;border-collapse:collapse}
+.items-table th{font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:700;padding:8px 18px;border-bottom:1px solid var(--border);text-align:left;background:var(--surface-2)}
+.items-table td{padding:10px 18px;border-bottom:1px solid var(--border);font-size:.8125rem;vertical-align:middle}
+.items-table tr:last-child td{border-bottom:none}
+.items-table tr:hover td{background:rgba(255,255,255,.015)}
+.status-badge{font-size:.65rem;font-weight:700;padding:2px 8px;border-radius:20px}
+.status-badge.pendente{background:rgba(255,182,39,.15);color:#FFB627}
+.status-badge.aprovada{background:rgba(59,139,255,.15);color:#3B8BFF}
+.status-badge.paga{background:rgba(108,255,78,.15);color:var(--green)}
+.status-badge.cancelada{background:rgba(225,0,152,.15);color:var(--pink)}
+/* Por funil bar */
+.funil-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)}
+.funil-row:last-child{border-bottom:none}
+.funil-bar-bg{flex:1;height:6px;background:var(--surface-2);border-radius:3px;overflow:hidden}
+.funil-bar{height:100%;background:var(--grad-brand);border-radius:3px;transition:width .6s cubic-bezier(.16,1,.3,1)}
+/* Tabela regras */
+.table-premium{width:100%;border-collapse:collapse}
+.table-premium th{font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:700;padding:8px 12px;border-bottom:1px solid var(--border);text-align:left}
+.table-premium td{padding:11px 12px;border-bottom:1px solid var(--border);font-size:.875rem;vertical-align:middle}
+.table-premium tr:last-child td{border-bottom:none}
+.table-premium tr:hover td{background:var(--surface-2)}
+.tipo-badge{font-size:.65rem;font-weight:700;padding:2px 8px;border-radius:20px}
+.tipo-badge.pct{background:rgba(108,255,78,.12);color:var(--green)}
+.tipo-badge.fix{background:rgba(59,139,255,.12);color:#3B8BFF}
+/* Modal */
+.modal-ov{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;z-index:900;padding:16px;opacity:0;pointer-events:none;transition:opacity .2s}
+.modal-ov.open{opacity:1;pointer-events:all}
+.modal-box{background:var(--surface);border:1px solid var(--border-hover);border-radius:20px;padding:28px;width:100%;max-width:500px;box-shadow:var(--shadow-lg);transform:translateY(16px);transition:transform .3s cubic-bezier(.16,1,.3,1);max-height:92vh;overflow-y:auto}
+.modal-ov.open .modal-box{transform:translateY(0)}
+.mh{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+.mf{display:flex;gap:10px;margin-top:20px;justify-content:flex-end}
+.xl{border:none;background:none;color:var(--text-muted);cursor:pointer;padding:4px;border-radius:6px}
+.xl:hover{color:var(--text-primary)}
+.form-cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.empty-state{text-align:center;padding:48px;color:var(--text-muted)}
+/* Info box */
+.info-box{background:rgba(108,255,78,.05);border:1px solid rgba(108,255,78,.15);border-radius:10px;padding:12px 16px;font-size:.8125rem;color:var(--text-secondary);margin-bottom:16px}
+/* Salary editable card */
+.edit-card{cursor:default;border-style:dashed!important;transition:border-color .2s,background .2s}
+.edit-card:hover{background:rgba(108,255,78,.04);border-color:rgba(108,255,78,.4)!important}
+</style>
+</head>
+<body>
+<div class="app-layout">
+<div id="sidebar-container"></div>
+<main class="main-content animate-fade" style="padding:24px 28px">
+
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+  <div>
+    <h1 class="page-title" style="font-size:1.4rem;margin-bottom:2px">Comissões</h1>
+    <p class="page-subtitle">Cálculo automático baseado nas vendas fechadas no CRM</p>
+  </div>
+  <div style="display:flex;gap:10px;align-items:center">
+    <span id="ultima-att" style="font-size:.75rem;color:var(--text-muted)"></span>
+    <button class="btn btn-secondary btn-sm" id="btn-refresh">↺ Atualizar</button>
+    <button class="btn btn-primary" id="btn-nova-regra" style="display:none">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Nova Regra
+    </button>
+  </div>
+</div>
+
+<!-- Tabs -->
+<div class="tabs" style="margin-top:16px">
+  <button class="tab-btn active" data-tab="painel">Painel</button>
+  <button class="tab-btn" data-tab="regras">Regras de Comissão</button>
+</div>
+
+<!-- ═══ TAB: PAINEL ═══ -->
+<div class="tab-content active" id="tab-painel">
+  <div class="fbar">
+    <div class="fg"><span class="fl">Mês</span><input id="f-mes" class="fs" type="month" style="color-scheme:dark;min-width:150px"></div>
+    <div class="fg"><span class="fl">Funil</span><select id="f-funil" class="fs"><option value="">Todos</option></select></div>
+    <div class="fg" id="fg-vendedor"><span class="fl">Vendedor</span><select id="f-vendedor" class="fs"><option value="">Todos</option></select></div>
+    <button class="btn btn-primary btn-sm" id="btn-filtrar">Filtrar</button>
+    <button class="btn btn-secondary btn-sm" id="btn-limpar">Limpar</button>
+  </div>
+
+  <!-- Summary cards -->
+  <div class="summary-bar" id="summary-bar">
+    <div class="sum-card blue"><div class="sum-label">Total Vendido</div><div class="sum-val">—</div></div>
+  </div>
+
+  <!-- Por funil -->
+  <div id="por-funil-wrap" style="display:none;margin-bottom:20px">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 20px">
+      <div style="font-size:.8rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">Comissão por Funil</div>
+      <div id="por-funil"></div>
+    </div>
+  </div>
+
+  <!-- Ranking vendedores -->
+  <div id="ranking-wrap"></div>
+</div>
+
+<!-- ═══ TAB: REGRAS ═══ -->
+<div class="tab-content" id="tab-regras">
+  <div class="info-box">
+    💡 Regras de comissão são aplicadas automaticamente quando um lead é movido para a etapa <strong>VENDAS (GANHO)</strong>. Somente Super Admin pode criar ou editar regras.
+  </div>
+
+  <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+    <button class="btn btn-primary" id="btn-nova-regra-2" style="display:none">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Nova Regra
+    </button>
+  </div>
+
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden">
+    <table class="table-premium">
+      <thead><tr>
+        <th>Nome / Descrição</th>
+        <th>Tipo</th>
+        <th>Faixa de Valor</th>
+        <th>Comissão</th>
+        <th>Bônus Meta</th>
+        <th>Vendedor</th>
+        <th>Funil</th>
+        <th></th>
+      </tr></thead>
+      <tbody id="regras-tbody"><tr><td colspan="8" class="empty-state">Carregando...</td></tr></tbody>
+    </table>
+  </div>
+
+  <!-- Exemplo visual de faixas -->
+  <div id="faixas-preview" style="margin-top:16px;display:none">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 20px">
+      <div style="font-size:.8rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">Simulação de Faixas Configuradas</div>
+      <div id="faixas-lista"></div>
+    </div>
+  </div>
+</div>
+
+</main>
+</div>
+
+<!-- Modal criar/editar regra -->
+<div class="modal-ov" id="modal-ov">
+<div class="modal-box">
+  <div class="mh">
+    <div>
+      <h3 id="modal-title">Nova Regra de Comissão</h3>
+      <p style="font-size:.78rem;color:var(--text-muted);margin-top:2px">Somente Super Admin pode criar regras</p>
+    </div>
+    <button class="xl" id="modal-close"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+  </div>
+  <div id="modal-alert" class="alert" style="display:none;margin-bottom:14px"></div>
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <input type="hidden" id="r-id">
+    <div class="input-group"><label class="input-label">Nome / Descrição da regra *</label>
+      <input id="r-nome" class="input" placeholder="Ex: Comissão padrão · Faixa até R$20k · Instagram 5%">
+    </div>
+    <div class="form-cols">
+      <div class="input-group"><label class="input-label">Tipo de cálculo *</label>
+        <select id="r-tipo" class="input">
+          <option value="PERCENTUAL">Percentual (%)</option>
+          <option value="FIXO">Valor fixo (R$)</option>
+        </select>
+      </div>
+      <div class="input-group">
+        <label class="input-label" id="r-valor-label">Percentual (%) *</label>
+        <input id="r-valor" class="input" type="number" step="0.01" min="0" placeholder="Ex: 4">
+      </div>
+    </div>
+    <div style="background:var(--surface-2);border-radius:10px;padding:14px">
+      <div style="font-size:.75rem;font-weight:700;color:var(--text-muted);margin-bottom:10px;text-transform:uppercase">Faixa de valor (opcional)</div>
+      <div class="form-cols">
+        <div class="input-group" style="margin:0"><label class="input-label">De (R$)</label><input id="r-min" class="input" type="number" min="0" placeholder="0 (qualquer)"></div>
+        <div class="input-group" style="margin:0"><label class="input-label">Até (R$)</label><input id="r-max" class="input" type="number" min="0" placeholder="Sem limite"></div>
+      </div>
+      <p style="font-size:.75rem;color:var(--text-muted);margin-top:8px">Deixe em branco para aplicar a qualquer valor. Para criar múltiplas faixas, crie uma regra para cada.</p>
+    </div>
+    <div class="input-group">
+      <label class="input-label">Bônus extra quando meta do mês é atingida (R$)</label>
+      <input id="r-bonus" class="input" type="number" step="0.01" min="0" placeholder="Ex: 500,00">
+      <p style="font-size:.73rem;color:var(--text-muted);margin-top:4px">Valor fixo em reais pago quando o vendedor bate a meta de faturamento do mês.</p>
+    </div>
+    <div class="form-cols">
+      <div class="input-group"><label class="input-label">Aplicar a vendedor específico</label>
+        <select id="r-vendedor" class="input"><option value="">Todos os vendedores</option></select>
+      </div>
+      <div class="input-group"><label class="input-label">Aplicar a funil específico</label>
+        <select id="r-funil" class="input"><option value="">Todos os funis</option></select>
+      </div>
+    </div>
+  </div>
+  <div class="mf">
+    <button class="btn btn-secondary" id="modal-cancelar">Cancelar</button>
+    <button class="btn btn-primary" id="modal-salvar">
+      <span id="modal-salvar-txt">Salvar regra</span>
+      <div class="spinner hidden" id="modal-spinner"></div>
+    </button>
+  </div>
+</div>
+</div>
+
+<div id="toast-container"></div>
+<script src="/js/auth.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/sidebar.js"></script>
+<script src="/js/comissoes.js"></script>
+</body>
+</html>

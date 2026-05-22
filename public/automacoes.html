@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Automações — PROSPERKT CRM</title>
+<link rel="stylesheet" href="/css/design-system.css">
+<style>
+/* ── Layout ── */
+.auto-wrap{display:flex;flex-direction:column;gap:24px}
+/* ── Header card ── */
+.auto-header{background:linear-gradient(135deg,var(--surface) 0%,rgba(108,255,78,.04) 100%);border:1px solid var(--border);border-radius:16px;padding:24px 28px;display:flex;align-items:center;gap:20px}
+.auto-header-icon{width:52px;height:52px;border-radius:14px;background:linear-gradient(135deg,#1a6b10,#6CFF4E);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+/* ── Automação card ── */
+.auto-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px;transition:all .2s;position:relative;overflow:hidden}
+.auto-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--grad-brand);opacity:0;transition:opacity .2s}
+.auto-card:hover::before{opacity:1}
+.auto-card:hover{border-color:var(--border-hover);box-shadow:var(--shadow-md)}
+.auto-card.inactive{opacity:.6}
+.auto-card.inactive::before{background:var(--border);opacity:1}
+/* ── Toggle switch ── */
+.toggle-wrap{display:flex;align-items:center;gap:10px}
+.toggle{position:relative;width:44px;height:24px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;inset:0;background:var(--surface-2);border:1px solid var(--border);border-radius:50px;cursor:pointer;transition:.2s}
+.toggle-slider::before{content:'';position:absolute;height:16px;width:16px;left:4px;bottom:3px;background:var(--text-muted);border-radius:50%;transition:.2s}
+.toggle input:checked + .toggle-slider{background:rgba(108,255,78,.15);border-color:var(--green)}
+.toggle input:checked + .toggle-slider::before{background:var(--green);transform:translateX(20px)}
+/* ── Preview phone ── */
+.phone-mock{background:#0b141a;border-radius:16px;padding:16px;max-width:340px;font-family:'Segoe UI',sans-serif}
+.phone-msg{background:#005c4b;border-radius:12px 12px 0 12px;padding:10px 14px;color:#e9edef;font-size:.82rem;line-height:1.5;position:relative;max-width:88%;margin-left:auto;margin-bottom:4px;white-space:pre-wrap;word-break:break-word}
+.phone-msg-meta{text-align:right;font-size:.68rem;color:#8696a0;margin-top:4px}
+/* ── Badge delay ── */
+.delay-badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:.68rem;font-weight:700;background:rgba(59,139,255,.12);color:#3B8BFF}
+/* ── Modal ── */
+.modal-ov{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(8px);z-index:900;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:.25s}
+.modal-ov.open{opacity:1;pointer-events:all}
+.modal-box{background:var(--surface);border:1px solid var(--border);border-radius:20px;width:min(680px,96vw);max-height:92vh;overflow-y:auto;transform:scale(.95);transition:.25s}
+.modal-ov.open .modal-box{transform:scale(1)}
+.modal-hd{padding:22px 26px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px}
+.modal-body{padding:22px 26px}
+.modal-ft{padding:16px 26px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end}
+/* ── Variáveis chips ── */
+.var-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.var-chip{padding:4px 10px;border-radius:20px;font-size:.7rem;font-weight:700;background:rgba(108,255,78,.08);color:var(--green);cursor:pointer;border:1px solid rgba(108,255,78,.2);transition:all .15s;user-select:none}
+.var-chip:hover{background:rgba(108,255,78,.18);border-color:var(--green)}
+/* ── Textarea msg ── */
+#txt-msg{min-height:120px;resize:vertical;line-height:1.6}
+/* ── Empty state ── */
+.auto-empty{text-align:center;padding:64px 24px;color:var(--text-muted)}
+.auto-empty-icon{font-size:3rem;opacity:.2;margin-bottom:16px}
+</style>
+</head>
+<body>
+<div class="app-layout">
+  <div id="sidebar-container"></div>
+  <main class="main-content animate-fade" style="padding:24px 28px">
+
+    <!-- Header -->
+    <div class="auto-header" style="margin-bottom:24px">
+      <div class="auto-header-icon">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#0D0D0D" stroke-width="2.2">
+          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+        </svg>
+      </div>
+      <div style="flex:1">
+        <h1 class="page-title" style="font-size:1.35rem;margin-bottom:4px">Automações de Mensagem</h1>
+        <p class="page-subtitle">Primeira mensagem automática enviada quando um lead entra no CRM</p>
+      </div>
+      <button class="btn btn-primary" id="btn-nova" style="display:none">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Nova Automação
+      </button>
+    </div>
+
+    <!-- Info box -->
+    <div id="info-permissao" style="display:none;background:rgba(59,139,255,.06);border:1px solid rgba(59,139,255,.2);border-radius:12px;padding:14px 18px;margin-bottom:20px;font-size:.82rem;color:#3B8BFF;display:flex;align-items:center;gap:10px">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      Você está em modo visualização. Apenas Super Admins podem criar ou editar automações.
+    </div>
+
+    <!-- Lista de automações -->
+    <div id="auto-lista" style="display:flex;flex-direction:column;gap:16px">
+      <div class="auto-empty">
+        <div class="auto-empty-icon">⚡</div>
+        <div style="font-size:.9rem">Carregando automações...</div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Modal Nova/Editar Automação -->
+<div class="modal-ov" id="modal-ov">
+  <div class="modal-box">
+    <div class="modal-hd">
+      <div style="width:36px;height:36px;border-radius:10px;background:var(--grad-brand);display:flex;align-items:center;justify-content:center">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0D0D0D" stroke-width="2.2">
+          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+        </svg>
+      </div>
+      <div>
+        <div id="modal-titulo" style="font-size:1rem;font-weight:800">Nova Automação</div>
+        <div style="font-size:.72rem;color:var(--text-muted)">Configure a primeira mensagem automática</div>
+      </div>
+      <button id="modal-close" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;padding:6px;border-radius:8px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:18px">
+      <input type="hidden" id="f-id">
+
+      <!-- Nome -->
+      <div class="form-group">
+        <label class="form-label">Nome da automação *</label>
+        <input type="text" id="f-nome" class="form-input" placeholder="Ex: Primeira mensagem Tráfego Pago">
+      </div>
+
+      <!-- Funil -->
+      <div class="form-group">
+        <label class="form-label">Funil aplicado</label>
+        <select id="f-funil" class="form-input">
+          <option value="">Todos os funis</option>
+        </select>
+        <span style="font-size:.72rem;color:var(--text-muted);margin-top:4px;display:block">Deixe em branco para aplicar a todos os funis</span>
+      </div>
+
+      <!-- Delay -->
+      <div class="form-group">
+        <label class="form-label">Tempo de envio</label>
+        <select id="f-delay" class="form-input">
+          <option value="0">Imediato (0 segundos)</option>
+          <option value="60">Após 1 minuto</option>
+          <option value="300">Após 5 minutos</option>
+          <option value="600">Após 10 minutos</option>
+        </select>
+      </div>
+
+      <!-- Mensagem -->
+      <div class="form-group">
+        <label class="form-label">Texto da mensagem *</label>
+        <div class="var-chips" id="var-chips">
+          <span class="var-chip" data-var="[nome_lead]">[nome_lead]</span>
+          <span class="var-chip" data-var="[nome_vendedor]">[nome_vendedor]</span>
+          <span class="var-chip" data-var="[nome_empresa]">[nome_empresa]</span>
+          <span class="var-chip" data-var="[telefone_lead]">[telefone_lead]</span>
+          <span class="var-chip" data-var="[funil]">[funil]</span>
+          <span class="var-chip" data-var="[empresa]">[empresa]</span>
+        </div>
+        <textarea id="txt-msg" class="form-input" style="margin-top:8px" placeholder="Digite a mensagem..."></textarea>
+        <span style="font-size:.72rem;color:var(--text-muted);margin-top:4px;display:block">Clique nas variáveis acima para inserir no cursor</span>
+      </div>
+
+      <!-- Preview -->
+      <div>
+        <label class="form-label" style="margin-bottom:8px">Preview da mensagem</label>
+        <div class="phone-mock">
+          <div class="phone-msg" id="preview-msg">
+            <em style="opacity:.4">A mensagem aparecerá aqui...</em>
+          </div>
+          <div class="phone-msg-meta">Agora ✓✓</div>
+        </div>
+      </div>
+
+      <!-- Status -->
+      <div class="toggle-wrap">
+        <label class="toggle">
+          <input type="checkbox" id="f-ativo" checked>
+          <span class="toggle-slider"></span>
+        </label>
+        <span style="font-size:.875rem;font-weight:600">Automação ativa</span>
+      </div>
+
+      <div id="modal-alert" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn btn-secondary" id="modal-cancelar">Cancelar</button>
+      <button class="btn btn-primary" id="modal-salvar">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        Salvar
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Confirmar Exclusão -->
+<div class="modal-ov" id="modal-del-ov">
+  <div class="modal-box" style="max-width:420px">
+    <div class="modal-hd">
+      <div style="width:36px;height:36px;border-radius:10px;background:rgba(225,0,152,.15);display:flex;align-items:center;justify-content:center">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--pink)" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+      </div>
+      <div style="font-size:1rem;font-weight:800">Excluir automação?</div>
+    </div>
+    <div class="modal-body" style="color:var(--text-muted);font-size:.875rem">
+      Esta ação não pode ser desfeita. A automação será removida permanentemente.
+    </div>
+    <div class="modal-ft">
+      <button class="btn btn-secondary" id="del-cancelar">Cancelar</button>
+      <button class="btn" id="del-confirmar" style="background:var(--pink);color:#fff">Excluir</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+<script src="/js/auth.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/sidebar.js"></script>
+<script src="/js/automacoes.js"></script>
+</body>
+</html>

@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="PROSPERKT CRM — Plataforma de gestão de relacionamento com clientes enterprise">
+  <title>Login — PROSPERKT CRM</title>
+  <link rel="stylesheet" href="/css/design-system.css">
+  <style>
+    /* ── Login Page ─────────────────────────────────────── */
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Background noise + gradients */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background:
+        var(--grad-glow-green),
+        var(--grad-glow-pink),
+        var(--bg);
+      z-index: 0;
+    }
+
+    /* Floating orbs */
+    .orb {
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(80px);
+      opacity: 0.15;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .orb-1 {
+      width: 500px; height: 500px;
+      background: var(--green);
+      top: -200px; left: -200px;
+      animation: float 12s ease-in-out infinite;
+    }
+
+    .orb-2 {
+      width: 400px; height: 400px;
+      background: var(--pink);
+      bottom: -150px; right: -150px;
+      animation: float 10s ease-in-out infinite reverse;
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translate(0, 0) scale(1); }
+      33%       { transform: translate(30px, -20px) scale(1.05); }
+      66%       { transform: translate(-20px, 30px) scale(0.97); }
+    }
+
+    /* Login card */
+    .login-wrapper {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 420px;
+      padding: var(--space-4);
+      animation: fadeIn 0.5s cubic-bezier(0.16,1,0.3,1);
+    }
+
+    .login-card {
+      background: rgba(22,22,22,0.75);
+      backdrop-filter: blur(32px);
+      -webkit-backdrop-filter: blur(32px);
+      border: 1px solid var(--border-hover);
+      border-radius: var(--radius-xl);
+      padding: var(--space-10) var(--space-8);
+      box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255,255,255,0.04);
+    }
+
+    /* Logo */
+    .login-logo {
+      text-align: center;
+      margin-bottom: var(--space-8);
+    }
+
+    .login-logo .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-3);
+      margin-bottom: var(--space-3);
+    }
+
+    .logo-mark {
+      width: 44px;
+      height: 44px;
+      border-radius: var(--radius-md);
+      background: var(--grad-brand);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: var(--shadow-glow-green);
+      animation: pulse-glow 3s ease-in-out infinite;
+    }
+
+    .logo-mark svg {
+      width: 24px;
+      height: 24px;
+      fill: #0D0D0D;
+    }
+
+    .brand-name {
+      font-size: 1.375rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      background: var(--grad-brand);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .login-title {
+      font-size: 0.9375rem;
+      color: var(--text-secondary);
+      letter-spacing: 0.01em;
+    }
+
+    /* Form */
+    .login-form {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-5);
+    }
+
+    .input-with-icon {
+      position: relative;
+    }
+
+    .input-with-icon .input-icon {
+      position: absolute;
+      left: var(--space-4);
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      pointer-events: none;
+      transition: var(--transition-fast);
+    }
+
+    .input-with-icon .input {
+      padding-left: 42px;
+    }
+
+    .input-with-icon:focus-within .input-icon { color: var(--green); }
+
+    /* Toggle password */
+    .toggle-password {
+      position: absolute;
+      right: var(--space-4);
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 0;
+      transition: var(--transition-fast);
+    }
+
+    .toggle-password:hover { color: var(--text-primary); }
+
+    /* Submit */
+    #btn-login {
+      width: 100%;
+      padding: var(--space-4);
+      font-size: 0.9375rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #btn-login::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
+      transform: translateX(-100%);
+      transition: transform 0.6s ease;
+    }
+
+    #btn-login:hover::after { transform: translateX(100%); }
+
+    /* Error message */
+    #login-error {
+      padding: var(--space-3) var(--space-4);
+      border-radius: var(--radius-md);
+      font-size: 0.875rem;
+      background: rgba(255,59,92,0.1);
+      border: 1px solid rgba(255,59,92,0.25);
+      color: #ff6b6b;
+      display: none;
+      align-items: center;
+      gap: var(--space-2);
+      animation: fadeIn 0.3s ease;
+    }
+
+    #login-error.visible { display: flex; }
+
+    /* Footer info */
+    .login-footer {
+      margin-top: var(--space-6);
+      text-align: center;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+    }
+
+    .login-footer .version {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-1);
+    }
+
+    .version-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Background orbs -->
+  <div class="orb orb-1" aria-hidden="true"></div>
+  <div class="orb orb-2" aria-hidden="true"></div>
+
+  <main class="login-wrapper" role="main">
+    <div class="login-card">
+
+      <!-- Logo -->
+      <div class="login-logo">
+        <div class="brand">
+          <div class="logo-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+            </svg>
+          </div>
+          <span class="brand-name">PROSPERKT</span>
+        </div>
+        <p class="login-title">Entre na sua conta para continuar</p>
+      </div>
+
+      <!-- Error -->
+      <div id="login-error" role="alert" aria-live="polite">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <span id="login-error-msg">Erro de autenticação</span>
+      </div>
+
+      <!-- Form -->
+      <form id="login-form" class="login-form" novalidate>
+        <!-- Email -->
+        <div class="input-group">
+          <label class="input-label" for="email">Email</label>
+          <div class="input-with-icon">
+            <svg class="input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>
+            </svg>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              class="input"
+              placeholder="seu@email.com"
+              autocomplete="email"
+              required
+              autofocus
+            >
+          </div>
+        </div>
+
+        <!-- Senha -->
+        <div class="input-group">
+          <label class="input-label" for="senha">Senha</label>
+          <div class="input-with-icon">
+            <svg class="input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <input
+              id="senha"
+              name="senha"
+              type="password"
+              class="input"
+              placeholder="••••••••"
+              autocomplete="current-password"
+              required
+            >
+            <button type="button" class="toggle-password" id="toggle-senha" aria-label="Mostrar/ocultar senha">
+              <svg id="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Submit -->
+        <button type="submit" class="btn btn-primary btn-lg" id="btn-login">
+          <span id="btn-text">Entrar</span>
+          <div class="spinner hidden" id="btn-spinner"></div>
+        </button>
+      </form>
+
+      <!-- Footer -->
+      <div class="login-footer">
+        <span class="version">
+          <span class="version-dot"></span>
+          PROSPERKT CRM v1.0 &nbsp;·&nbsp; Sistema seguro
+        </span>
+      </div>
+    </div>
+  </main>
+
+  <div id="toast-container" aria-live="polite"></div>
+
+  <script src="/js/auth.js"></script>
+  <script src="/js/toast.js"></script>
+  <script>
+    // Redireciona se já logado
+    Auth.redirecinarSeLogado();
+
+    // Toggle password visibility
+    document.getElementById('toggle-senha').addEventListener('click', () => {
+      const input  = document.getElementById('senha');
+      const isText = input.type === 'text';
+      input.type = isText ? 'password' : 'text';
+      document.getElementById('eye-icon').innerHTML = isText
+        ? '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>'
+        : '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>';
+    });
+
+    // Form submit
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const email = document.getElementById('email').value.trim();
+      const senha = document.getElementById('senha').value;
+      const errEl = document.getElementById('login-error');
+      const errMsg = document.getElementById('login-error-msg');
+      const btnText = document.getElementById('btn-text');
+      const spinner = document.getElementById('btn-spinner');
+      const btn = document.getElementById('btn-login');
+
+      // Reset error
+      errEl.classList.remove('visible');
+
+      // Validate
+      if (!email || !senha) {
+        errMsg.textContent = 'Por favor, preencha email e senha.';
+        errEl.classList.add('visible');
+        return;
+      }
+
+      // Loading state
+      btn.disabled = true;
+      btnText.textContent = 'Entrando...';
+      spinner.classList.remove('hidden');
+
+      try {
+        const result = await Auth.login(email, senha);
+
+        if (result.sucesso) {
+          Toast.show('Bem-vindo! Redirecionando...', 'success');
+          setTimeout(() => { window.location.href = '/dashboard.html'; }, 800);
+        } else {
+          errMsg.textContent = result.erro || 'Credenciais inválidas.';
+          errEl.classList.add('visible');
+          document.getElementById('senha').classList.add('error');
+
+          // Shake animation
+          const card = document.querySelector('.login-card');
+          card.style.animation = 'none';
+          card.offsetHeight;
+          card.style.animation = 'shake 0.4s ease';
+        }
+      } catch (err) {
+        errMsg.textContent = 'Erro de conexão. Tente novamente.';
+        errEl.classList.add('visible');
+      } finally {
+        btn.disabled = false;
+        btnText.textContent = 'Entrar';
+        spinner.classList.add('hidden');
+      }
+    });
+
+    // Limpa erro ao digitar
+    ['email','senha'].forEach(id => {
+      document.getElementById(id).addEventListener('input', () => {
+        document.getElementById('login-error').classList.remove('visible');
+        document.getElementById(id).classList.remove('error');
+      });
+    });
+  </script>
+
+  <style>
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      25%       { transform: translateX(-8px); }
+      75%       { transform: translateX(8px); }
+    }
+  </style>
+</body>
+</html>

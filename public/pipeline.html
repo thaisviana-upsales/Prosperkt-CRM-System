@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pipeline — PROSPERKT CRM</title>
+<link rel="stylesheet" href="/css/design-system.css">
+<link rel="stylesheet" href="/css/pipeline.css">
+</head>
+<body>
+<div class="app-layout">
+<div id="sidebar-container"></div>
+<main class="main-content animate-fade" style="padding:24px 28px">
+
+<!-- Título -->
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+  <div>
+    <h1 class="page-title" style="font-size:1.4rem;margin-bottom:2px" id="page-title">Pipeline</h1>
+    <p class="page-subtitle" id="page-sub">Selecione um funil para visualizar</p>
+  </div>
+  <button class="btn btn-primary" id="btn-novo-lead">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    Novo Lead
+  </button>
+</div>
+
+<!-- Filter Bar -->
+<div class="filter-bar">
+
+  <div class="filter-group">
+    <span class="filter-label">Funil</span>
+    <select id="sel-funil" class="filter-select">
+      <option value="">Todos</option>
+    </select>
+  </div>
+
+  <div class="filter-group">
+    <span class="filter-label">Vendedor</span>
+    <select id="sel-resp" class="filter-select">
+      <option value="">Todos</option>
+    </select>
+  </div>
+
+  <div class="filter-group">
+    <span class="filter-label">Data</span>
+    <div class="date-group">
+      <select id="sel-data-tipo" class="filter-select" style="min-width:180px">
+        <option value="">Tipo de data</option>
+        <option value="criacao">Data de criação</option>
+        <option value="fechamento">Data de fechamento</option>
+        <option value="perdido">Data de perdido</option>
+      </select>
+      <select id="sel-data-periodo" class="filter-select" style="display:none;min-width:150px">
+        <option value="">Período</option>
+        <option value="hoje">Hoje</option>
+        <option value="ontem">Ontem</option>
+        <option value="7d">Últimos 7 dias</option>
+        <option value="30d">Últimos 30 dias</option>
+        <option value="mes_atual">Este mês</option>
+        <option value="mes_ant">Mês anterior</option>
+        <option value="personalizado">Personalizado</option>
+      </select>
+      <div class="date-custom" id="date-custom-wrap">
+        <input type="date" id="data-inicio" class="date-input" title="Data inicial">
+        <input type="date" id="data-fim" class="date-input" title="Data final">
+      </div>
+    </div>
+  </div>
+
+  <div class="filter-group" style="flex:1;min-width:240px">
+    <span class="filter-label">Buscar lead</span>
+    <div class="search-wrap">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text-muted)"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input id="busca" class="search-premium" placeholder="Buscar por nome, telefone, e-mail ou empresa">
+    </div>
+  </div>
+
+  <button class="btn-clear-filters" id="btn-clear">Limpar filtros</button>
+</div>
+
+<div class="kanban-wrap" id="kanban"></div>
+</main>
+</div>
+
+<!-- MODAL LEAD -->
+<div class="modal-ov" id="ov-lead">
+<div class="modal-box">
+  <div class="mh">
+    <h3 id="ml-title">Novo Lead</h3>
+    <button class="xl" id="ml-close"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+  </div>
+  <div id="ml-alert" class="alert" style="display:none;margin-bottom:16px"></div>
+  <div style="display:flex;gap:0;margin-bottom:20px;border-bottom:1px solid var(--border)">
+    <button class="tab-btn" id="tab-btn-dados" style="color:var(--green);border-bottom-color:var(--green)">Dados</button>
+    <button class="tab-btn" id="tab-btn-hist" style="color:var(--text-muted)">Histórico</button>
+  </div>
+
+  <div id="tab-dados">
+  <div class="fg">
+    <input type="hidden" id="fl-id">
+    <div class="fr">
+      <div class="input-group"><label class="input-label">Nome *</label><input id="fl-nome" class="input" placeholder="Nome do lead"></div>
+      <div class="input-group"><label class="input-label">Empresa</label><input id="fl-empresa" class="input" placeholder="Empresa Ltda"></div>
+    </div>
+    <div class="fr">
+      <div class="input-group"><label class="input-label">Telefone</label><input id="fl-tel" class="input" placeholder="(11) 99999-9999"></div>
+      <div class="input-group"><label class="input-label">Email</label><input id="fl-email" class="input" type="email" placeholder="lead@email.com"></div>
+    </div>
+    <div class="fr">
+      <div class="input-group"><label class="input-label">Funil (origem)</label><select id="fl-funil" class="input"></select></div>
+      <div class="input-group"><label class="input-label">Etapa</label><select id="fl-etapa" class="input"></select></div>
+    </div>
+    <div class="fr">
+      <div class="input-group"><label class="input-label">Responsável</label><select id="fl-resp" class="input"></select></div>
+      <div class="input-group"><label class="input-label">Valor Potencial (R$)</label><input id="fl-valor" class="input" type="number" placeholder="0" min="0"></div>
+    </div>
+    <div class="fr">
+      <div class="input-group"><label class="input-label">Valor Vendido (R$)</label><input id="fl-valor-venda" class="input" type="number" placeholder="0" min="0"></div>
+      <div class="input-group"><label class="input-label">Status</label>
+        <select id="fl-status" class="input">
+          <option value="ABERTO">Aberto</option>
+          <option value="GANHO">Ganho</option>
+          <option value="PERDIDO">Perdido</option>
+          <option value="ARQUIVADO">Arquivado</option>
+        </select>
+      </div>
+    </div>
+    <div class="fr">
+      <div class="input-group"><label class="input-label">Data de fechamento</label><input id="fl-data-fechamento" class="input date-input" type="date"></div>
+      <div class="input-group"><label class="input-label">Data de entrada</label><input id="fl-data-entrada" class="input date-input" type="date"></div>
+    </div>
+    <div class="input-group"><label class="input-label">Tags (separadas por vírgula)</label><input id="fl-tags" class="input" placeholder="quente, b2b, retorno"></div>
+    <div class="input-group"><label class="input-label">Observações</label>
+      <textarea id="fl-obs" class="input" rows="3" placeholder="Observações sobre o lead..." style="resize:vertical"></textarea>
+    </div>
+  </div>
+  </div>
+
+  <div id="tab-hist" style="display:none">
+    <div id="hist-list" style="max-height:300px;overflow-y:auto;margin-bottom:16px"></div>
+    <div class="input-group">
+      <label class="input-label">Nova nota</label>
+      <textarea id="nova-nota" class="input" rows="2" placeholder="Adicionar nota ao histórico..."></textarea>
+    </div>
+    <button class="btn btn-secondary btn-sm" style="margin-top:8px" id="btn-add-nota">Adicionar Nota</button>
+  </div>
+
+  <div class="mf">
+    <button class="btn btn-danger btn-sm" id="ml-excluir" style="margin-right:auto;display:none">Excluir lead</button>
+    <button class="btn btn-secondary" id="ml-cancelar">Cancelar</button>
+    <button class="btn btn-primary" id="ml-salvar">
+      <span id="ml-salvar-txt">Salvar</span>
+      <div class="spinner hidden" id="ml-spinner"></div>
+    </button>
+  </div>
+</div>
+</div>
+
+<div id="toast-container"></div>
+<script src="/js/auth.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/sidebar.js"></script>
+<script src="/js/pipeline.js"></script>
+</body>
+</html>

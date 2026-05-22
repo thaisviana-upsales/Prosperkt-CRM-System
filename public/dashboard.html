@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Dashboard — PROSPERKT CRM</title>
+<link rel="stylesheet" href="/css/design-system.css">
+<style>
+/* ── Layout ── */
+.dash-wrap{display:flex;flex-direction:column;gap:24px}
+/* ── Filter bar ── */
+.dash-filters{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;padding:14px 18px;background:var(--surface);border:1px solid var(--border);border-radius:14px}
+.fg{display:flex;flex-direction:column;gap:5px}
+.fl{font-size:.6875rem;font-weight:600;color:var(--text-muted);letter-spacing:.07em;text-transform:uppercase}
+.fs{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:inherit;font-size:.875rem;padding:7px 12px;outline:none;min-width:140px;cursor:pointer;transition:border .15s}
+.fs:focus{border-color:var(--green);box-shadow:0 0 0 3px var(--green-dim)}
+.fs option{background:var(--surface)}
+.di{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-family:inherit;font-size:.875rem;padding:7px 10px;outline:none;color-scheme:dark;width:130px;display:none}
+.di.show{display:block}
+.di:focus{border-color:var(--green)}
+.btn-apply{padding:7px 16px;background:var(--grad-brand);border:none;border-radius:8px;color:#0D0D0D;font-weight:700;font-size:.875rem;cursor:pointer;font-family:inherit;transition:opacity .15s}
+.btn-apply:hover{opacity:.85}
+.btn-clear{padding:7px 12px;background:none;border:1px solid var(--border);border-radius:8px;color:var(--text-muted);font-size:.8125rem;cursor:pointer;font-family:inherit;transition:all .15s}
+.btn-clear:hover{border-color:var(--pink);color:var(--pink)}
+/* ── KPI Cards ── */
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px}
+.kpi-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;position:relative;overflow:hidden;transition:all .2s}
+.kpi-card::after{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.kpi-card.green::after{background:var(--green)}
+.kpi-card.pink::after{background:var(--pink)}
+.kpi-card.blue::after{background:#3B8BFF}
+.kpi-card.yellow::after{background:#FFB627}
+.kpi-card:hover{border-color:var(--border-hover);transform:translateY(-2px);box-shadow:var(--shadow-md)}
+.kpi-label{font-size:.75rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+.kpi-value{font-size:1.75rem;font-weight:800;letter-spacing:-.02em;line-height:1}
+.kpi-sub{font-size:.75rem;color:var(--text-muted);margin-top:6px}
+.kpi-icon{position:absolute;top:16px;right:16px;opacity:.15;font-size:2rem}
+/* ── Two-col grid ── */
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+@media(max-width:900px){.two-col{grid-template-columns:1fr}}
+/* ── Panel ── */
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px}
+.panel-title{font-size:.9375rem;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.panel-title svg{opacity:.6}
+/* ── Funil visual premium ── */
+.fv-wrap{display:flex;flex-direction:column;gap:6px}
+.fv-row{position:relative;display:flex;flex-direction:column;gap:3px;cursor:default}
+.fv-bar-outer{width:100%;background:var(--surface-2);border-radius:6px;overflow:hidden;height:36px;position:relative}
+.fv-bar-inner{height:100%;border-radius:6px;transition:width .7s cubic-bezier(.16,1,.3,1);position:relative;display:flex;align-items:center;padding:0 12px;min-width:36px}
+.fv-bar-label{font-size:.8125rem;font-weight:700;color:#fff;white-space:nowrap;text-shadow:0 1px 2px rgba(0,0,0,.4);z-index:1}
+.fv-meta{display:flex;align-items:center;justify-content:space-between;padding:0 2px}
+.fv-name{font-size:.8rem;font-weight:600;color:var(--text-secondary)}
+.fv-stats{display:flex;gap:10px;font-size:.75rem;color:var(--text-muted)}
+.fv-conv{color:var(--green);font-weight:700}
+.fv-drop{color:var(--pink);font-weight:700}
+.fv-divider{display:flex;justify-content:center;padding:2px 0;color:var(--text-muted);font-size:.7rem;opacity:.5}
+.fv-row:hover .fv-bar-outer{box-shadow:0 0 0 1px var(--border-hover)}
+.fv-row:hover .fv-name{color:var(--text-primary)}
+/* ── Ranking ── */
+.rank-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)}
+.rank-row:last-child{border-bottom:none}
+.rank-pos{font-size:.875rem;font-weight:800;color:var(--text-muted);width:20px;text-align:center}
+.rank-pos.gold{color:#FFB627}
+.rank-pos.silver{color:#aaa}
+.rank-pos.bronze{color:#cd7f32}
+.rank-avatar{width:32px;height:32px;border-radius:50%;background:var(--grad-brand);display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:700;color:#0D0D0D;flex-shrink:0}
+.rank-name{font-size:.875rem;font-weight:600;flex:1}
+.rank-stats{display:flex;gap:16px;font-size:.75rem;color:var(--text-muted)}
+.rank-stat strong{color:var(--text-primary);font-weight:700}
+/* ── Por funil ── */
+.funil-row{display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--border)}
+.funil-row:last-child{border-bottom:none}
+.funil-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.funil-nome{font-size:.875rem;flex:1}
+.funil-val{font-size:.875rem;font-weight:700;color:var(--green)}
+.funil-leads{font-size:.75rem;color:var(--text-muted);min-width:60px;text-align:right}
+.resp-stat{text-align:center;padding:20px 0}
+.resp-num{font-size:2.5rem;font-weight:800;color:var(--green)}
+.resp-label{font-size:.8125rem;color:var(--text-muted);margin-top:4px}
+/* ── Sparkline ── */
+.sparkline-wrap{height:56px;display:flex;align-items:flex-end;gap:2px}
+.spark-bar{background:var(--green);border-radius:2px 2px 0 0;flex:1;min-height:2px;opacity:.7;transition:opacity .2s}
+.spark-bar:hover{opacity:1}
+/* ── Empty ── */
+.empty{padding:32px;text-align:center;color:var(--text-muted);font-size:.875rem}
+/* ── Meta preparado ── */
+.meta-placeholder{background:var(--surface-2);border:1px dashed var(--border);border-radius:10px;padding:16px;display:flex;align-items:center;gap:12px;color:var(--text-muted);font-size:.875rem}
+.refresh-badge{margin-left:auto;font-size:.6875rem;color:var(--green);background:var(--green-dim);padding:2px 8px;border-radius:20px}
+/* ── Pendentes Card ── */
+.kpi-card.pendente-zero::after{background:var(--green)}
+.kpi-card.pendente-alert::after{background:var(--pink)}
+.kpi-card.pendente-zero .kpi-value{color:var(--green)}
+.kpi-card.pendente-alert .kpi-value{color:var(--pink)}
+.kpi-card.pendente-alert{border-color:rgba(225,0,152,.3);box-shadow:0 0 0 1px rgba(225,0,152,.15),0 0 24px rgba(225,0,152,.08)}
+.kpi-card.pendente-alert:hover{box-shadow:0 0 0 1px rgba(225,0,152,.4),0 0 32px rgba(225,0,152,.15)}
+.kpi-card[style*="cursor"],a.kpi-card{cursor:pointer}
+/* ── Drawer Pendentes ── */
+.drawer-ov{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(6px);z-index:800;opacity:0;pointer-events:none;transition:opacity .25s}
+.drawer-ov.open{opacity:1;pointer-events:all}
+.drawer-panel{position:fixed;top:0;right:0;bottom:0;width:min(520px,96vw);background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .3s cubic-bezier(.16,1,.3,1);box-shadow:-8px 0 40px rgba(0,0,0,.5)}
+.drawer-ov.open .drawer-panel{transform:translateX(0)}
+.drawer-header{padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0}
+.drawer-body{flex:1;overflow-y:auto;padding:12px}
+.pend-row{display:flex;align-items:flex-start;gap:12px;padding:12px;border-radius:12px;cursor:pointer;border:1px solid transparent;transition:all .2s;margin-bottom:6px}
+.pend-row:hover{background:var(--surface-2);border-color:var(--border-hover)}
+.pend-avatar{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#a8003f,#E10098);display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:700;color:#fff;flex-shrink:0}
+.pend-info{flex:1;min-width:0}
+.pend-name{font-size:.875rem;font-weight:700;margin-bottom:2px}
+.pend-tel{font-size:.72rem;color:var(--text-muted);margin-bottom:4px}
+.pend-preview{font-size:.78rem;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px}
+.pend-meta{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.pend-badge{padding:2px 8px;border-radius:20px;font-size:.66rem;font-weight:700;background:rgba(225,0,152,.15);color:var(--pink)}
+.pend-badge.funil{background:rgba(59,139,255,.15);color:#3B8BFF}
+.pend-badge.tempo{background:rgba(225,0,152,.1);color:var(--pink)}
+.pend-badge.tempo.urgente{background:rgba(225,0,152,.2);color:var(--pink);animation:pulseAlert 2s infinite}
+@keyframes pulseAlert{0%,100%{opacity:1}50%{opacity:.6}}
+</style>
+</head>
+<body>
+<div class="app-layout">
+<div id="sidebar-container"></div>
+<main class="main-content animate-fade" style="padding:24px 28px">
+
+<!-- Header -->
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+  <div>
+    <h1 class="page-title" style="font-size:1.4rem;margin-bottom:2px">Dashboard Executivo</h1>
+    <p class="page-subtitle">Visão operacional em tempo real</p>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px">
+    <span class="refresh-badge" id="last-update">Atualizado agora</span>
+    <button class="btn btn-secondary btn-sm" id="btn-refresh">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+      Atualizar
+    </button>
+  </div>
+</div>
+
+<!-- Filters -->
+<div class="dash-filters" style="margin-bottom:20px">
+  <div class="fg">
+    <span class="fl">Funil</span>
+    <select id="f-funil" class="fs"><option value="">Todos</option></select>
+  </div>
+  <div class="fg">
+    <span class="fl">Vendedor</span>
+    <select id="f-resp" class="fs"><option value="">Todos</option></select>
+  </div>
+  <div class="fg">
+    <span class="fl">Tipo de data</span>
+    <select id="f-data-tipo" class="fs" style="min-width:180px">
+      <option value="">Sem filtro de data</option>
+      <option value="criacao">Data de criação</option>
+      <option value="fechamento">Data de fechamento</option>
+      <option value="perdido">Data de perdido</option>
+    </select>
+  </div>
+  <div class="fg" id="periodo-group" style="display:none">
+    <span class="fl">Período</span>
+    <select id="f-periodo" class="fs">
+      <option value="">Selecione</option>
+      <option value="hoje">Hoje</option>
+      <option value="ontem">Ontem</option>
+      <option value="7d">Últimos 7 dias</option>
+      <option value="30d">Últimos 30 dias</option>
+      <option value="mes_atual">Este mês</option>
+      <option value="mes_ant">Mês anterior</option>
+      <option value="personalizado">Personalizado</option>
+    </select>
+  </div>
+  <input type="date" id="f-inicio" class="di" title="De">
+  <input type="date" id="f-fim"    class="di" title="Até">
+  <button class="btn-apply" id="btn-apply">Aplicar</button>
+  <button class="btn-clear" id="btn-clear">Limpar</button>
+</div>
+
+<!-- KPIs -->
+<div class="kpi-grid" id="kpi-grid" style="margin-bottom:20px">
+  <div class="kpi-card green"><div class="kpi-label">Leads Recebidos</div><div class="kpi-value" id="kpi-leads">—</div><div class="kpi-sub" id="kpi-leads-sub"></div><div class="kpi-icon">📥</div></div>
+  <div class="kpi-card green"><div class="kpi-label">Vendas Fechadas</div><div class="kpi-value" id="kpi-ganhos">—</div><div class="kpi-sub" id="kpi-ganhos-sub"></div><div class="kpi-icon">🏆</div></div>
+  <div class="kpi-card blue"><div class="kpi-label">Faturamento</div><div class="kpi-value" id="kpi-fat">—</div><div class="kpi-sub" id="kpi-fat-sub"></div><div class="kpi-icon">💰</div></div>
+  <div class="kpi-card yellow"><div class="kpi-label">Ticket Médio</div><div class="kpi-value" id="kpi-ticket">—</div><div class="kpi-sub"></div><div class="kpi-icon">🎯</div></div>
+  <div class="kpi-card green"><div class="kpi-label">Taxa de Conversão</div><div class="kpi-value" id="kpi-conv">—</div><div class="kpi-sub"></div><div class="kpi-icon">📈</div></div>
+  <div class="kpi-card green"><div class="kpi-label">Leads Perdidos</div><div class="kpi-value" id="kpi-perdidos">—</div><div class="kpi-sub" id="kpi-perdidos-sub"></div><div class="kpi-icon">📉</div></div>
+  <!-- Card Mensagens Pendentes: visivel apenas para GESTOR+ (ocultado via JS) -->
+  <div class="kpi-card pendente-zero" id="kpi-pendentes-card" style="cursor:pointer;display:none" title="Ver conversas aguardando resposta">
+    <div class="kpi-label">Mensagens Pendentes</div>
+    <div class="kpi-value" id="kpi-pendentes">—</div>
+    <div class="kpi-sub">conversas aguardando resposta do time</div>
+    <div class="kpi-icon">💬</div>
+    <div style="position:absolute;bottom:12px;right:14px;font-size:.65rem;color:var(--text-muted);opacity:.7">clique para ver →</div>
+  </div>
+</div>
+
+<!-- Row 1: Funil + Ranking -->
+<div class="two-col" style="margin-bottom:20px">
+  <div class="panel">
+    <div class="panel-title">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg>
+      Funil de Conversão
+    </div>
+    <p style="font-size:.78rem;color:var(--text-muted);margin:-10px 0 14px">Visão das etapas comerciais e conversão entre fases</p>
+    <div id="funil-visual" class="fv-wrap"><div class="empty">Nenhum dado</div></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Ranking Vendedores
+    </div>
+    <div id="ranking" class="rank-list"><div class="empty">Nenhum dado</div></div>
+  </div>
+</div>
+
+<!-- Row 2: Por funil + Tempo resposta -->
+<div class="two-col" style="margin-bottom:20px">
+  <div class="panel">
+    <div class="panel-title">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      Faturamento por Funil
+    </div>
+    <div id="por-funil"><div class="empty">Nenhum dado</div></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Tempo Médio de Resposta
+    </div>
+    <div id="tempo-resposta" class="resp-stat">
+      <div class="resp-num" id="resp-num">—</div>
+      <div class="resp-label">minutos até 1ª interação</div>
+      <div style="font-size:.75rem;color:var(--text-muted);margin-top:8px" id="resp-leads"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Row 3: Evolução diária + Metas (preparado) -->
+<div class="two-col">
+  <div class="panel">
+    <div class="panel-title">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      Evolução de Leads (últimos 30 dias)
+    </div>
+    <div id="spark-wrap" class="sparkline-wrap"></div>
+    <div id="spark-labels" style="display:flex;justify-content:space-between;margin-top:4px;font-size:.6875rem;color:var(--text-muted)"></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      Metas
+      <span style="font-size:.7rem;color:var(--text-muted);margin-left:auto;font-weight:400">Em breve</span>
+    </div>
+    <div class="meta-placeholder">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+      Módulo de metas pronto para integração. Os dados de leads, conversão e faturamento já estão disponíveis no banco.
+    </div>
+    <div style="margin-top:16px;display:flex;flex-direction:column;gap:10px" id="meta-preview">
+      <div style="display:flex;justify-content:space-between;font-size:.875rem">
+        <span>Leads recebidos</span><span id="mp-leads" style="font-weight:700">—</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:.875rem">
+        <span>Vendas fechadas</span><span id="mp-ganhos" style="font-weight:700;color:var(--green)">—</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:.875rem">
+        <span>Faturamento total</span><span id="mp-fat" style="font-weight:700;color:var(--green)">—</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:.875rem">
+        <span>Taxa de conversão</span><span id="mp-conv" style="font-weight:700">—</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+</main>
+</div>
+
+<!-- Drawer Mensagens Pendentes -->
+<div class="drawer-ov" id="drawer-ov">
+  <div class="drawer-panel">
+    <div class="drawer-header">
+      <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#a8003f,#E10098);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
+          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+        </svg>
+      </div>
+      <div>
+        <div style="font-size:.9rem;font-weight:800">Mensagens Pendentes</div>
+        <div style="font-size:.72rem;color:var(--text-muted)" id="drawer-sub">Conversas aguardando resposta</div>
+      </div>
+      <button style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;padding:6px;border-radius:8px;transition:color .15s" id="drawer-close" title="Fechar">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="drawer-body" id="drawer-body">
+      <div class="empty">Carregando...</div>
+    </div>
+    <div style="padding:12px 20px;border-top:1px solid var(--border);flex-shrink:0">
+      <a href="/whatsapp.html" class="btn btn-primary btn-sm" style="width:100%;text-align:center;display:block">Ver todas as conversas →</a>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+<script src="/js/auth.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/sidebar.js"></script>
+<script src="/js/dashboard.js"></script>
+</body>
+</html>
