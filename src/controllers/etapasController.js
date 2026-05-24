@@ -1,79 +1,116 @@
 /**
  * PROSPERKT CRM — Etapas Controller
+ * Supabase JS nativo ou SQLite conforme DATABASE_PROVIDER.
+ * No Supabase: etapas têm funil_id direto (sem pipeline_id).
  */
 const crypto = require('crypto');
-const { getDb } = require('../database/db');
+const { getProvider } = require('../database/dbProvider');
 
-// GET /api/etapas?pipeline_id=xxx
-function listar(req, res) {
-  const db = getDb();
+// GET /api/etapas?funil_id=xxx  ou  ?pipeline_id=xxx
+async function listar(req, res) {
+  const { sb, isSupa, sqlite } = getProvider();
   const { pipeline_id, funil_id } = req.query;
-  let etapas;
-  if (funil_id) {
-    etapas = db.prepare(`SELECT e.* FROM etapas e
-      JOIN pipelines p ON e.pipeline_id=p.id WHERE p.funil_id=? ORDER BY e.ordem`).all(funil_id);
-  } else if (pipeline_id) {
-    etapas = db.prepare(`SELECT * FROM etapas WHERE pipeline_id=? ORDER BY ordem`).all(pipeline_id);
-  } else {
-    etapas = db.prepare(`SELECT * FROM etapas ORDER BY ordem`).all();
-  }
-  return res.json({ sucesso:true, dados:etapas, total:etapas.length });
+  try {
+    if (isSupa) {
+      let q = sb.from('etapas').select('*');
+      if (funil_id)    q = q.eq('funil_id', funil_id);
+      else if (pipeline_id) q = q.eq('funil_id', pipeline_id); // no Supabase pipeline_id == funil_id
+      q = q.order('ordem');
+      const { data, error } = await q;
+      if (error) throw error;
+      return res.json({ sucesso:true, dados:data||[], total:(data||[]).length });
+    }
+    const { getDb } = require('../database/db');
+    const db = getDb();
+    let etapas;
+    if (funil_id)       etapas = db.prepare(`SELECT e.* FROM etapas e JOIN pipelines p ON e.pipeline_id=p.id WHERE p.funil_id=? ORDER BY e.ordem`).all(funil_id);
+    else if (pipeline_id) etapas = db.prepare(`SELECT * FROM etapas WHERE pipeline_id=? ORDER BY ordem`).all(pipeline_id);
+    else                etapas = db.prepare(`SELECT * FROM etapas ORDER BY ordem`).all();
+    return res.json({ sucesso:true, dados:etapas, total:etapas.length });
+  } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
 }
 
 // POST /api/etapas
-function criar(req, res) {
-  const db = getDb();
-  const { pipeline_id, nome, cor='#6CFF4E', ordem=0, is_ganho=0, is_perdido=0, probabilidade=50 } = req.body;
-  if (!pipeline_id || !nome) return res.status(400).json({ sucesso:false, erro:'pipeline_id e nome são obrigatórios.' });
-
+async function criar(req, res) {
+  const { sb, isSupa } = getProvider();
+  const { pipeline_id, funil_id, nome, cor='#6CFF4E', ordem=0, is_ganho=0, is_perdido=0, probabilidade=50 } = req.body;
+  const fId = funil_id || pipeline_id; // no Supabase pipeline_id == funil_id
+  if (!fId || !nome) return res.status(400).json({ sucesso:false, erro:'funil_id e nome são obrigatórios.' });
   const id = crypto.randomBytes(16).toString('hex');
-  db.prepare(`INSERT INTO etapas (id,pipeline_id,nome,cor,ordem,is_ganho,is_perdido,probabilidade,criado_por) VALUES (?,?,?,?,?,?,?,?,?)`)
-    .run(id, pipeline_id, nome.trim(), cor, ordem, is_ganho?1:0, is_perdido?1:0, probabilidade, req.usuario.id);
-
-  req.log({ acao:'CREATE', entidade:'etapas', entidade_id:id, depois:{ pipeline_id, nome } });
-  return res.status(201).json({ sucesso:true, dados: db.prepare('SELECT * FROM etapas WHERE id=?').get(id) });
+  try {
+    if (isSupa) {
+      const { data, error } = await sb.from('etapas').insert({ id, funil_id:fId, nome:nome.trim(), cor, ordem, is_ganho:is_ganho?1:0, is_perdido:is_perdido?1:0, probabilidade }).select().single();
+      if (error) throw error;
+      return res.status(201).json({ sucesso:true, dados:data });
+    }
+    const { getDb } = require('../database/db');
+    const db = getDb();
+    db.prepare(`INSERT INTO etapas (id,pipeline_id,nome,cor,ordem,is_ganho,is_perdido,probabilidade,criado_por) VALUES (?,?,?,?,?,?,?,?,?)`).run(id,pipeline_id,nome.trim(),cor,ordem,is_ganho?1:0,is_perdido?1:0,probabilidade,req.usuario.id);
+    return res.status(201).json({ sucesso:true, dados: db.prepare('SELECT * FROM etapas WHERE id=?').get(id) });
+  } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
 }
 
 // PATCH /api/etapas/:id
-function atualizar(req, res) {
-  const db = getDb();
+async function atualizar(req, res) {
+  const { sb, isSupa } = getProvider();
   const { id } = req.params;
-  const atual = db.prepare('SELECT * FROM etapas WHERE id=?').get(id);
-  if (!atual) return res.status(404).json({ sucesso:false, erro:'Etapa não encontrada.' });
-
-  const campos = {};
-  ['nome','cor','ordem','is_ganho','is_perdido','probabilidade','sla_horas'].forEach(k => {
-    if (req.body[k] !== undefined) campos[k] = req.body[k];
-  });
-  campos.atualizado_em = new Date().toISOString();
-
-  const sets = Object.keys(campos).map(k=>`${k}=?`).join(',');
-  db.prepare(`UPDATE etapas SET ${sets} WHERE id=?`).run(...Object.values(campos), id);
-  req.log({ acao:'UPDATE', entidade:'etapas', entidade_id:id, antes:atual, depois:campos });
-  return res.json({ sucesso:true, dados: db.prepare('SELECT * FROM etapas WHERE id=?').get(id) });
+  try {
+    if (isSupa) {
+      const upd = { atualizado_em: new Date().toISOString() };
+      ['nome','cor','ordem','is_ganho','is_perdido','probabilidade','sla_horas'].forEach(k => { if (req.body[k] !== undefined) upd[k] = req.body[k]; });
+      const { data, error } = await sb.from('etapas').update(upd).eq('id', id).select().single();
+      if (error) throw error;
+      return res.json({ sucesso:true, dados:data });
+    }
+    const { getDb } = require('../database/db');
+    const db = getDb();
+    const atual = db.prepare('SELECT * FROM etapas WHERE id=?').get(id);
+    if (!atual) return res.status(404).json({ sucesso:false, erro:'Etapa não encontrada.' });
+    const campos = { atualizado_em: new Date().toISOString() };
+    ['nome','cor','ordem','is_ganho','is_perdido','probabilidade','sla_horas'].forEach(k => { if (req.body[k] !== undefined) campos[k] = req.body[k]; });
+    const sets = Object.keys(campos).map(k=>`${k}=?`).join(',');
+    db.prepare(`UPDATE etapas SET ${sets} WHERE id=?`).run(...Object.values(campos), id);
+    return res.json({ sucesso:true, dados: db.prepare('SELECT * FROM etapas WHERE id=?').get(id) });
+  } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
 }
 
 // DELETE /api/etapas/:id
-function deletar(req, res) {
-  const db = getDb();
-  const etapa = db.prepare('SELECT * FROM etapas WHERE id=?').get(req.params.id);
-  if (!etapa) return res.status(404).json({ sucesso:false, erro:'Etapa não encontrada.' });
-  const count = db.prepare("SELECT COUNT(*) as c FROM leads WHERE etapa_id=?").get(req.params.id).c;
-  if (count > 0) return res.status(400).json({ sucesso:false, erro:`Existem ${count} leads nesta etapa. Mova-os antes de excluir.` });
-  db.prepare('DELETE FROM etapas WHERE id=?').run(req.params.id);
-  req.log({ acao:'DELETE', entidade:'etapas', entidade_id:req.params.id, antes:etapa });
-  return res.json({ sucesso:true, mensagem:'Etapa excluída.' });
+async function deletar(req, res) {
+  const { sb, isSupa } = getProvider();
+  try {
+    if (isSupa) {
+      const { count } = await sb.from('leads').select('*', { count:'exact', head:true }).eq('etapa_id', req.params.id);
+      if (count > 0) return res.status(400).json({ sucesso:false, erro:`Existem ${count} leads nesta etapa. Mova-os antes de excluir.` });
+      await sb.from('etapas').delete().eq('id', req.params.id);
+      return res.json({ sucesso:true, mensagem:'Etapa excluída.' });
+    }
+    const { getDb } = require('../database/db');
+    const db = getDb();
+    const etapa = db.prepare('SELECT * FROM etapas WHERE id=?').get(req.params.id);
+    if (!etapa) return res.status(404).json({ sucesso:false, erro:'Etapa não encontrada.' });
+    const cnt = db.prepare("SELECT COUNT(*) as c FROM leads WHERE etapa_id=?").get(req.params.id).c;
+    if (cnt > 0) return res.status(400).json({ sucesso:false, erro:`Existem ${cnt} leads nesta etapa. Mova-os antes de excluir.` });
+    db.prepare('DELETE FROM etapas WHERE id=?').run(req.params.id);
+    return res.json({ sucesso:true, mensagem:'Etapa excluída.' });
+  } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
 }
 
 // POST /api/etapas/reordenar
-function reordenar(req, res) {
-  const db = getDb();
-  const { ordem } = req.body; // [{ id, ordem }]
+async function reordenar(req, res) {
+  const { sb, isSupa } = getProvider();
+  const { ordem } = req.body;
   if (!Array.isArray(ordem)) return res.status(400).json({ sucesso:false, erro:'Formato inválido.' });
-  const update = db.prepare('UPDATE etapas SET ordem=? WHERE id=?');
-  const updateMany = db.transaction(() => ordem.forEach(o => update.run(o.ordem, o.id)));
-  updateMany();
-  return res.json({ sucesso:true });
+  try {
+    if (isSupa) {
+      await Promise.all(ordem.map(o => sb.from('etapas').update({ ordem:o.ordem }).eq('id', o.id)));
+      return res.json({ sucesso:true });
+    }
+    const { getDb } = require('../database/db');
+    const db = getDb();
+    const update = db.prepare('UPDATE etapas SET ordem=? WHERE id=?');
+    db.transaction(() => ordem.forEach(o => update.run(o.ordem, o.id)))();
+    return res.json({ sucesso:true });
+  } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
 }
 
 module.exports = { listar, criar, atualizar, deletar, reordenar };

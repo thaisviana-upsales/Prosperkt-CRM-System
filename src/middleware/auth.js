@@ -22,56 +22,24 @@ const ROLE_HIERARCHY = {
  * Middleware: autentica o token JWT do header Authorization
  * Popula req.usuario = { id, nome, role, ... }
  */
-function autenticar(req, res, next) {
+async function autenticar(req, res, next) {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.startsWith('Bearer ')
-    ? authHeader.slice(7)
-    : null;
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
-  if (!token) {
-    return res.status(401).json({
-      sucesso: false,
-      erro: 'Token de autenticação ausente.',
-      codigo: 'NO_TOKEN',
-    });
-  }
+  if (!token) return res.status(401).json({ sucesso:false, erro:'Token de autenticação ausente.', codigo:'NO_TOKEN' });
 
   try {
     const decoded = jwt.verify(token, ACCESS_SECRET);
+    if (decoded.type !== 'access') return res.status(401).json({ sucesso:false, erro:'Tipo de token inválido.', codigo:'INVALID_TOKEN_TYPE' });
 
-    if (decoded.type !== 'access') {
-      return res.status(401).json({
-        sucesso: false,
-        erro: 'Tipo de token inválido.',
-        codigo: 'INVALID_TOKEN_TYPE',
-      });
-    }
-
-    // Confirma usuário ainda existe e está ativo no banco
-    const usuario = buscarUsuarioPorId(decoded.sub);
-    if (!usuario) {
-      return res.status(401).json({
-        sucesso: false,
-        erro: 'Usuário não encontrado ou desativado.',
-        codigo: 'USER_NOT_FOUND',
-      });
-    }
+    const usuario = await buscarUsuarioPorId(decoded.sub);
+    if (!usuario) return res.status(401).json({ sucesso:false, erro:'Usuário não encontrado ou desativado.', codigo:'USER_NOT_FOUND' });
 
     req.usuario = usuario;
     next();
   } catch (err) {
-    if (err.name === 'TokenExpiredError') {
-      return res.status(401).json({
-        sucesso: false,
-        erro: 'Token expirado.',
-        codigo: 'TOKEN_EXPIRED',
-      });
-    }
-    return res.status(401).json({
-      sucesso: false,
-      erro: 'Token inválido.',
-      codigo: 'INVALID_TOKEN',
-    });
+    if (err.name === 'TokenExpiredError') return res.status(401).json({ sucesso:false, erro:'Token expirado.', codigo:'TOKEN_EXPIRED' });
+    return res.status(401).json({ sucesso:false, erro:'Token inválido.', codigo:'INVALID_TOKEN' });
   }
 }
 

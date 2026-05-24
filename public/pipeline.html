@@ -116,13 +116,15 @@
     </div>
     <div class="fr">
       <div class="input-group"><label class="input-label">Valor Vendido (R$)</label><input id="fl-valor-venda" class="input" type="number" placeholder="0" min="0"></div>
-      <div class="input-group"><label class="input-label">Status</label>
-        <select id="fl-status" class="input">
-          <option value="ABERTO">Aberto</option>
-          <option value="GANHO">Ganho</option>
-          <option value="PERDIDO">Perdido</option>
-          <option value="ARQUIVADO">Arquivado</option>
-        </select>
+      <div class="input-group">
+        <label class="input-label">Status</label>
+        <!-- Status é readonly: controlado automaticamente ao mover lead entre etapas -->
+        <div id="fl-status-badge" style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;min-height:38px">
+          <span id="fl-status-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#6CFF4E;flex-shrink:0"></span>
+          <span id="fl-status-label" style="font-size:.85rem;font-weight:600;letter-spacing:.05em">ABERTO</span>
+          <span style="margin-left:auto;font-size:.7rem;color:var(--text-muted)">Auto</span>
+        </div>
+        <input type="hidden" id="fl-status" value="ABERTO">
       </div>
     </div>
     <div class="fr">

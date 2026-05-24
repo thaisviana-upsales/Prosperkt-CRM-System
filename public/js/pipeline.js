@@ -180,9 +180,25 @@ async function moverLead(etapaId) {
   if (!_dragLeadId || etapaId===_dragEtapaOrigem) return;
   const lead = _leads.find(l=>l.id===_dragLeadId);
   const pid  = lead?.pipeline_id || _pipelineAtivo;
-  const r = await Auth.api('PATCH',`/leads/${_dragLeadId}/mover`,{ etapa_id:etapaId, pipeline_id:pid });
-  if (r?.ok) { Toast.show('Lead movido!','success'); await carregarLeads(); }
-  else Toast.show(r?.data?.erro||'Erro ao mover.','error');
+  const etapaDest = _etapas.find(e=>e.id===etapaId);
+  const payload = { etapa_id:etapaId, pipeline_id:pid };
+
+  // Solicita motivo se etapa destino for marcada como perdida
+  if (etapaDest?.is_perdido) {
+    const motivo = prompt(`Motivo da perda para "${lead?.nome || 'lead'}" (obrigatório):`);
+    if (!motivo) { _dragLeadId=null; _dragEtapaOrigem=null; return; }
+    payload.motivo_perda = motivo;
+  }
+
+  const r = await Auth.api('PATCH',`/leads/${_dragLeadId}/mover`, payload);
+  if (r?.ok) {
+    const msg = etapaDest?.is_ganho ? '🎉 Lead ganho!' : etapaDest?.is_perdido ? 'Lead marcado como perdido.' : 'Lead movido!';
+    const tipo = etapaDest?.is_ganho ? 'success' : etapaDest?.is_perdido ? 'error' : 'success';
+    Toast.show(msg, tipo);
+    await carregarLeads();
+  } else {
+    Toast.show(r?.data?.erro||'Erro ao mover.','error');
+  }
   _dragLeadId=null; _dragEtapaOrigem=null;
 }
 
@@ -208,6 +224,7 @@ async function abrirLead(id) {
   document.getElementById('fl-valor').value=l.valor||'';
   document.getElementById('fl-valor-venda').value=l.valor_venda||'';
   document.getElementById('fl-status').value=l.status||'ABERTO';
+  atualizarStatusBadge(l.status||'ABERTO');
   document.getElementById('fl-tags').value=l.tags?JSON.parse(l.tags).join(', '):'';
   document.getElementById('fl-data-fechamento').value=l.data_fechamento?l.data_fechamento.slice(0,10):'';
   document.getElementById('fl-data-entrada').value=l.criado_em?l.criado_em.slice(0,10):'';
@@ -234,6 +251,7 @@ function resetModal() {
   document.getElementById('fl-data-fechamento').value='';
   document.getElementById('fl-data-entrada').value='';
   document.getElementById('fl-status').value='ABERTO';
+  atualizarStatusBadge('ABERTO');
   document.getElementById('ml-alert').style.display='none';
   document.getElementById('nova-nota').value='';
   document.getElementById('ml-excluir').style.display='none';
@@ -246,6 +264,21 @@ function resetModal() {
   rSel.innerHTML=_usuarios.map(u=>`<option value="${u.id}">${u.nome}</option>`).join('');
   if (_usuario.role==='VENDEDOR') { rSel.value=_usuario.id; rSel.disabled=true; }
   else { rSel.disabled=false; rSel.value=_usuario.id; }
+}
+
+// Atualiza o badge de status no modal (somente leitura)
+function atualizarStatusBadge(status) {
+  const dot   = document.getElementById('fl-status-dot');
+  const label = document.getElementById('fl-status-label');
+  if (!dot || !label) return;
+  const cfg = {
+    'ABERTO':  { cor: '#6CFF4E', txt: 'ABERTO' },
+    'GANHO':   { cor: '#3B8BFF', txt: 'GANHO' },
+    'PERDIDO': { cor: '#E10098', txt: 'PERDIDO' },
+  }[status] || { cor: '#888', txt: status || 'ABERTO' };
+  dot.style.background = cfg.cor;
+  label.textContent = cfg.txt;
+  label.style.color = cfg.cor;
 }
 
 async function onFlFunilChange(overrideFunilId) {
@@ -291,7 +324,7 @@ async function salvarLead() {
     telefone:  document.getElementById('fl-tel').value.trim()||undefined,
     email:     document.getElementById('fl-email').value.trim()||undefined,
     valor:     parseFloat(document.getElementById('fl-valor').value)||0,
-    status:    document.getElementById('fl-status').value||'ABERTO',
+    // NOTA: 'status' não é enviado aqui — é controlado exclusivamente por /mover (via is_ganho/is_perdido da etapa)
     data_fechamento: document.getElementById('fl-data-fechamento').value||undefined,
     etapa_id:  etapaId||undefined,
     pipeline_id: pipelineId||undefined,
@@ -309,14 +342,39 @@ async function salvarLead() {
   document.getElementById('ml-spinner').classList.remove('hidden');
 
   try {
-    const r=id?await Auth.api('PATCH',`/leads/${id}`,body):await Auth.api('POST','/leads',body);
-    if (r?.ok) {
-      if (id && etapaId) await Auth.api('PATCH',`/leads/${id}/mover`,{ etapa_id:etapaId, pipeline_id:pipelineId });
-      Toast.show(id?'Lead atualizado!':'Lead criado!','success');
-      fecharModal();
-      await carregarLeads();
+    if (id) {
+      // Lead existente: salva dados gerais e, se a etapa mudou, move o lead (o /mover atualiza o status corretamente)
+      const leadAtual = _leads.find(l=>l.id===id);
+      const etapaMudou = leadAtual && leadAtual.etapa_id !== etapaId;
+      const r = await Auth.api('PATCH',`/leads/${id}`,body);
+      if (r?.ok) {
+        if (etapaId && (etapaMudou || !leadAtual)) {
+          // motivo_perda pode ser necessário — se o mover falhar por isso, avisar
+          const etapaSel = _etapas.find(e=>e.id===etapaId);
+          const payload = { etapa_id:etapaId, pipeline_id:pipelineId };
+          if (etapaSel?.is_perdido) {
+            const motivo = prompt('Motivo da perda (obrigatório):');
+            if (!motivo) { alertEl.className='alert alert-error'; alertEl.textContent='Motivo da perda é obrigatório.'; alertEl.style.display=''; btn.disabled=false; document.getElementById('ml-salvar-txt').textContent='Salvar'; document.getElementById('ml-spinner').classList.add('hidden'); return; }
+            payload.motivo_perda = motivo;
+          }
+          await Auth.api('PATCH',`/leads/${id}/mover`,payload);
+        }
+        Toast.show('Lead atualizado!','success');
+        fecharModal();
+        await carregarLeads();
+      } else {
+        alertEl.className='alert alert-error'; alertEl.textContent=r?.data?.erro||'Erro.'; alertEl.style.display='';
+      }
     } else {
-      alertEl.className='alert alert-error'; alertEl.textContent=r?.data?.erro||'Erro.'; alertEl.style.display='';
+      // Novo lead: POST cria com status=ABERTO automaticamente no backend
+      const r = await Auth.api('POST','/leads',body);
+      if (r?.ok) {
+        Toast.show('Lead criado!','success');
+        fecharModal();
+        await carregarLeads();
+      } else {
+        alertEl.className='alert alert-error'; alertEl.textContent=r?.data?.erro||'Erro.'; alertEl.style.display='';
+      }
     }
   } finally {
     btn.disabled=false;

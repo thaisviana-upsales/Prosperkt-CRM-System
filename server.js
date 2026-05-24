@@ -11,6 +11,7 @@ const cookieParser = require('cookie-parser');
 const path        = require('path');
 
 const apiRoutes = require('./src/routes/api');
+const { initProvider } = require('./src/database/dbProvider');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -80,15 +81,21 @@ app.use((err, req, res, _next) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Start
+// Start — aguarda banco pronto antes de escutar
 // ─────────────────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log('\n╔══════════════════════════════════════╗');
-  console.log('║      PROSPERKT CRM — INICIADO        ║');
-  console.log('╠══════════════════════════════════════╣');
-  console.log(`║  URL: http://localhost:${PORT}          ║`);
-  console.log(`║  ENV: ${(process.env.NODE_ENV || 'development').padEnd(29)}║`);
-  console.log('╚══════════════════════════════════════╝\n');
+initProvider().then(() => {
+  app.listen(PORT, () => {
+    console.log('\n╔══════════════════════════════════════╗');
+    console.log('║      PROSPERKT CRM — INICIADO        ║');
+    console.log('╠══════════════════════════════════════╣');
+    console.log(`║  URL: http://localhost:${PORT}          ║`);
+    console.log(`║  ENV: ${(process.env.NODE_ENV || 'development').padEnd(29)}║`);
+    console.log(`║  DB:  ${(process.env.DATABASE_PROVIDER || 'sqlite').padEnd(29)}║`);
+    console.log('╚══════════════════════════════════════╝\n');
+  });
+}).catch(err => {
+  console.error('[FATAL] Falha ao inicializar banco de dados:', err.message);
+  process.exit(1);
 });
 
 module.exports = app;
