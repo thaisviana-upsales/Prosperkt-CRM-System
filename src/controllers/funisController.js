@@ -1,7 +1,8 @@
 /**
  * PROSPERKT CRM — Funis Controller
  * Supabase JS nativo ou SQLite conforme DATABASE_PROVIDER.
- * IMPORTANTE: No Supabase, etapas têm funil_id direto (sem pipeline_id intermediário).
+ * ARQUITETURA: funis → pipelines (funil_id) → etapas (pipeline_id)
+ * No Supabase a tabela pipelines existe e etapas usam pipeline_id.
  */
 const crypto = require('crypto');
 const { getProvider } = require('../database/dbProvider');
@@ -34,13 +35,14 @@ async function seedFunis() {
     if (isSupa) {
       const { data: existing } = await sb.from('funis').select('id').limit(1);
       if (existing?.length) return;
-      const { data: admin } = await sb.from('usuarios').select('id').eq('role','SUPER_ADMIN').single();
-      const adminId = admin?.id || null;
+      // Supabase: cria funil → pipeline → etapas (via pipeline_id)
       for (const [idx, f] of FUNIS_SEED.entries()) {
-        const funilId = crypto.randomBytes(16).toString('hex');
+        const funilId    = crypto.randomBytes(16).toString('hex');
+        const pipelineId = crypto.randomBytes(16).toString('hex');
         await sb.from('funis').insert({ id:funilId, nome:f.nome, cor:f.cor, ativo:1, ordem:idx });
+        await sb.from('pipelines').insert({ id:pipelineId, funil_id:funilId, nome:`Pipeline - ${f.nome}`, ordem:idx, ativo:1 });
         for (const e of ETAPAS_PADRAO) {
-          await sb.from('etapas').insert({ id:crypto.randomBytes(16).toString('hex'), funil_id:funilId, nome:e.nome, cor:e.cor, ordem:e.ordem, is_ganho:e.is_ganho, is_perdido:e.is_perdido, probabilidade:e.probabilidade });
+          await sb.from('etapas').insert({ id:crypto.randomBytes(16).toString('hex'), pipeline_id:pipelineId, nome:e.nome, cor:e.cor, ordem:e.ordem, is_ganho:e.is_ganho, is_perdido:e.is_perdido, probabilidade:e.probabilidade });
         }
       }
       console.log('[Seed] Funis criados no Supabase.');
@@ -80,16 +82,23 @@ async function listar(req, res) {
   } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
 }
 
-// GET /api/funis/:id  — retorna funil + etapas (usado pela pipeline)
+// GET /api/funis/:id  — retorna funil + pipeline_id + etapas (usado pela pipeline)
 async function buscarPorId(req, res) {
   const { sb, isSupa, sqlite } = getProvider();
   try {
     if (isSupa) {
       const { data: funil, error } = await sb.from('funis').select('*').eq('id', req.params.id).single();
       if (error || !funil) return res.status(404).json({ sucesso:false, erro:'Funil não encontrado.' });
-      const { data: etapas } = await sb.from('etapas').select('*').eq('funil_id', req.params.id).order('ordem');
-      // pipeline_id: usa o funil_id como identificador de pipeline (Supabase não tem tabela pipelines)
-      return res.json({ sucesso:true, dados:{ ...funil, pipeline_id: funil.id, etapas: etapas||[] } });
+      // Busca pipeline vinculada ao funil (sem .single() para evitar erro se não existir)
+      const { data: pipes } = await sb.from('pipelines').select('id').eq('funil_id', req.params.id).order('criado_em').limit(1);
+      const pipelineId = pipes?.[0]?.id || null;
+      // Busca etapas da pipeline
+      let etapas = [];
+      if (pipelineId) {
+        const { data: etapasData } = await sb.from('etapas').select('*').eq('pipeline_id', pipelineId).order('ordem');
+        etapas = etapasData || [];
+      }
+      return res.json({ sucesso:true, dados:{ ...funil, pipeline_id: pipelineId, etapas } });
     }
     const { getDb } = require('../database/db');
     const db = getDb();
@@ -105,20 +114,24 @@ async function criar(req, res) {
   const { sb, isSupa } = getProvider();
   const { nome, cor='#6CFF4E', descricao } = req.body;
   if (!nome) return res.status(400).json({ sucesso:false, erro:'Nome é obrigatório.' });
-  const funilId = crypto.randomBytes(16).toString('hex');
+  const funilId    = crypto.randomBytes(16).toString('hex');
+  const pipelineId = crypto.randomBytes(16).toString('hex');
   try {
     if (isSupa) {
       const { data, error } = await sb.from('funis').insert({ id:funilId, nome:nome.trim(), cor, descricao:descricao||null, ativo:1 }).select().single();
       if (error) throw error;
+      // Cria pipeline vinculada ao funil
+      await sb.from('pipelines').insert({ id:pipelineId, funil_id:funilId, nome:`Pipeline - ${nome.trim()}`, ordem:0, ativo:1 });
+      // Cria etapas vinculadas à pipeline (pipeline_id), NÃO ao funil
       for (const e of ETAPAS_PADRAO) {
-        await sb.from('etapas').insert({ id:crypto.randomBytes(16).toString('hex'), funil_id:funilId, nome:e.nome, cor:e.cor, ordem:e.ordem, is_ganho:e.is_ganho, is_perdido:e.is_perdido, probabilidade:e.probabilidade });
+        await sb.from('etapas').insert({ id:crypto.randomBytes(16).toString('hex'), pipeline_id:pipelineId, nome:e.nome, cor:e.cor, ordem:e.ordem, is_ganho:e.is_ganho, is_perdido:e.is_perdido, probabilidade:e.probabilidade });
       }
       req.log({ acao:'CREATE', entidade:'funis', entidade_id:funilId, depois:{ nome, cor } });
       return res.status(201).json({ sucesso:true, dados:data });
     }
     const { getDb } = require('../database/db');
     const db = getDb();
-    const pipelineId = crypto.randomBytes(16).toString('hex');
+    // pipelineId already declared above, reuse it
     db.prepare(`INSERT INTO funis (id,nome,cor,descricao,ativo,criado_por) VALUES (?,?,?,?,1,?)`).run(funilId,nome.trim(),cor,descricao||null,req.usuario.id);
     db.prepare(`INSERT INTO pipelines (id,funil_id,nome,ordem,ativo,criado_por) VALUES (?,?,?,0,1,?)`).run(pipelineId,funilId,`Pipeline - ${nome.trim()}`,req.usuario.id);
     ETAPAS_PADRAO.forEach(e => { db.prepare(`INSERT INTO etapas (id,pipeline_id,nome,cor,ordem,is_ganho,is_perdido,probabilidade,criado_por) VALUES (?,?,?,?,?,?,?,?,?)`).run(crypto.randomBytes(16).toString('hex'),pipelineId,e.nome,e.cor,e.ordem,e.is_ganho,e.is_perdido,e.probabilidade,req.usuario.id); });

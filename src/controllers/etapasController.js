@@ -1,7 +1,7 @@
 /**
  * PROSPERKT CRM — Etapas Controller
  * Supabase JS nativo ou SQLite conforme DATABASE_PROVIDER.
- * No Supabase: etapas têm funil_id direto (sem pipeline_id).
+ * ARQUITETURA Supabase: etapas.pipeline_id → pipelines.id → pipelines.funil_id → funis.id
  */
 const crypto = require('crypto');
 const { getProvider } = require('../database/dbProvider');
@@ -12,9 +12,14 @@ async function listar(req, res) {
   const { pipeline_id, funil_id } = req.query;
   try {
     if (isSupa) {
+      let pId = pipeline_id;
+      // Se vier funil_id, resolve o pipeline_id via tabela pipelines
+      if (!pId && funil_id) {
+        const { data: pipes } = await sb.from('pipelines').select('id').eq('funil_id', funil_id).order('criado_em').limit(1);
+        pId = pipes?.[0]?.id || null;
+      }
       let q = sb.from('etapas').select('*');
-      if (funil_id)    q = q.eq('funil_id', funil_id);
-      else if (pipeline_id) q = q.eq('funil_id', pipeline_id); // no Supabase pipeline_id == funil_id
+      if (pId) q = q.eq('pipeline_id', pId);
       q = q.order('ordem');
       const { data, error } = await q;
       if (error) throw error;

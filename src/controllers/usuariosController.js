@@ -1,200 +1,214 @@
 /**
  * PROSPERKT CRM — Users Controller
- * CRUD de usuários com permissões RBAC reais
+ * CRUD de usuários com permissões RBAC reais.
+ * Supabase JS nativo ou SQLite conforme DATABASE_PROVIDER.
  */
 
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
-const { getDb } = require('../database/db');
+const { getProvider } = require('../database/dbProvider');
 const { registrarLog } = require('../services/auditService');
 
-// Campos públicos (sem senha_hash)
-const CAMPOS_PUBLICOS = 'id, nome, email, role, ativo, avatar_url, criado_em, atualizado_em';
+const CAMPOS_PUBLICOS_SUPA = 'id, nome, email, role, ativo, criado_em, atualizado_em';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/usuarios
-// SUPER_ADMIN: todos; GESTOR: todos; VENDEDOR: apenas ele mesmo
+// SUPER_ADMIN / GESTOR: todos; VENDEDOR: apenas ele mesmo
 // ─────────────────────────────────────────────────────────────────────────────
-function listar(req, res) {
-  const db = getDb();
-  const { role } = req.usuario;
-  let usuarios;
-
-  if (role === 'VENDEDOR') {
-    usuarios = db.prepare(`SELECT ${CAMPOS_PUBLICOS} FROM usuarios WHERE id = ?`).all(req.usuario.id);
-  } else {
-    usuarios = db.prepare(`SELECT ${CAMPOS_PUBLICOS} FROM usuarios ORDER BY nome`).all();
+async function listar(req, res) {
+  const { sb, isSupa, sqlite } = getProvider();
+  try {
+    if (isSupa) {
+      let q = sb.from('usuarios').select(CAMPOS_PUBLICOS_SUPA).order('nome');
+      if (req.usuario.role === 'VENDEDOR') q = q.eq('id', req.usuario.id);
+      const { data, error } = await q;
+      if (error) throw error;
+      return res.json({ sucesso: true, dados: data || [], total: (data || []).length });
+    }
+    // SQLite
+    const { getDb } = require('../database/db');
+    const db = getDb();
+    const campos = 'id, nome, email, role, ativo, avatar_url, criado_em, atualizado_em';
+    let usuarios;
+    if (req.usuario.role === 'VENDEDOR') {
+      usuarios = db.prepare(`SELECT ${campos} FROM usuarios WHERE id = ?`).all(req.usuario.id);
+    } else {
+      usuarios = db.prepare(`SELECT ${campos} FROM usuarios ORDER BY nome`).all();
+    }
+    return res.json({ sucesso: true, dados: usuarios, total: usuarios.length });
+  } catch (e) {
+    console.error('[usuarios.listar]', e.message);
+    return res.status(500).json({ sucesso: false, erro: e.message });
   }
-
-  return res.json({ sucesso: true, dados: usuarios, total: usuarios.length });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/usuarios/:id
 // ─────────────────────────────────────────────────────────────────────────────
-function buscarPorId(req, res) {
-  const db = getDb();
+async function buscarPorId(req, res) {
+  const { sb, isSupa } = getProvider();
   const { id } = req.params;
-  const { role, id: meId } = req.usuario;
-
-  // VENDEDOR só pode ver a si mesmo
-  if (role === 'VENDEDOR' && id !== meId) {
+  if (req.usuario.role === 'VENDEDOR' && id !== req.usuario.id) {
     return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
   }
-
-  const usuario = db.prepare(`SELECT ${CAMPOS_PUBLICOS} FROM usuarios WHERE id = ?`).get(id);
-  if (!usuario) {
-    return res.status(404).json({ sucesso: false, erro: 'Usuário não encontrado.' });
+  try {
+    if (isSupa) {
+      const { data, error } = await sb.from('usuarios').select(CAMPOS_PUBLICOS_SUPA).eq('id', id).single();
+      if (error || !data) return res.status(404).json({ sucesso: false, erro: 'Usuário não encontrado.' });
+      return res.json({ sucesso: true, dados: data });
+    }
+    const { getDb } = require('../database/db');
+    const db = getDb();
+    const usuario = db.prepare('SELECT id,nome,email,role,ativo,avatar_url,criado_em,atualizado_em FROM usuarios WHERE id = ?').get(id);
+    if (!usuario) return res.status(404).json({ sucesso: false, erro: 'Usuário não encontrado.' });
+    return res.json({ sucesso: true, dados: usuario });
+  } catch (e) {
+    return res.status(500).json({ sucesso: false, erro: e.message });
   }
-
-  return res.json({ sucesso: true, dados: usuario });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/usuarios — Somente SUPER_ADMIN e GESTOR
 // ─────────────────────────────────────────────────────────────────────────────
 async function criar(req, res) {
-  const db = getDb();
+  const { sb, isSupa } = getProvider();
   const { nome, email, senha, role = 'VENDEDOR' } = req.body;
 
   if (!nome || !email || !senha) {
     return res.status(400).json({ sucesso: false, erro: 'nome, email e senha são obrigatórios.' });
   }
-
-  // GESTOR não pode criar SUPER_ADMIN
   if (req.usuario.role === 'GESTOR' && role === 'SUPER_ADMIN') {
     return res.status(403).json({ sucesso: false, erro: 'GESTOR não pode criar SUPER_ADMIN.' });
   }
-
   const roles = ['SUPER_ADMIN', 'GESTOR', 'VENDEDOR'];
   if (!roles.includes(role)) {
     return res.status(400).json({ sucesso: false, erro: `Role inválida. Use: ${roles.join(', ')}` });
   }
 
   const emailNorm = email.toLowerCase().trim();
-  const existente = db.prepare('SELECT id FROM usuarios WHERE email = ?').get(emailNorm);
-  if (existente) {
-    return res.status(409).json({ sucesso: false, erro: 'Email já está em uso.' });
-  }
-
-  const id   = crypto.randomBytes(16).toString('hex');
+  const id = crypto.randomBytes(16).toString('hex');
   const hash = await bcrypt.hash(senha, 12);
 
-  db.prepare(`
-    INSERT INTO usuarios (id, nome, email, senha_hash, role)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(id, nome.trim(), emailNorm, hash, role);
+  try {
+    if (isSupa) {
+      // Verifica email duplicado
+      const { data: dup } = await sb.from('usuarios').select('id').eq('email', emailNorm).limit(1);
+      if (dup?.length) return res.status(409).json({ sucesso: false, erro: 'Email já está em uso.' });
 
-  const criado = db.prepare(`SELECT ${CAMPOS_PUBLICOS} FROM usuarios WHERE id = ?`).get(id);
+      const { data, error } = await sb.from('usuarios').insert({
+        id, nome: nome.trim(), email: emailNorm, senha_hash: hash, role, ativo: 1,
+        criado_em: new Date().toISOString(), atualizado_em: new Date().toISOString(),
+      }).select(CAMPOS_PUBLICOS_SUPA).single();
+      if (error) throw error;
+      req.log({ acao: 'CREATE', entidade: 'usuarios', entidade_id: id, depois: { nome, email: emailNorm, role } });
+      return res.status(201).json({ sucesso: true, dados: data });
+    }
 
-  req.log({
-    acao: 'CREATE',
-    entidade: 'usuarios',
-    entidade_id: id,
-    depois: { nome, email: emailNorm, role },
-  });
-
-  return res.status(201).json({ sucesso: true, dados: criado });
+    // SQLite
+    const { getDb } = require('../database/db');
+    const db = getDb();
+    const existente = db.prepare('SELECT id FROM usuarios WHERE email = ?').get(emailNorm);
+    if (existente) return res.status(409).json({ sucesso: false, erro: 'Email já está em uso.' });
+    db.prepare('INSERT INTO usuarios (id, nome, email, senha_hash, role) VALUES (?, ?, ?, ?, ?)').run(id, nome.trim(), emailNorm, hash, role);
+    const criado = db.prepare('SELECT id,nome,email,role,ativo,avatar_url,criado_em,atualizado_em FROM usuarios WHERE id = ?').get(id);
+    req.log({ acao: 'CREATE', entidade: 'usuarios', entidade_id: id, depois: { nome, email: emailNorm, role } });
+    return res.status(201).json({ sucesso: true, dados: criado });
+  } catch (e) {
+    console.error('[usuarios.criar]', e.message);
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PATCH /api/usuarios/:id
 // ─────────────────────────────────────────────────────────────────────────────
 async function atualizar(req, res) {
-  const db = getDb();
+  const { sb, isSupa } = getProvider();
   const { id } = req.params;
   const { role: roleAtual, id: meId } = req.usuario;
 
-  // VENDEDOR só pode editar a si mesmo e não pode mudar role
   if (roleAtual === 'VENDEDOR' && id !== meId) {
     return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
   }
 
-  const atual = db.prepare(`SELECT * FROM usuarios WHERE id = ?`).get(id);
-  if (!atual) {
-    return res.status(404).json({ sucesso: false, erro: 'Usuário não encontrado.' });
-  }
+  try {
+    if (isSupa) {
+      const { data: atual, error: e0 } = await sb.from('usuarios').select('*').eq('id', id).single();
+      if (e0 || !atual) return res.status(404).json({ sucesso: false, erro: 'Usuário não encontrado.' });
 
-  const campos = {};
-  if (req.body.nome)  campos.nome  = req.body.nome.trim();
-  if (req.body.email) campos.email = req.body.email.toLowerCase().trim();
-  if (req.body.avatar_url !== undefined) campos.avatar_url = req.body.avatar_url;
+      const upd = { atualizado_em: new Date().toISOString() };
+      if (req.body.nome)  upd.nome  = req.body.nome.trim();
+      if (req.body.email) upd.email = req.body.email.toLowerCase().trim();
+      if (req.body.avatar_url !== undefined) upd.avatar_url = req.body.avatar_url;
+      if (req.body.role && roleAtual === 'SUPER_ADMIN') upd.role = req.body.role;
+      if (req.body.ativo !== undefined && roleAtual !== 'VENDEDOR') upd.ativo = req.body.ativo ? 1 : 0;
+      if (req.body.senha) upd.senha_hash = await bcrypt.hash(req.body.senha, 12);
 
-  // Mudança de role — somente SUPER_ADMIN
-  if (req.body.role) {
-    if (roleAtual !== 'SUPER_ADMIN') {
-      return res.status(403).json({ sucesso: false, erro: 'Apenas SUPER_ADMIN pode mudar roles.' });
+      if (Object.keys(upd).length === 1) {
+        return res.status(400).json({ sucesso: false, erro: 'Nenhum campo para atualizar.' });
+      }
+
+      const { data, error } = await sb.from('usuarios').update(upd).eq('id', id).select(CAMPOS_PUBLICOS_SUPA).single();
+      if (error) throw error;
+      req.log({ acao: 'UPDATE', entidade: 'usuarios', entidade_id: id, depois: upd });
+      return res.json({ sucesso: true, dados: data });
     }
-    campos.role = req.body.role;
+
+    // SQLite
+    const { getDb } = require('../database/db');
+    const db = getDb();
+    const atual = db.prepare('SELECT * FROM usuarios WHERE id = ?').get(id);
+    if (!atual) return res.status(404).json({ sucesso: false, erro: 'Usuário não encontrado.' });
+
+    const campos = {};
+    if (req.body.nome)  campos.nome  = req.body.nome.trim();
+    if (req.body.email) campos.email = req.body.email.toLowerCase().trim();
+    if (req.body.avatar_url !== undefined) campos.avatar_url = req.body.avatar_url;
+    if (req.body.role && roleAtual === 'SUPER_ADMIN') campos.role = req.body.role;
+    if (req.body.ativo !== undefined && roleAtual !== 'VENDEDOR') campos.ativo = req.body.ativo ? 1 : 0;
+    if (req.body.senha) campos.senha_hash = await bcrypt.hash(req.body.senha, 12);
+    if (Object.keys(campos).length === 0) return res.status(400).json({ sucesso: false, erro: 'Nenhum campo para atualizar.' });
+
+    campos.atualizado_em = new Date().toISOString();
+    const sets = Object.keys(campos).map(k => `${k} = ?`).join(', ');
+    db.prepare(`UPDATE usuarios SET ${sets} WHERE id = ?`).run(...Object.values(campos), id);
+    const atualizado = db.prepare('SELECT id,nome,email,role,ativo,avatar_url,criado_em,atualizado_em FROM usuarios WHERE id = ?').get(id);
+    req.log({ acao: 'UPDATE', entidade: 'usuarios', entidade_id: id, depois: atualizado });
+    return res.json({ sucesso: true, dados: atualizado });
+  } catch (e) {
+    console.error('[usuarios.atualizar]', e.message);
+    return res.status(500).json({ sucesso: false, erro: e.message });
   }
-
-  // Mudança de status ativo — GESTOR e SUPER_ADMIN
-  if (req.body.ativo !== undefined) {
-    if (roleAtual === 'VENDEDOR') {
-      return res.status(403).json({ sucesso: false, erro: 'Sem permissão para alterar status.' });
-    }
-    campos.ativo = req.body.ativo ? 1 : 0;
-  }
-
-  // Mudança de senha
-  if (req.body.senha) {
-    campos.senha_hash = await bcrypt.hash(req.body.senha, 12);
-  }
-
-  if (Object.keys(campos).length === 0) {
-    return res.status(400).json({ sucesso: false, erro: 'Nenhum campo para atualizar.' });
-  }
-
-  campos.atualizado_em = new Date().toISOString();
-
-  const sets  = Object.keys(campos).map(k => `${k} = ?`).join(', ');
-  const vals  = [...Object.values(campos), id];
-  db.prepare(`UPDATE usuarios SET ${sets} WHERE id = ?`).run(...vals);
-
-  const atualizado = db.prepare(`SELECT ${CAMPOS_PUBLICOS} FROM usuarios WHERE id = ?`).get(id);
-
-  const antes = { ...atual };
-  delete antes.senha_hash;
-
-  req.log({
-    acao: 'UPDATE',
-    entidade: 'usuarios',
-    entidade_id: id,
-    antes,
-    depois: atualizado,
-  });
-
-  return res.json({ sucesso: true, dados: atualizado });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DELETE /api/usuarios/:id — Somente SUPER_ADMIN
+// DELETE /api/usuarios/:id — Somente SUPER_ADMIN (soft delete)
 // ─────────────────────────────────────────────────────────────────────────────
-function deletar(req, res) {
-  const db = getDb();
+async function deletar(req, res) {
+  const { sb, isSupa } = getProvider();
   const { id } = req.params;
-
   if (id === req.usuario.id) {
-    return res.status(400).json({ sucesso: false, erro: 'Você não pode deletar sua própria conta.' });
+    return res.status(400).json({ sucesso: false, erro: 'Você não pode desativar sua própria conta.' });
   }
-
-  const usuario = db.prepare(`SELECT ${CAMPOS_PUBLICOS} FROM usuarios WHERE id = ?`).get(id);
-  if (!usuario) {
-    return res.status(404).json({ sucesso: false, erro: 'Usuário não encontrado.' });
+  try {
+    if (isSupa) {
+      const { data: u, error: e0 } = await sb.from('usuarios').select('id,nome').eq('id', id).single();
+      if (e0 || !u) return res.status(404).json({ sucesso: false, erro: 'Usuário não encontrado.' });
+      await sb.from('usuarios').update({ ativo: 0, atualizado_em: new Date().toISOString() }).eq('id', id);
+      req.log({ acao: 'DELETE', entidade: 'usuarios', entidade_id: id, antes: u });
+      return res.json({ sucesso: true, mensagem: 'Usuário desativado com sucesso.' });
+    }
+    const { getDb } = require('../database/db');
+    const db = getDb();
+    const usuario = db.prepare('SELECT id,nome FROM usuarios WHERE id = ?').get(id);
+    if (!usuario) return res.status(404).json({ sucesso: false, erro: 'Usuário não encontrado.' });
+    db.prepare('UPDATE usuarios SET ativo = 0, atualizado_em = ? WHERE id = ?').run(new Date().toISOString(), id);
+    req.log({ acao: 'DELETE', entidade: 'usuarios', entidade_id: id, antes: usuario });
+    return res.json({ sucesso: true, mensagem: 'Usuário desativado com sucesso.' });
+  } catch (e) {
+    console.error('[usuarios.deletar]', e.message);
+    return res.status(500).json({ sucesso: false, erro: e.message });
   }
-
-  // Soft delete (desativa) em vez de deletar permanentemente
-  db.prepare('UPDATE usuarios SET ativo = 0, atualizado_em = ? WHERE id = ?')
-    .run(new Date().toISOString(), id);
-
-  req.log({
-    acao: 'DELETE',
-    entidade: 'usuarios',
-    entidade_id: id,
-    antes: usuario,
-  });
-
-  return res.json({ sucesso: true, mensagem: 'Usuário desativado com sucesso.' });
 }
 
 module.exports = { listar, buscarPorId, criar, atualizar, deletar };

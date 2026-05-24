@@ -35,7 +35,8 @@ async function listar(req, res) {
       let q = sb.from('leads').select(`
         *,
         responsavel:usuarios!responsavel_id(id,nome),
-        etapa:etapas!etapa_id(id,nome,cor)
+        etapa:etapas!etapa_id(id,nome,cor),
+        funil:funis!funil_id(id,nome,cor)
       `);
 
       if (etapa_id)       q = q.eq('etapa_id', etapa_id);
@@ -53,8 +54,10 @@ async function listar(req, res) {
       const leads = (data || []).map(l => ({
         ...normalizeLead(l),
         responsavel_nome: l.responsavel?.nome || null,
-        etapa_nome: l.etapa?.nome || null,
-        etapa_cor:  l.etapa?.cor  || null,
+        etapa_nome:  l.etapa?.nome  || null,
+        etapa_cor:   l.etapa?.cor   || null,
+        funil_nome:  l.funil?.nome  || null,
+        funil_id_real: l.funil_id   || null,
       }));
       return res.json({ sucesso:true, dados:leads, total:leads.length });
     }
@@ -189,7 +192,7 @@ async function atualizar(req, res) {
       if (errAtual || !atual) return res.status(404).json({ sucesso:false, erro:'Lead não encontrado.' });
       if (req.usuario.role==='VENDEDOR' && atual.responsavel_id !== req.usuario.id) return res.status(403).json({ sucesso:false, erro:'Acesso negado.' });
 
-      const allow = ['nome','email','telefone','empresa','cargo','valor','origem','data_fechamento','motivo_perda','observacoes'];
+      const allow = ['nome','email','telefone','empresa','cargo','valor','origem','data_fechamento','motivo_perda','observacoes','funil_id','etapa_id'];
       const upd = { atualizado_em: new Date().toISOString() };
       allow.forEach(k => { if (req.body[k] !== undefined) upd[k] = req.body[k]; });
       if (req.body.responsavel_id && req.usuario.role !== 'VENDEDOR') upd.responsavel_id = req.body.responsavel_id;

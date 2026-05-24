@@ -29,19 +29,56 @@ async function resumo(req, res) {
       const ticket_medio  = valsGanho.length ? valsGanho.reduce((a,b)=>a+b,0)/valsGanho.length : 0;
       const taxa_conversao= total_leads > 0 ? ((total_ganhos/total_leads)*100).toFixed(1) : '0.0';
 
-      // Funil visual — etapas
-      let etapasQ = sb.from('etapas').select('id,nome,cor,ordem,probabilidade');
-      if (funil_id) etapasQ = etapasQ.eq('funil_id', funil_id);
-      etapasQ = etapasQ.order('ordem');
-      const { data: etapas } = await etapasQ;
+      // ── Funil visual — carrega etapas via pipeline_id ────────────────────────
+      // Mapa nome→[ids] para contagem agregada em modo "Todos"
+      let etapasDedup = []; // etapas deduplicadas para exibição
+      let nomeParaIds = {}; // nome → array de etapa_ids (de todas as pipelines)
 
-      const funil_visual = (etapas||[]).map((e,i,arr) => {
-        const qty = leads.filter(l=>l.etapa_id===e.id).length;
-        const prev = i > 0 ? leads.filter(l=>l.etapa_id===arr[i-1].id).length : null;
-        const taxa_entrada = prev != null && prev > 0 ? ((qty/prev)*100).toFixed(0) : null;
-        const isGanho   = e.probabilidade >= 100 || e.nome?.toLowerCase().includes('venda');
-        const isPerdido = e.nome?.toLowerCase().includes('perdid') || e.nome?.toLowerCase().includes('desqualif');
-        return { ...e, is_ganho: isGanho?1:0, is_perdido: isPerdido?1:0, quantidade:qty, taxa_entrada };
+      if (funil_id) {
+        // Filtro por funil específico: acha o pipeline, depois as etapas
+        const { data: dPipes } = await sb.from('pipelines').select('id').eq('funil_id', funil_id).order('criado_em').limit(1);
+        if (dPipes?.[0]?.id) {
+          const { data: et } = await sb.from('etapas').select('id,nome,cor,ordem,probabilidade,is_ganho,is_perdido').eq('pipeline_id', dPipes[0].id).order('ordem');
+          etapasDedup = et || [];
+          (et || []).forEach(e => { nomeParaIds[e.nome] = [e.id]; });
+        }
+      } else {
+        // Sem filtro: carrega TODAS as etapas de todas as pipelines ativas e deduplica por nome
+        const { data: pipes } = await sb.from('pipelines').select('id').eq('ativo', 1);
+        if (pipes?.length) {
+          const pipeIds = pipes.map(p => p.id);
+          const { data: todasEtapas } = await sb.from('etapas')
+            .select('id,nome,cor,ordem,probabilidade,is_ganho,is_perdido')
+            .in('pipeline_id', pipeIds)
+            .order('ordem');
+          // Agrupa por nome para contagem e deduplicação
+          const seen = new Set();
+          for (const e of (todasEtapas || [])) {
+            if (!nomeParaIds[e.nome]) nomeParaIds[e.nome] = [];
+            nomeParaIds[e.nome].push(e.id);
+            if (!seen.has(e.nome)) {
+              seen.add(e.nome);
+              etapasDedup.push(e); // primeira ocorrência de cada nome
+            }
+          }
+          etapasDedup.sort((a, b) => a.ordem - b.ordem);
+        }
+      }
+
+      // Monta funil_visual com contagem correta (agregada por nome em modo "Todos")
+      const funil_visual_raw = etapasDedup.map(e => {
+        const ids = nomeParaIds[e.nome] || [e.id];
+        const qty = leads.filter(l => ids.includes(l.etapa_id)).length;
+        const isGanho   = e.is_ganho || e.probabilidade >= 100 || e.nome?.toLowerCase().includes('venda');
+        const isPerdido = e.is_perdido || e.nome?.toLowerCase().includes('perdid') || e.nome?.toLowerCase().includes('desqualif');
+        return { ...e, is_ganho: isGanho?1:0, is_perdido: isPerdido?1:0, quantidade: qty };
+      });
+
+      // Calcula taxa_entrada agora que temos as quantidades
+      const funil_visual = funil_visual_raw.map((e, i) => {
+        const prev = i > 0 ? funil_visual_raw[i-1].quantidade : null;
+        const taxa_entrada = prev != null && prev > 0 ? ((e.quantidade/prev)*100).toFixed(0) : null;
+        return { ...e, taxa_entrada };
       });
 
       // Ranking vendedores

@@ -1,6 +1,7 @@
 /**
  * PROSPERKT CRM — Pipeline JS
  * Kanban, filtros, modal de lead
+ * ARQUITETURA: funis → pipelines (funil_id) → etapas (pipeline_id)
  */
 
 let _funis=[], _etapas=[], _leads=[], _usuarios=[], _usuario=null;
@@ -8,6 +9,8 @@ let _funilAtivo=null, _pipelineAtivo=null;
 let _dragLeadId=null, _dragEtapaOrigem=null;
 // Estado de filtros
 let _filtros = { funil:'', resp:'', dataTipo:'', dataPeriodo:'', dataInicio:'', dataFim:'', busca:'' };
+// Mapa nome→[ids] para agrupar leads no modo "Todos"
+let _nomeParaIds = {};
 
 // ── Init ──────────────────────────────────────────────────────
 async function init() {
@@ -57,25 +60,49 @@ function popularSelResp() {
 // ── Filtros ───────────────────────────────────────────────────
 async function aplicarFiltros() {
   const funilId = _filtros.funil;
+  _nomeParaIds = {};
 
-  // Título
   if (funilId) {
-    const f = _funis.find(x=>x.id===funilId);
-    document.getElementById('page-title').textContent = `Pipeline — ${f?.nome||''}`;
-    document.getElementById('page-sub').textContent = `Leads do funil ${f?.nome||''}`;
-    // carrega etapas do funil selecionado
+    document.getElementById('page-title').textContent = `Pipeline — ${_funis.find(x=>x.id===funilId)?.nome||''}`;
+    document.getElementById('page-sub').textContent = `Leads do funil ${_funis.find(x=>x.id===funilId)?.nome||''}`;
+    // Carrega funil com sua pipeline e etapas
     const rd = await Auth.api('GET',`/funis/${funilId}`);
-    if (rd?.ok) { _pipelineAtivo = rd.data.dados.pipeline_id; _etapas = rd.data.dados.etapas||[]; }
+    if (rd?.ok) {
+      _pipelineAtivo = rd.data.dados.pipeline_id;
+      _etapas = rd.data.dados.etapas || [];
+      // Modo funil específico: mapeamento direto por id
+      _nomeParaIds = {};
+      _etapas.forEach(e => { _nomeParaIds[e.nome] = [e.id]; });
+    } else {
+      console.warn('[pipeline] Não foi possível carregar etapas do funil', funilId);
+      _pipelineAtivo = null;
+      _etapas = [];
+    }
   } else {
     document.getElementById('page-title').textContent = 'Pipeline — Todos os Funis';
-    document.getElementById('page-sub').textContent = 'Visão geral de todos os leads';
-    // Sem funil selecionado: agrupa todas as etapas únicas por nome
+    document.getElementById('page-sub').textContent = 'Visão geral consolidada de todos os leads';
     _pipelineAtivo = null;
-    _etapas = [];
-    // Carrega etapas do 1o funil para mostrar colunas padrão
-    if (_funis.length) {
-      const rd = await Auth.api('GET',`/funis/${_funis[0].id}`);
-      if (rd?.ok) _etapas = rd.data.dados.etapas||[];
+
+    // Carrega TODAS as etapas de todos os pipelines (via /etapas sem filtro)
+    const re = await Auth.api('GET', '/etapas');
+    const todasEtapas = re?.data?.dados || [];
+
+    // Deduplica por nome (mantendo primeira ocorrência de cada nome, ordenado por ordem)
+    const seen = new Set();
+    const etapasDedup = [];
+    for (const e of todasEtapas.sort((a, b) => a.ordem - b.ordem)) {
+      if (!_nomeParaIds[e.nome]) _nomeParaIds[e.nome] = [];
+      _nomeParaIds[e.nome].push(e.id);
+      if (!seen.has(e.nome)) {
+        seen.add(e.nome);
+        etapasDedup.push(e);
+      }
+    }
+
+    _etapas = etapasDedup;
+
+    if (!_etapas.length) {
+      console.warn('[pipeline] Nenhuma etapa encontrada via /etapas');
     }
   }
 
@@ -108,11 +135,23 @@ function construirURL() {
 function renderKanban() {
   const wrap = document.getElementById('kanban');
   wrap.innerHTML = '';
-  const etapasParaMostrar = _etapas;
-  const mostrarFunil = !_filtros.funil; // no modo "Todos", mostra badge do funil no card
 
-  etapasParaMostrar.forEach(etapa => {
-    const leads = _leads.filter(l=>l.etapa_id===etapa.id);
+  if (!_etapas.length) {
+    wrap.innerHTML = '<div style="color:var(--text-muted);padding:48px;text-align:center">Nenhuma etapa encontrada. Verifique se os funis possuém pipelines e etapas configuradas.</div>';
+    return;
+  }
+
+  const modoTodos = !_filtros.funil; // no modo "Todos", mostra badge do funil no card
+
+  _etapas.forEach(etapa => {
+    // Em modo "Todos": agrupa leads de TODAS as etapas com o mesmo nome
+    let leads;
+    if (modoTodos && _nomeParaIds[etapa.nome]?.length > 1) {
+      leads = _leads.filter(l => _nomeParaIds[etapa.nome].includes(l.etapa_id));
+    } else {
+      leads = _leads.filter(l => l.etapa_id === etapa.id);
+    }
+    // Leads sem etapa_id válida: não quebrar a tela
     const col = document.createElement('div');
     col.className = 'kanban-col';
 
@@ -123,7 +162,7 @@ function renderKanban() {
         <span class="col-count">${leads.length}</span>
       </div>
       <div class="col-body" data-etapa="${etapa.id}">
-        ${leads.map(l=>renderCard(l, mostrarFunil)).join('')}
+        ${leads.map(l=>renderCard(l, modoTodos)).join('')}
       </div>
       <button class="col-add" data-etapa="${etapa.id}">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -229,7 +268,8 @@ async function abrirLead(id) {
   document.getElementById('fl-data-fechamento').value=l.data_fechamento?l.data_fechamento.slice(0,10):'';
   document.getElementById('fl-data-entrada').value=l.criado_em?l.criado_em.slice(0,10):'';
   // Funil do lead
-  const funilId = _filtros.funil || (l.funil_id_real||'');
+  // funil_id vem direto do lead no Supabase; funil_id_real é fallback do SQLite
+  const funilId = _filtros.funil || l.funil_id || (l.funil_id_real||'');
   await onFlFunilChange(funilId);
   document.getElementById('fl-funil').value=funilId;
   document.getElementById('fl-etapa').value=l.etapa_id||'';
@@ -310,11 +350,15 @@ async function salvarLead() {
 
   const etapaId=document.getElementById('fl-etapa').value;
   const funilId=document.getElementById('fl-funil').value;
-  // pipeline_id: busca da etapa/funil selecionado
-  let pipelineId=_pipelineAtivo;
-  if (funilId && funilId!==_filtros.funil) {
-    const rd=await Auth.api('GET',`/funis/${funilId}`);
-    if (rd?.ok) pipelineId=rd.data.dados.pipeline_id;
+
+  // Sempre resolve pipeline_id a partir do funil selecionado (nunca usa 'todos' ou _pipelineAtivo nulo)
+  let pipelineId = _pipelineAtivo; // válido quando há funil ativo no filtro
+  if (funilId) {
+    // Se o funil do modal difere do filtro ativo, OU estamos no modo "Todos" (_pipelineAtivo=null)
+    if (!pipelineId || funilId !== _filtros.funil) {
+      const rd = await Auth.api('GET', `/funis/${funilId}`);
+      if (rd?.ok) pipelineId = rd.data.dados.pipeline_id || null;
+    }
   }
 
   const tagsRaw=document.getElementById('fl-tags').value;
@@ -324,9 +368,10 @@ async function salvarLead() {
     telefone:  document.getElementById('fl-tel').value.trim()||undefined,
     email:     document.getElementById('fl-email').value.trim()||undefined,
     valor:     parseFloat(document.getElementById('fl-valor').value)||0,
-    // NOTA: 'status' não é enviado aqui — é controlado exclusivamente por /mover (via is_ganho/is_perdido da etapa)
+    // NOTA: 'status' não é enviado — controlado por /mover (via is_ganho/is_perdido da etapa)
     data_fechamento: document.getElementById('fl-data-fechamento').value||undefined,
-    etapa_id:  etapaId||undefined,
+    etapa_id:    etapaId||undefined,
+    funil_id:    funilId||undefined,       // ← obrigatório para Supabase
     pipeline_id: pipelineId||undefined,
     responsavel_id: document.getElementById('fl-resp').value||undefined,
     tags: tagsRaw?tagsRaw.split(',').map(t=>t.trim()).filter(Boolean):[],
