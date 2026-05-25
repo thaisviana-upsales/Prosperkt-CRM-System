@@ -115,7 +115,6 @@
       <div class="input-group"><label class="input-label">Valor Potencial (R$)</label><input id="fl-valor" class="input" type="number" placeholder="0" min="0"></div>
     </div>
     <div class="fr">
-      <div class="input-group"><label class="input-label">Valor Vendido (R$)</label><input id="fl-valor-venda" class="input" type="number" placeholder="0" min="0"></div>
       <div class="input-group">
         <label class="input-label">Status</label>
         <!-- Status é readonly: controlado automaticamente ao mover lead entre etapas -->
@@ -130,6 +129,14 @@
     <div class="fr">
       <div class="input-group"><label class="input-label">Data de fechamento</label><input id="fl-data-fechamento" class="input date-input" type="date"></div>
       <div class="input-group"><label class="input-label">Data de entrada</label><input id="fl-data-entrada" class="input date-input" type="date"></div>
+    </div>
+    <div class="fr">
+      <div class="input-group" style="flex:1">
+        <label class="input-label">Motivo de Perda</label>
+        <select id="fl-motivo-perda" class="input">
+          <option value="">— Selecione (se aplicável) —</option>
+        </select>
+      </div>
     </div>
     <div class="input-group"><label class="input-label">Tags (separadas por vírgula)</label><input id="fl-tags" class="input" placeholder="quente, b2b, retorno"></div>
     <div class="input-group"><label class="input-label">Observações</label>
@@ -159,6 +166,30 @@
 </div>
 
 <div id="toast-container"></div>
+
+<!-- MODAL MOTIVO DE PERDA -->
+<div class="modal-ov" id="ov-motivo">
+<div class="modal-box" style="max-width:480px">
+  <div class="mh">
+    <h3>⚠️ Informe o Motivo de Perda</h3>
+  </div>
+  <p style="color:var(--text-muted);font-size:.875rem;margin-bottom:16px">
+    Para mover o lead para uma etapa de perda, o motivo é obrigatório.
+  </p>
+  <div class="input-group">
+    <label class="input-label">Motivo</label>
+    <select id="motivo-perda-sel" class="input"></select>
+  </div>
+  <div class="input-group" style="margin-top:12px">
+    <label class="input-label">Outro motivo (opcional)</label>
+    <input id="motivo-perda-outro" class="input" placeholder="Descreva o motivo...">
+  </div>
+  <div class="mf" style="margin-top:20px">
+    <button class="btn btn-secondary" id="btn-motivo-cancelar">Cancelar</button>
+    <button class="btn btn-primary" id="btn-motivo-confirmar">Confirmar e Mover</button>
+  </div>
+</div>
+</div>
 <script src="/js/auth.js"></script>
 <script src="/js/toast.js"></script>
 <script src="/js/sidebar.js"></script>

@@ -1,50 +1,62 @@
 /**
  * PROSPERKT CRM — Audit Logger Service
- * Registra toda ação: quem, quando, o que mudou (antes e depois)
+ * Registra ações no banco: SQLite ou Supabase conforme DATABASE_PROVIDER
  */
 
-const { getDb } = require('../database/db');
 const crypto = require('crypto');
+const { MODE } = require('../database/dbProvider');
 
 /**
- * Registra uma entrada de auditoria no banco
- * @param {Object} params
- * @param {string} params.acao       - CREATE | UPDATE | DELETE | LOGIN | LOGOUT | VIEW | ERRO
- * @param {string} params.entidade   - nome da tabela/recurso afetado
- * @param {string} [params.entidade_id]
- * @param {Object} [params.antes]    - estado anterior do registro
- * @param {Object} [params.depois]   - estado novo do registro
- * @param {Object} [params.usuario]  - { id, nome, role }
- * @param {string} [params.ip]
- * @param {string} [params.ua]       - user agent
+ * Registra uma entrada de auditoria
  */
-function registrarLog({ acao, entidade, entidade_id, antes, depois, usuario, ip, ua }) {
+async function registrarLog({ acao, entidade, entidade_id, antes, depois, usuario, ip, ua }) {
   try {
-    const db = getDb();
     const id = crypto.randomBytes(16).toString('hex');
 
-    db.prepare(`
-      INSERT INTO logs (
-        id, usuario_id, usuario_nome, usuario_role,
-        acao, entidade, entidade_id,
-        dados_antes, dados_depois,
-        ip_address, user_agent
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id,
-      usuario?.id   || null,
-      usuario?.nome || null,
-      usuario?.role || null,
-      acao,
-      entidade,
-      entidade_id   || null,
-      antes  ? JSON.stringify(antes)  : null,
-      depois ? JSON.stringify(depois) : null,
-      ip  || null,
-      ua  || null
-    );
+    if (MODE === 'supabase') {
+      // Supabase: usa tabela logs via JS client
+      const { getProvider } = require('../database/dbProvider');
+      const { sb } = getProvider();
+      if (!sb) return; // sem client, ignora silenciosamente
+
+      await sb.from('logs').insert({
+        id,
+        usuario_id:  usuario?.id   || null,
+        acao,
+        entidade:    entidade      || null,
+        entidade_id: entidade_id   || null,
+        antes:       antes  ? antes  : null,
+        depois:      depois ? depois : null,
+        ip:          ip            || null,
+        user_agent:  ua            || null,
+      });
+    } else {
+      // SQLite
+      const { getDb } = require('../database/db');
+      const db = getDb();
+      db.prepare(`
+        INSERT INTO logs (
+          id, usuario_id, usuario_nome, usuario_role,
+          acao, entidade, entidade_id,
+          dados_antes, dados_depois,
+          ip_address, user_agent
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        usuario?.id   || null,
+        usuario?.nome || null,
+        usuario?.role || null,
+        acao,
+        entidade      || null,
+        entidade_id   || null,
+        antes  ? JSON.stringify(antes)  : null,
+        depois ? JSON.stringify(depois) : null,
+        ip  || null,
+        ua  || null
+      );
+    }
   } catch (err) {
-    // Log não pode derrubar a aplicação — apenas logar no console
+    // Log não pode derrubar a aplicação
     console.error('[AuditLog] Falha ao registrar log:', err.message);
   }
 }
@@ -67,28 +79,75 @@ function auditMiddleware(req, res, next) {
       } : null,
       ip: req.ip,
       ua: req.get('user-agent'),
-    });
+    }).catch(e => console.error('[AuditLog middleware]', e.message));
   };
   next();
 }
 
 /**
- * Busca logs com filtros opcionais
+ * Busca logs do lead para o histórico do modal
  */
-function buscarLogs({ entidade, entidade_id, usuario_id, acao, limite = 100, offset = 0 } = {}) {
-  const db = getDb();
-  let sql = 'SELECT * FROM logs WHERE 1=1';
-  const params = [];
-
-  if (entidade)    { sql += ' AND entidade = ?';    params.push(entidade); }
-  if (entidade_id) { sql += ' AND entidade_id = ?'; params.push(entidade_id); }
-  if (usuario_id)  { sql += ' AND usuario_id = ?';  params.push(usuario_id); }
-  if (acao)        { sql += ' AND acao = ?';         params.push(acao); }
-
-  sql += ' ORDER BY criado_em DESC LIMIT ? OFFSET ?';
-  params.push(limite, offset);
-
-  return db.prepare(sql).all(...params);
+async function buscarLogsLead(leadId) {
+  try {
+    if (MODE === 'supabase') {
+      const { getProvider } = require('../database/dbProvider');
+      const { sb } = getProvider();
+      if (!sb) return [];
+      const { data } = await sb.from('logs')
+        .select('*, usuario:usuarios!usuario_id(nome)')
+        .eq('entidade_id', leadId)
+        .order('criado_em', { ascending: true });
+      return (data || []).map(l => ({
+        ...l,
+        usuario_nome: l.usuario?.nome || 'Sistema',
+      }));
+    } else {
+      const { getDb } = require('../database/db');
+      const db = getDb();
+      return db.prepare(`SELECT l.*, u.nome as usuario_nome FROM logs l
+        LEFT JOIN usuarios u ON l.usuario_id=u.id
+        WHERE l.entidade_id=? ORDER BY l.criado_em`).all(leadId);
+    }
+  } catch(e) {
+    console.error('[AuditLog buscarLogsLead]', e.message);
+    return [];
+  }
 }
 
-module.exports = { registrarLog, auditMiddleware, buscarLogs };
+/**
+ * Busca logs com filtros opcionais (para /api/logs)
+ */
+async function buscarLogs({ entidade, entidade_id, usuario_id, acao, limite = 100, offset = 0 } = {}) {
+  try {
+    if (MODE === 'supabase') {
+      const { getProvider } = require('../database/dbProvider');
+      const { sb } = getProvider();
+      if (!sb) return [];
+      let q = sb.from('logs').select('*');
+      if (entidade)    q = q.eq('entidade', entidade);
+      if (entidade_id) q = q.eq('entidade_id', entidade_id);
+      if (usuario_id)  q = q.eq('usuario_id', usuario_id);
+      if (acao)        q = q.eq('acao', acao);
+      q = q.order('criado_em', { ascending: false }).range(offset, offset + limite - 1);
+      const { data } = await q;
+      return data || [];
+    } else {
+      const { getDb } = require('../database/db');
+      const db = getDb();
+      let sql = 'SELECT * FROM logs WHERE 1=1';
+      const params = [];
+      if (entidade)    { sql += ' AND entidade = ?';    params.push(entidade); }
+      if (entidade_id) { sql += ' AND entidade_id = ?'; params.push(entidade_id); }
+      if (usuario_id)  { sql += ' AND usuario_id = ?';  params.push(usuario_id); }
+      if (acao)        { sql += ' AND acao = ?';         params.push(acao); }
+      sql += ' ORDER BY criado_em DESC LIMIT ? OFFSET ?';
+      params.push(limite, offset);
+      return db.prepare(sql).all(...params);
+    }
+  } catch(e) {
+    console.error('[AuditLog buscarLogs]', e.message);
+    return [];
+  }
+}
+
+module.exports = { registrarLog, auditMiddleware, buscarLogs, buscarLogsLead };

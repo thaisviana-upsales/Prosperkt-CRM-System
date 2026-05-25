@@ -7,16 +7,19 @@
 let _funis=[], _etapas=[], _leads=[], _usuarios=[], _usuario=null;
 let _funilAtivo=null, _pipelineAtivo=null;
 let _dragLeadId=null, _dragEtapaOrigem=null;
+let _motivosPerda=[];
 // Estado de filtros
 let _filtros = { funil:'', resp:'', dataTipo:'', dataPeriodo:'', dataInicio:'', dataFim:'', busca:'' };
 // Mapa nome→[ids] para agrupar leads no modo "Todos"
 let _nomeParaIds = {};
+// Callback de motivo de perda pendente
+let _pendingMoverCallback = null;
 
 // ── Init ──────────────────────────────────────────────────────
 async function init() {
   _usuario = await Sidebar.init('pipeline');
   if (!_usuario) return;
-  await Promise.all([carregarFunis(), carregarUsuarios()]);
+  await Promise.all([carregarFunis(), carregarUsuarios(), carregarMotivos()]);
 
   const params = new URLSearchParams(location.search);
   const paramFunil = params.get('funil_id');
@@ -37,6 +40,15 @@ async function carregarFunis() {
 async function carregarUsuarios() {
   const r = await Auth.api('GET','/usuarios');
   _usuarios = (r?.data?.dados||[]).filter(u=>u.ativo);
+}
+
+async function carregarMotivos() {
+  const r = await Auth.api('GET','/motivos-perda');
+  _motivosPerda = r?.data?.dados || [
+    'Sem orçamento no momento','Não respondeu','Comprou com concorrente',
+    'Preço fora da expectativa','Sem perfil','Lead duplicado',
+    'Não tem interesse','Prazo incompatível','Outro'
+  ];
 }
 
 function popularSelFunil() {
@@ -220,25 +232,45 @@ async function moverLead(etapaId) {
   const lead = _leads.find(l=>l.id===_dragLeadId);
   const pid  = lead?.pipeline_id || _pipelineAtivo;
   const etapaDest = _etapas.find(e=>e.id===etapaId);
-  const payload = { etapa_id:etapaId, pipeline_id:pid };
+  const isPerdido = etapaDest?.is_perdido || etapaDest?.probabilidade===0 ||
+    etapaDest?.nome?.toLowerCase().includes('perdid') ||
+    etapaDest?.nome?.toLowerCase().includes('desqualif');
 
-  // Solicita motivo se etapa destino for marcada como perdida
-  if (etapaDest?.is_perdido) {
-    const motivo = prompt(`Motivo da perda para "${lead?.nome || 'lead'}" (obrigatório):`);
-    if (!motivo) { _dragLeadId=null; _dragEtapaOrigem=null; return; }
-    payload.motivo_perda = motivo;
+  if (isPerdido) {
+    // Abre modal de motivo de perda antes de mover
+    abrirModalMotivo((motivo) => {
+      _executarMover(_dragLeadId, etapaId, pid, etapaDest, motivo);
+    });
+    _dragLeadId=null; _dragEtapaOrigem=null;
+    return;
   }
 
-  const r = await Auth.api('PATCH',`/leads/${_dragLeadId}/mover`, payload);
+  await _executarMover(_dragLeadId, etapaId, pid, etapaDest, null);
+  _dragLeadId=null; _dragEtapaOrigem=null;
+}
+
+async function _executarMover(leadId, etapaId, pid, etapaDest, motivo) {
+  const payload = { etapa_id:etapaId, pipeline_id:pid };
+  if (motivo) payload.motivo_perda = motivo;
+  const r = await Auth.api('PATCH',`/leads/${leadId}/mover`, payload);
   if (r?.ok) {
-    const msg = etapaDest?.is_ganho ? '🎉 Lead ganho!' : etapaDest?.is_perdido ? 'Lead marcado como perdido.' : 'Lead movido!';
-    const tipo = etapaDest?.is_ganho ? 'success' : etapaDest?.is_perdido ? 'error' : 'success';
-    Toast.show(msg, tipo);
+    const isPerd = etapaDest?.is_perdido || etapaDest?.nome?.toLowerCase().includes('perdid') || etapaDest?.nome?.toLowerCase().includes('desqualif');
+    const isGan  = etapaDest?.is_ganho  || etapaDest?.probabilidade >= 100;
+    Toast.show(isGan?'🎉 Lead ganho!':isPerd?'Lead marcado como perdido.':'Lead movido!', isGan?'success':isPerd?'error':'success');
     await carregarLeads();
   } else {
     Toast.show(r?.data?.erro||'Erro ao mover.','error');
   }
-  _dragLeadId=null; _dragEtapaOrigem=null;
+}
+
+function abrirModalMotivo(callback) {
+  const sel = document.getElementById('motivo-perda-sel');
+  sel.innerHTML = _motivosPerda.map(m=>{
+    const v = m.nome||m; return `<option value="${v}">${v}</option>`;
+  }).join('');
+  document.getElementById('motivo-perda-outro').value='';
+  document.getElementById('ov-motivo').classList.add('open');
+  _pendingMoverCallback = callback;
 }
 
 // ── Modal ─────────────────────────────────────────────────────
@@ -261,33 +293,51 @@ async function abrirLead(id) {
   document.getElementById('fl-tel').value=l.telefone||'';
   document.getElementById('fl-email').value=l.email||'';
   document.getElementById('fl-valor').value=l.valor||'';
-  document.getElementById('fl-valor-venda').value=l.valor_venda||'';
   document.getElementById('fl-status').value=l.status||'ABERTO';
   atualizarStatusBadge(l.status||'ABERTO');
   document.getElementById('fl-tags').value=l.tags?JSON.parse(l.tags).join(', '):'';
   document.getElementById('fl-data-fechamento').value=l.data_fechamento?l.data_fechamento.slice(0,10):'';
   document.getElementById('fl-data-entrada').value=l.criado_em?l.criado_em.slice(0,10):'';
+  // Observações — carrega do banco via l.observacoes
+  document.getElementById('fl-obs').value=l.observacoes||'';
+  // Motivo de perda
+  const motivoSel=document.getElementById('fl-motivo-perda');
+  motivoSel.innerHTML='<option value="">— Selecione —</option>'+
+    _motivosPerda.map(m=>{ const v=m.nome||m; return `<option value="${v}">${v}</option>`; }).join('');
+  const motAtual = l.motivo_perda||l.perdido_motivo||'';
+  motivoSel.value=motAtual;
   // Funil do lead
-  // funil_id vem direto do lead no Supabase; funil_id_real é fallback do SQLite
   const funilId = _filtros.funil || l.funil_id || (l.funil_id_real||'');
   await onFlFunilChange(funilId);
   document.getElementById('fl-funil').value=funilId;
   document.getElementById('fl-etapa').value=l.etapa_id||'';
   document.getElementById('fl-resp').value=l.responsavel_id||'';
-  // Histórico
-  const hist=document.getElementById('hist-list');
-  hist.innerHTML=(l.mensagens||[]).length
-    ?(l.mensagens).map(m=>`<div class="hist-item"><div>${m.conteudo}</div><div class="hist-meta">${m.autor_nome||'Sistema'} · ${new Date(m.enviado_em).toLocaleString('pt-BR')}</div></div>`).join('')
-    :'<p style="color:var(--text-muted);font-size:.875rem">Sem histórico ainda.</p>';
+  // Histórico via endpoint dedicado
+  carregarHistorico(id);
   // Botão excluir só para GESTOR+
   document.getElementById('ml-excluir').style.display = _usuario.role!=='VENDEDOR' ? '' : 'none';
   document.getElementById('ov-lead').classList.add('open');
 }
 
+async function carregarHistorico(leadId) {
+  const hist=document.getElementById('hist-list');
+  hist.innerHTML='<p style="color:var(--text-muted);font-size:.875rem">Carregando...</p>';
+  const r=await Auth.api('GET',`/leads/${leadId}/historico`);
+  const itens=r?.data?.dados||[];
+  if (!itens.length) { hist.innerHTML='<p style="color:var(--text-muted);font-size:.875rem">Sem histórico ainda.</p>'; return; }
+  hist.innerHTML=itens.map(m=>{
+    const data=new Date(m.criado_em||m.enviado_em).toLocaleString('pt-BR');
+    const icone=m.tipo==='LOG'?'📋':'💬';
+    return `<div class="hist-item"><div>${icone} ${m.conteudo||''}</div><div class="hist-meta">${m.autor_nome||'Sistema'} · ${data}</div></div>`;
+  }).join('');
+}
+
 function resetModal() {
   document.getElementById('ml-title').textContent='Novo Lead';
   ['fl-id','fl-nome','fl-empresa','fl-tel','fl-email','fl-tags','fl-obs'].forEach(id=>document.getElementById(id).value='');
-  ['fl-valor','fl-valor-venda'].forEach(id=>document.getElementById(id).value='');
+  const mpSel=document.getElementById('fl-motivo-perda');
+  if (mpSel) { mpSel.innerHTML='<option value="">— Selecione (se aplicável) —</option>'+_motivosPerda.map(m=>{const v=m.nome||m;return`<option value="${v}">${v}</option>`;}).join(''); }
+  document.getElementById('fl-valor').value='';
   document.getElementById('fl-data-fechamento').value='';
   document.getElementById('fl-data-entrada').value='';
   document.getElementById('fl-status').value='ABERTO';
@@ -362,24 +412,24 @@ async function salvarLead() {
   }
 
   const tagsRaw=document.getElementById('fl-tags').value;
+  const obsVal=document.getElementById('fl-obs').value.trim();
+  const motivoPerdaVal=document.getElementById('fl-motivo-perda').value.trim()||undefined;
   const body={
     nome,
     empresa:   document.getElementById('fl-empresa').value.trim()||undefined,
     telefone:  document.getElementById('fl-tel').value.trim()||undefined,
     email:     document.getElementById('fl-email').value.trim()||undefined,
     valor:     parseFloat(document.getElementById('fl-valor').value)||0,
-    // NOTA: 'status' não é enviado — controlado por /mover (via is_ganho/is_perdido da etapa)
     data_fechamento: document.getElementById('fl-data-fechamento').value||undefined,
     etapa_id:    etapaId||undefined,
-    funil_id:    funilId||undefined,       // ← obrigatório para Supabase
+    funil_id:    funilId||undefined,
     pipeline_id: pipelineId||undefined,
     responsavel_id: document.getElementById('fl-resp').value||undefined,
     tags: tagsRaw?tagsRaw.split(',').map(t=>t.trim()).filter(Boolean):[],
-    observacoes: document.getElementById('fl-obs').value.trim()||undefined,
+    observacoes: obsVal||null,
+    motivo_perda: motivoPerdaVal,
   };
-  // valor_venda salvo como dados_extras ou campo atualizado
-  const valorVenda=parseFloat(document.getElementById('fl-valor-venda').value);
-  if (valorVenda>0) body.dados_extras=JSON.stringify({ valor_venda: valorVenda });
+  // NOTA: valor_venda NAO e campo de leads — pertence a comissoes. Nao enviar dados_extras.
 
   const btn=document.getElementById('ml-salvar');
   btn.disabled=true;
@@ -393,15 +443,22 @@ async function salvarLead() {
       const etapaMudou = leadAtual && leadAtual.etapa_id !== etapaId;
       const r = await Auth.api('PATCH',`/leads/${id}`,body);
       if (r?.ok) {
-        if (etapaId && (etapaMudou || !leadAtual)) {
-          // motivo_perda pode ser necessário — se o mover falhar por isso, avisar
+        if (etapaId && etapaMudou) {
           const etapaSel = _etapas.find(e=>e.id===etapaId);
-          const payload = { etapa_id:etapaId, pipeline_id:pipelineId };
-          if (etapaSel?.is_perdido) {
-            const motivo = prompt('Motivo da perda (obrigatório):');
-            if (!motivo) { alertEl.className='alert alert-error'; alertEl.textContent='Motivo da perda é obrigatório.'; alertEl.style.display=''; btn.disabled=false; document.getElementById('ml-salvar-txt').textContent='Salvar'; document.getElementById('ml-spinner').classList.add('hidden'); return; }
-            payload.motivo_perda = motivo;
+          const isPerdidoSel = etapaSel?.is_perdido || etapaSel?.probabilidade===0 ||
+            etapaSel?.nome?.toLowerCase().includes('perdid') ||
+            etapaSel?.nome?.toLowerCase().includes('desqualif');
+          if (isPerdidoSel && !motivoPerdaVal) {
+            alertEl.className='alert alert-error';
+            alertEl.textContent='Selecione o Motivo de Perda antes de mover para esta etapa.';
+            alertEl.style.display='';
+            btn.disabled=false;
+            document.getElementById('ml-salvar-txt').textContent='Salvar';
+            document.getElementById('ml-spinner').classList.add('hidden');
+            return;
           }
+          const payload = { etapa_id:etapaId, pipeline_id:pipelineId };
+          if (isPerdidoSel && motivoPerdaVal) payload.motivo_perda = motivoPerdaVal;
           await Auth.api('PATCH',`/leads/${id}/mover`,payload);
         }
         Toast.show('Lead atualizado!','success');
@@ -445,6 +502,21 @@ async function adicionarNota() {
 }
 
 function fecharModal() { document.getElementById('ov-lead').classList.remove('open'); }
+
+function fecharModalMotivo() {
+  document.getElementById('ov-motivo').classList.remove('open');
+  _pendingMoverCallback=null;
+}
+
+async function confirmarMotivo() {
+  const sel=document.getElementById('motivo-perda-sel');
+  const outro=document.getElementById('motivo-perda-outro').value.trim();
+  const motivo=outro||sel.value;
+  if (!motivo) { Toast.show('Selecione ou informe o motivo de perda.','error'); return; }
+  const cb=_pendingMoverCallback;
+  fecharModalMotivo();
+  if (cb) await cb(motivo);
+}
 
 // ── Events ────────────────────────────────────────────────────
 function bindEvents() {
@@ -500,8 +572,12 @@ function bindEvents() {
   document.getElementById('btn-add-nota').addEventListener('click', adicionarNota);
   document.getElementById('ov-lead').addEventListener('click', e=>{ if(e.target===document.getElementById('ov-lead')) fecharModal(); });
   document.getElementById('tab-btn-dados').addEventListener('click',()=>showTab('dados'));
-  document.getElementById('tab-btn-hist').addEventListener('click',()=>showTab('hist'));
+  document.getElementById('tab-btn-hist').addEventListener('click',()=>{ showTab('hist'); const id=document.getElementById('fl-id').value; if(id) carregarHistorico(id); });
   document.getElementById('fl-funil').addEventListener('change',()=>onFlFunilChange());
+  // Modal motivo de perda
+  document.getElementById('btn-motivo-confirmar').addEventListener('click', confirmarMotivo);
+  document.getElementById('btn-motivo-cancelar').addEventListener('click', fecharModalMotivo);
+  document.getElementById('ov-motivo').addEventListener('click', e=>{ if(e.target===document.getElementById('ov-motivo')) fecharModalMotivo(); });
 }
 
 init();

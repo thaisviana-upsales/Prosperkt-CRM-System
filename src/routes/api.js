@@ -19,7 +19,8 @@ const metasCtrl      = require('../controllers/metasController');
 const comissoesCtrl  = require('../controllers/comissoesController');
 const whatsappCtrl   = require('../controllers/whatsappController');
 const automacoesCtrl  = require('../controllers/automacoesMsgController');
-const msgsPadraoCtrl  = require('../controllers/msgsPadraoController');
+const msgsPadraoCtrl     = require('../controllers/msgsPadraoController');
+const motivosPerdaCtrl   = require('../controllers/motivosPerdaController');
 
 // Seed funis iniciais (só roda se vazio)
 funisCtrl.seedFunis();
@@ -81,6 +82,7 @@ router.patch ('/leads/:id/mover',           autenticar, leadsCtrl.mover);
 router.patch ('/leads/:id/transferir',      autenticar, exigirRole('GESTOR'), leadsCtrl.transferir);
 router.delete('/leads/:id',                 autenticar, exigirRole('GESTOR'), leadsCtrl.deletar);
 router.post  ('/leads/:id/mensagens',       autenticar, leadsCtrl.adicionarMensagem);
+router.get   ('/leads/:id/historico',       autenticar, leadsCtrl.historico);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // METAS
@@ -135,6 +137,14 @@ router.get   ('/mensagens-padrao/:id/preview',      autenticar, msgsPadraoCtrl.p
 router.get   ('/mensagens-padrao/:id',              autenticar, msgsPadraoCtrl.buscarPorId);
 router.patch ('/mensagens-padrao/:id',              autenticar, msgsPadraoCtrl.editar);
 router.delete('/mensagens-padrao/:id',              autenticar, msgsPadraoCtrl.deletar);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MOTIVOS DE PERDA
+// ─────────────────────────────────────────────────────────────────────────────
+router.get   ('/motivos-perda',        autenticar, motivosPerdaCtrl.listar);
+router.post  ('/motivos-perda',        autenticar, exigirRole('GESTOR'), motivosPerdaCtrl.criar);
+router.patch ('/motivos-perda/:id',    autenticar, exigirRole('GESTOR'), motivosPerdaCtrl.atualizar);
+router.delete('/motivos-perda/:id',    autenticar, exigirRole('GESTOR'), motivosPerdaCtrl.deletar);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HEALTH CHECK

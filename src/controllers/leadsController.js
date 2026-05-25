@@ -99,7 +99,7 @@ async function buscarPorId(req, res) {
       if (req.usuario.role==='VENDEDOR' && data.responsavel_id !== req.usuario.id)
         return res.status(403).json({ sucesso:false, erro:'Acesso negado.' });
       const { data: msgs } = await sb.from('mensagens').select('*, autor:usuarios!usuario_id(nome)').eq('lead_id', req.params.id).order('criado_em');
-      const mensagens = (msgs||[]).map(m=>({...m, autor_nome:m.autor?.nome||'Sistema'}));
+      const mensagens = (msgs||[]).map(m=>({...m, conteudo:m.texto||m.conteudo||'', autor_nome:m.autor?.nome||'Sistema'}));
       return res.json({ sucesso:true, dados:{ ...normalizeLead(data), responsavel_nome:data.responsavel?.nome, etapa_nome:data.etapa?.nome, etapa_cor:data.etapa?.cor, mensagens } });
     }
     const lead = sqlite.prepare(`SELECT l.*, u.nome as responsavel_nome, e.nome as etapa_nome, e.cor as etapa_cor, f.nome as funil_nome
@@ -154,26 +154,22 @@ async function criar(req, res) {
 
       const { data, error } = await sb.from('leads').insert(row).select().single();
       if (error) throw error;
-
-      // Nota inicial como mensagem
-      if (observacoes) {
-        await sb.from('mensagens').insert({ id: crypto.randomBytes(16).toString('hex'), lead_id:id, usuario_id:req.usuario.id, texto:observacoes, tipo:'nota' });
-      }
-
+      // observacoes salva diretamente em leads.observacoes — nao duplicar em mensagens
       req.log({ acao:'CREATE', entidade:'leads', entidade_id:id, depois:{ nome, etapa_id, funil_id:fId } });
       return res.status(201).json({ sucesso:true, dados: normalizeLead(data) });
     }
 
     // SQLite
-    sqlite.prepare(`INSERT INTO leads (id,nome,email,telefone,empresa,cargo,valor,pipeline_id,etapa_id,responsavel_id,origem,tags,dados_extras,status,criado_por)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'ABERTO',?)`).run(
+    sqlite.prepare(`INSERT INTO leads (id,nome,email,telefone,empresa,cargo,valor,pipeline_id,etapa_id,responsavel_id,origem,tags,dados_extras,observacoes,status,criado_por)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'ABERTO',?)`).run(
       id, nome.trim(), email||null, telefone||null, empresa||null, cargo||null,
       valor||0, pipeline_id||null, etapa_id||null, respId, origem||null,
-      tags ? JSON.stringify(tags) : null, dados_extras ? JSON.stringify(dados_extras) : null, req.usuario.id
+      tags ? JSON.stringify(tags) : null,
+      dados_extras ? JSON.stringify(dados_extras) : null,
+      observacoes||null,
+      req.usuario.id
     );
-    if (observacoes) {
-      sqlite.prepare(`INSERT INTO mensagens (id,lead_id,usuario_id,tipo,conteudo) VALUES (?,?,?,'NOTA',?)`).run(crypto.randomBytes(16).toString('hex'), id, req.usuario.id, observacoes);
-    }
+    // observacoes salva em leads.observacoes — nao duplicar em mensagens
     req.log({ acao:'CREATE', entidade:'leads', entidade_id:id, depois:{ nome, pipeline_id, etapa_id } });
     return res.status(201).json({ sucesso:true, dados: sqlite.prepare('SELECT * FROM leads WHERE id=?').get(id) });
   } catch(e) {
@@ -192,7 +188,7 @@ async function atualizar(req, res) {
       if (errAtual || !atual) return res.status(404).json({ sucesso:false, erro:'Lead não encontrado.' });
       if (req.usuario.role==='VENDEDOR' && atual.responsavel_id !== req.usuario.id) return res.status(403).json({ sucesso:false, erro:'Acesso negado.' });
 
-      const allow = ['nome','email','telefone','empresa','cargo','valor','origem','data_fechamento','motivo_perda','observacoes','funil_id','etapa_id'];
+      const allow = ['nome','email','telefone','empresa','cargo','valor','origem','data_fechamento','motivo_perda','observacoes','funil_id','etapa_id','pipeline_id'];
       const upd = { atualizado_em: new Date().toISOString() };
       allow.forEach(k => { if (req.body[k] !== undefined) upd[k] = req.body[k]; });
       if (req.body.responsavel_id && req.usuario.role !== 'VENDEDOR') upd.responsavel_id = req.body.responsavel_id;
@@ -239,14 +235,19 @@ async function mover(req, res) {
       const isGanho   = etapa.is_ganho   || etapa.nome?.toLowerCase().includes('venda') || etapa.probabilidade >= 100;
       const isPerdido = etapa.is_perdido  || etapa.nome?.toLowerCase().includes('perdid') || etapa.nome?.toLowerCase().includes('desqualif');
 
-      if (isPerdido && !motivo_perda && !lead.perdido_motivo)
+      if (isPerdido && !motivo_perda && !lead.perdido_motivo && !lead.motivo_perda)
         return res.status(400).json({ sucesso:false, erro:'motivo_perda é obrigatório ao mover para etapa perdida.' });
 
       const novoStatus = isGanho ? 'ganho' : isPerdido ? 'perdido' : 'ativo';
       const agora = new Date().toISOString();
+      // Resolve funil_id e pipeline_id a partir da etapa se não vierem no body
+      let funilIdUpd = req.body.funil_id || lead.funil_id || null;
+      if (!funilIdUpd && etapa.funil_id) funilIdUpd = etapa.funil_id;
       const upd = { etapa_id, atualizado_em: agora, status: novoStatus };
+      if (funilIdUpd) upd.funil_id = funilIdUpd;
+      if (pipeline_id) upd.pipeline_id = pipeline_id;
       if (isGanho && !lead.ganho_em) upd.ganho_em = agora;
-      if (isPerdido && motivo_perda)  { upd.perdido_em = agora; upd.perdido_motivo = motivo_perda; }
+      if (isPerdido && motivo_perda) { upd.perdido_em = agora; upd.perdido_motivo = motivo_perda; upd.motivo_perda = motivo_perda; }
 
       const { data, error } = await sb.from('leads').update(upd).eq('id', id).select().single();
       if (error) throw error;
@@ -390,4 +391,24 @@ function calcularComissaoSQLite(db, lead, leadId, pipeline_id, agora, req) {
   db.prepare(`INSERT OR IGNORE INTO comissoes (id,usuario_id,lead_id,valor_venda,percentual,valor_comissao,status,periodo_ref,observacoes) VALUES (?,?,?,?,?,?,'PENDENTE',?,?)`).run(comId, lead.responsavel_id, leadId, valorVenda, valorVenda>0?(comissaoBase/valorVenda)*100:0, comissaoBase, mesRef, `Regra: ${regra.nome}`);
 }
 
-module.exports = { listar, buscarPorId, criar, atualizar, mover, transferir, deletar, adicionarMensagem, getDistribuicao, setDistribuicao };
+// GET /api/leads/:id/historico
+async function historico(req, res) {
+  const { sb, isSupa, sqlite } = getProvider();
+  try {
+    let notas = [];
+    let logs  = [];
+    if (isSupa) {
+      const { data: msgs } = await sb.from('mensagens').select('*, autor:usuarios!usuario_id(nome)').eq('lead_id', req.params.id).order('criado_em');
+      notas = (msgs||[]).map(m=>({ id:m.id, tipo:'NOTA', conteudo:m.texto||m.conteudo||'', autor_nome:m.autor?.nome||'Sistema', criado_em:m.criado_em }));
+      const { data: lgData } = await sb.from('logs').select('*').eq('entidade_id', req.params.id).order('criado_em');
+      logs = (lgData||[]).map(l=>({ id:l.id, tipo:'LOG', acao:l.acao, conteudo:`${l.acao} — ${JSON.stringify(l.depois||{})}`, autor_nome:'Sistema', criado_em:l.criado_em }));
+    } else {
+      notas = sqlite.prepare(`SELECT m.*, u.nome as autor_nome FROM mensagens m LEFT JOIN usuarios u ON m.usuario_id=u.id WHERE m.lead_id=? ORDER BY m.enviado_em`).all(req.params.id).map(m=>({...m,tipo:'NOTA'}));
+      logs  = sqlite.prepare(`SELECT l.*, u.nome as autor_nome FROM logs l LEFT JOIN usuarios u ON l.usuario_id=u.id WHERE l.entidade_id=? ORDER BY l.criado_em`).all(req.params.id).map(l=>({...l,tipo:'LOG',conteudo:`${l.acao}`,}));
+    }
+    const todos = [...notas, ...logs].sort((a,b)=>new Date(a.criado_em)-new Date(b.criado_em));
+    return res.json({ sucesso:true, dados:todos });
+  } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
+}
+
+module.exports = { listar, buscarPorId, criar, atualizar, mover, transferir, deletar, adicionarMensagem, historico, getDistribuicao, setDistribuicao };
