@@ -167,40 +167,54 @@
           </div>
         </div>
 
-        <!-- Produto Adquirido -->
-        <div class="input-group" style="margin-top:4px">
-          <label class="input-label">Produto Adquirido <span style="color:var(--green);font-size:.7rem">obrigatório para ganho</span></label>
-          <div style="display:flex;gap:8px;align-items:center">
-            <select id="fl-produto" class="input" style="flex:1">
-              <option value="">— Selecione ou adicione —</option>
-            </select>
-            <button type="button" id="btn-add-produto" class="btn btn-secondary btn-sm" style="white-space:nowrap;flex-shrink:0" title="Adicionar novo produto">+ Novo</button>
+        <!-- ── Produtos da Venda (múltiplos) ─────────────────── -->
+        <div class="input-group" style="margin-top:8px" id="area-produtos-venda">
+          <label class="input-label" style="display:flex;align-items:center;justify-content:space-between">
+            <span>Produtos da Venda <span style="color:var(--green);font-size:.7rem">obrigatório para ganho</span></span>
+            <button type="button" id="btn-add-linha-produto" class="btn btn-secondary btn-sm" style="font-size:.72rem;padding:3px 10px">+ Adicionar Produto</button>
+          </label>
+
+          <!-- Cabeçalho da tabela (visível quando há itens) -->
+          <div id="lp-header" style="display:none;display:grid;grid-template-columns:1fr 70px 100px 90px 28px;gap:4px;font-size:.7rem;color:var(--text-muted);padding:4px 2px;margin-top:6px">
+            <span>Produto</span><span>Qtd</span><span>Val. Unit.</span><span>Total</span><span></span>
           </div>
-          <!-- Badge do produto selecionado -->
-          <div id="produto-badge" style="display:none;margin-top:6px;display:none;align-items:center;gap:6px">
-            <span id="produto-badge-dot" style="display:inline-block;width:10px;height:10px;border-radius:50%"></span>
-            <span id="produto-badge-nome" style="font-size:.8rem;color:var(--text-secondary)"></span>
+
+          <!-- Lista dinâmica de linhas de produto -->
+          <div id="lp-lista" style="display:flex;flex-direction:column;gap:6px;margin-top:4px"></div>
+
+          <!-- Empty state -->
+          <div id="lp-empty" style="font-size:.8rem;color:var(--text-muted);padding:8px 2px">
+            Nenhum produto adicionado. Clique em "+ Adicionar Produto".
+          </div>
+
+          <!-- Mini form novo produto (oculto) — mantido para cadastrar produto novo -->
+          <div id="form-novo-produto" style="display:none;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-top:8px">
+            <div style="font-size:.75rem;font-weight:700;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">Cadastrar Novo Produto</div>
+            <div class="fr">
+              <div class="input-group">
+                <label class="input-label">Nome do produto *</label>
+                <input id="np-nome" class="input" placeholder="Ex: Plano Essencial">
+              </div>
+              <div class="input-group" style="max-width:120px">
+                <label class="input-label">Cor</label>
+                <input id="np-cor" class="input" type="color" value="#6CFF4E" style="height:38px;padding:2px 4px;cursor:pointer">
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:6px">
+              <button type="button" id="btn-salvar-produto" class="btn btn-primary btn-sm">Cadastrar</button>
+              <button type="button" id="btn-cancelar-produto" class="btn btn-secondary btn-sm">Cancelar</button>
+            </div>
+          </div>
+
+          <!-- Total da venda (calculado) -->
+          <div id="lp-total-wrap" style="display:none;margin-top:8px;padding:8px 10px;background:var(--surface-2);border-radius:8px;font-size:.82rem;display:none;justify-content:space-between;align-items:center">
+            <span style="color:var(--text-muted)">Total dos produtos:</span>
+            <span id="lp-total-valor" style="font-weight:700;color:var(--green)">R$ 0,00</span>
           </div>
         </div>
 
-        <!-- Mini form novo produto (oculto) -->
-        <div id="form-novo-produto" style="display:none;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-top:8px">
-          <div style="font-size:.75rem;font-weight:700;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">Cadastrar Novo Produto</div>
-          <div class="fr">
-            <div class="input-group">
-              <label class="input-label">Nome do produto *</label>
-              <input id="np-nome" class="input" placeholder="Ex: Plano Essencial">
-            </div>
-            <div class="input-group" style="max-width:120px">
-              <label class="input-label">Cor</label>
-              <input id="np-cor" class="input" type="color" value="#6CFF4E" style="height:38px;padding:2px 4px;cursor:pointer">
-            </div>
-          </div>
-          <div style="display:flex;gap:8px;margin-top:6px">
-            <button type="button" id="btn-salvar-produto" class="btn btn-primary btn-sm">Cadastrar</button>
-            <button type="button" id="btn-cancelar-produto" class="btn btn-secondary btn-sm">Cancelar</button>
-          </div>
-        </div>
+        <!-- Campo oculto legado — mantido para compatibilidade (não exibido ao usuário) -->
+        <select id="fl-produto" style="display:none"><option value="">—</option></select>
 
         <!-- Parcelas -->
         <div class="input-group" style="margin-top:12px">

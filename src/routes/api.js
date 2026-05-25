@@ -90,6 +90,12 @@ router.delete('/leads/:id',                 autenticar, exigirRole('GESTOR'), le
 router.post  ('/leads/:id/mensagens',       autenticar, leadsCtrl.adicionarMensagem);
 router.get   ('/leads/:id/historico',       autenticar, leadsCtrl.historico);
 
+// ── Lead Produtos (múltiplos produtos por venda) ──────────────────────────────
+router.get   ('/leads/:id/produtos',              autenticar, leadsCtrl.listarProdutosLead);
+router.post  ('/leads/:id/produtos',              autenticar, leadsCtrl.adicionarProdutoLead);
+router.patch ('/leads/:id/produtos/:itemId',      autenticar, leadsCtrl.atualizarProdutoLead);
+router.delete('/leads/:id/produtos/:itemId',      autenticar, leadsCtrl.removerProdutoLead);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // METAS
 // ─────────────────────────────────────────────────────────────────────────────

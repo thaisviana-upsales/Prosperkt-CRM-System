@@ -482,4 +482,175 @@ async function historico(req, res) {
   } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
 }
 
-module.exports = { listar, buscarPorId, criar, atualizar, mover, transferir, deletar, adicionarMensagem, historico, getDistribuicao, setDistribuicao };
+// ── Helper: recalcula valor_venda do lead pela soma dos produtos ativos ────────
+async function recalcularValorVenda(leadId, sb, isSupa, sqlite) {
+  try {
+    if (isSupa) {
+      const { data: itens } = await sb.from('lead_produtos')
+        .select('valor_total').eq('lead_id', leadId).is('deleted_at', null);
+      const soma = (itens||[]).reduce((s, i) => s + Number(i.valor_total||0), 0);
+      await sb.from('leads').update({ valor_venda: soma, atualizado_em: new Date().toISOString() }).eq('id', leadId);
+      return soma;
+    } else {
+      try {
+        const row = sqlite.prepare(
+          `SELECT COALESCE(SUM(quantidade * valor_unitario),0) as soma FROM lead_produtos WHERE lead_id=? AND deleted_at IS NULL`
+        ).get(leadId);
+        sqlite.prepare(`UPDATE leads SET valor_venda=?, atualizado_em=? WHERE id=?`).run(row.soma, new Date().toISOString(), leadId);
+        return row.soma;
+      } catch { return 0; }
+    }
+  } catch(e) { console.error('[recalcularValorVenda]', e.message); return 0; }
+}
+
+// ── GET /api/leads/:id/produtos ───────────────────────────────────────────────
+async function listarProdutosLead(req, res) {
+  const { sb, isSupa, sqlite } = getProvider();
+  const leadId = req.params.id;
+  try {
+    if (isSupa) {
+      const { data, error } = await sb.from('lead_produtos')
+        .select('*').eq('lead_id', leadId).is('deleted_at', null).order('criado_em');
+      if (error) throw error;
+      return res.json({ sucesso: true, dados: data || [] });
+    }
+    try {
+      const rows = sqlite.prepare(
+        `SELECT * FROM lead_produtos WHERE lead_id=? AND deleted_at IS NULL ORDER BY criado_em`
+      ).all(leadId);
+      return res.json({ sucesso: true, dados: rows });
+    } catch {
+      return res.json({ sucesso: true, dados: [], aviso: 'Tabela lead_produtos não existe ainda no SQLite.' });
+    }
+  } catch(e) { return res.status(500).json({ sucesso: false, erro: e.message }); }
+}
+
+// ── POST /api/leads/:id/produtos ──────────────────────────────────────────────
+async function adicionarProdutoLead(req, res) {
+  const { sb, isSupa, sqlite } = getProvider();
+  const leadId = req.params.id;
+  const { produto_id, produto_nome, produto_cor, quantidade = 1, valor_unitario = 0 } = req.body;
+
+  if (!produto_nome) return res.status(400).json({ sucesso: false, erro: 'produto_nome é obrigatório.' });
+  if (Number(quantidade) <= 0) return res.status(400).json({ sucesso: false, erro: 'quantidade deve ser maior que zero.' });
+
+  const id    = require('crypto').randomBytes(16).toString('hex');
+  const agora = new Date().toISOString();
+  const qty   = Number(quantidade);
+  const vUnit = Number(valor_unitario);
+  const vTot  = Number((qty * vUnit).toFixed(2));
+
+  try {
+    if (isSupa) {
+      // Verifica se o lead existe
+      const { data: lead } = await sb.from('leads').select('id').eq('id', leadId).single();
+      if (!lead) return res.status(404).json({ sucesso: false, erro: 'Lead não encontrado.' });
+
+      const { data, error } = await sb.from('lead_produtos').insert({
+        id, lead_id: leadId,
+        produto_id:    produto_id    || null,
+        produto_nome,
+        produto_cor:   produto_cor   || null,
+        quantidade:    qty,
+        valor_unitario: vUnit,
+        // valor_total é coluna GENERATED — não enviar
+        criado_em:    agora,
+        atualizado_em: agora,
+      }).select().single();
+      if (error) throw error;
+
+      const novoTotal = await recalcularValorVenda(leadId, sb, isSupa, sqlite);
+      req.log?.({ acao: 'ADD_PRODUTO', entidade: 'lead_produtos', entidade_id: leadId, depois: { produto_nome, quantidade: qty, valor_unitario: vUnit, valor_total: vTot } });
+      return res.status(201).json({ sucesso: true, dados: data, valor_venda_lead: novoTotal });
+    }
+
+    // SQLite
+    try {
+      sqlite.prepare(
+        `INSERT INTO lead_produtos (id,lead_id,produto_id,produto_nome,produto_cor,quantidade,valor_unitario,criado_em,atualizado_em) VALUES (?,?,?,?,?,?,?,?,?)`
+      ).run(id, leadId, produto_id||null, produto_nome, produto_cor||null, qty, vUnit, agora, agora);
+      const novoTotal = await recalcularValorVenda(leadId, sb, isSupa, sqlite);
+      const row = sqlite.prepare(`SELECT * FROM lead_produtos WHERE id=?`).get(id);
+      return res.status(201).json({ sucesso: true, dados: row, valor_venda_lead: novoTotal });
+    } catch(e2) {
+      return res.status(500).json({ sucesso: false, erro: e2.message, aviso: 'Execute supabase_patch_v6_lead_produtos.sql no banco.' });
+    }
+  } catch(e) { return res.status(500).json({ sucesso: false, erro: e.message }); }
+}
+
+// ── PATCH /api/leads/:id/produtos/:itemId ─────────────────────────────────────
+async function atualizarProdutoLead(req, res) {
+  const { sb, isSupa, sqlite } = getProvider();
+  const { id: leadId, itemId } = req.params;
+  const { produto_id, produto_nome, produto_cor, quantidade, valor_unitario } = req.body;
+  const agora = new Date().toISOString();
+
+  try {
+    if (isSupa) {
+      const { data: atual } = await sb.from('lead_produtos').select('*').eq('id', itemId).eq('lead_id', leadId).single();
+      if (!atual) return res.status(404).json({ sucesso: false, erro: 'Item não encontrado.' });
+      if (atual.deleted_at) return res.status(400).json({ sucesso: false, erro: 'Item está removido da venda.' });
+
+      const upd = { atualizado_em: agora };
+      if (produto_id    !== undefined) upd.produto_id    = produto_id    || null;
+      if (produto_nome  !== undefined) upd.produto_nome  = produto_nome;
+      if (produto_cor   !== undefined) upd.produto_cor   = produto_cor   || null;
+      if (quantidade    !== undefined) upd.quantidade    = Number(quantidade);
+      if (valor_unitario !== undefined) upd.valor_unitario = Number(valor_unitario);
+      // valor_total é GENERATED — não enviar
+
+      const { data, error } = await sb.from('lead_produtos').update(upd).eq('id', itemId).select().single();
+      if (error) throw error;
+
+      const novoTotal = await recalcularValorVenda(leadId, sb, isSupa, sqlite);
+      return res.json({ sucesso: true, dados: data, valor_venda_lead: novoTotal });
+    }
+
+    // SQLite
+    try {
+      const atual = sqlite.prepare(`SELECT * FROM lead_produtos WHERE id=? AND lead_id=?`).get(itemId, leadId);
+      if (!atual) return res.status(404).json({ sucesso: false, erro: 'Item não encontrado.' });
+      const sets = []; const vals = [];
+      if (produto_id    !== undefined) { sets.push('produto_id=?');    vals.push(produto_id||null); }
+      if (produto_nome  !== undefined) { sets.push('produto_nome=?');  vals.push(produto_nome); }
+      if (produto_cor   !== undefined) { sets.push('produto_cor=?');   vals.push(produto_cor||null); }
+      if (quantidade    !== undefined) { sets.push('quantidade=?');    vals.push(Number(quantidade)); }
+      if (valor_unitario !== undefined) { sets.push('valor_unitario=?'); vals.push(Number(valor_unitario)); }
+      sets.push('atualizado_em=?'); vals.push(agora);
+      sqlite.prepare(`UPDATE lead_produtos SET ${sets.join(',')} WHERE id=?`).run(...vals, itemId);
+      const novoTotal = await recalcularValorVenda(leadId, sb, isSupa, sqlite);
+      return res.json({ sucesso: true, dados: sqlite.prepare(`SELECT * FROM lead_produtos WHERE id=?`).get(itemId), valor_venda_lead: novoTotal });
+    } catch(e2) { return res.status(500).json({ sucesso: false, erro: e2.message }); }
+  } catch(e) { return res.status(500).json({ sucesso: false, erro: e.message }); }
+}
+
+// ── DELETE /api/leads/:id/produtos/:itemId (soft delete) ──────────────────────
+async function removerProdutoLead(req, res) {
+  const { sb, isSupa, sqlite } = getProvider();
+  const { id: leadId, itemId } = req.params;
+  const agora = new Date().toISOString();
+
+  try {
+    if (isSupa) {
+      const { data: atual } = await sb.from('lead_produtos').select('id,deleted_at').eq('id', itemId).eq('lead_id', leadId).single();
+      if (!atual) return res.status(404).json({ sucesso: false, erro: 'Item não encontrado.' });
+      if (atual.deleted_at) return res.status(400).json({ sucesso: false, erro: 'Item já foi removido.' });
+
+      const { error } = await sb.from('lead_produtos').update({ deleted_at: agora, atualizado_em: agora }).eq('id', itemId);
+      if (error) throw error;
+
+      const novoTotal = await recalcularValorVenda(leadId, sb, isSupa, sqlite);
+      req.log?.({ acao: 'REMOVE_PRODUTO', entidade: 'lead_produtos', entidade_id: leadId, depois: { item_id: itemId, deleted_at: agora } });
+      return res.json({ sucesso: true, mensagem: 'Produto removido da venda.', valor_venda_lead: novoTotal });
+    }
+
+    // SQLite
+    try {
+      sqlite.prepare(`UPDATE lead_produtos SET deleted_at=?, atualizado_em=? WHERE id=? AND lead_id=?`).run(agora, agora, itemId, leadId);
+      const novoTotal = await recalcularValorVenda(leadId, sb, isSupa, sqlite);
+      return res.json({ sucesso: true, mensagem: 'Produto removido da venda.', valor_venda_lead: novoTotal });
+    } catch(e2) { return res.status(500).json({ sucesso: false, erro: e2.message }); }
+  } catch(e) { return res.status(500).json({ sucesso: false, erro: e.message }); }
+}
+
+module.exports = { listar, buscarPorId, criar, atualizar, mover, transferir, deletar, adicionarMensagem, historico, getDistribuicao, setDistribuicao, listarProdutosLead, adicionarProdutoLead, atualizarProdutoLead, removerProdutoLead };

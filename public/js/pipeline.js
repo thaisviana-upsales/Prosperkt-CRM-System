@@ -18,6 +18,10 @@ let _pendingMoverCallback = null;
 let _parcelas = [];
 // Lead original aberto no modal (para fallback de etapa/funil/pipeline)
 let _leadEmEdicao = null;
+// Produtos da venda (multi-produto)
+let _leadProdutos = []; // itens persistidos no banco (com id)
+let _leadProdutosNovas = []; // linhas ainda não salvas no banco
+let _leadIdAberto = null; // id do lead cujo modal está aberto
 
 // ── Init ──────────────────────────────────────────────────────
 async function init() {
@@ -361,11 +365,14 @@ async function abrirLead(id) {
   // Campos comerciais
   document.getElementById('fl-valor-venda').value = l.valor_venda||'';
   document.getElementById('fl-forma-pgto').value  = l.forma_pagamento||'';
-  popularSelProdutos(l.produto_id||'');
+  popularSelProdutos(l.produto_id||''); // legado oculto — mantém compatibilidade
   _parcelas = l.parcelas_json ? (typeof l.parcelas_json==='string' ? JSON.parse(l.parcelas_json) : l.parcelas_json) : [];
   renderParcelas();
+  // Multi-produto: carrega do banco
+  _leadIdAberto = id;
+  await carregarProdutosLead(id, l);
   // Abre seção comercial se tiver dados preenchidos
-  if (l.valor_venda || l.forma_pagamento || l.produto_id) abrirSecaoComercial();
+  if (l.valor_venda || l.forma_pagamento || l.produto_id || _leadProdutos.length) abrirSecaoComercial();
   // Guarda lead original para fallback de etapa/funil/pipeline no salvar
   _leadEmEdicao = l;
   // Histórico via endpoint dedicado
@@ -413,12 +420,17 @@ function resetModal() {
   else { rSel.disabled=false; rSel.value=_usuario.id; }
   // Limpa lead em edição
   _leadEmEdicao = null;
+  _leadIdAberto = null;
   // Comercial reset
   document.getElementById('fl-valor-venda').value='';
   document.getElementById('fl-forma-pgto').value='';
   popularSelProdutos('');
   _parcelas=[];
   renderParcelas();
+  // Multi-produto reset
+  _leadProdutos = [];
+  _leadProdutosNovas = [];
+  renderProdutosLead();
   fecharSecaoComercial();
 }
 
@@ -479,19 +491,34 @@ async function salvarLead() {
     const email = document.getElementById('fl-email').value.trim();
     const vv    = parseFloat(document.getElementById('fl-valor-venda').value)||0;
     const fp    = document.getElementById('fl-forma-pgto').value;
-    const prd   = document.getElementById('fl-produto').value;
+    // Multi-produto: valida lista de produtos
+    const prodAtivos = _leadProdutos.filter(p => !p._removido);
     const faltando=[];
     if (!email)   faltando.push('E-mail');
     if (!funilId) faltando.push('Funil');
-    if (vv<=0)    faltando.push('Valor da Venda');
     if (!fp)      faltando.push('Forma de Pagamento');
-    if (!prd)     faltando.push('Produto Adquirido');
+    if (prodAtivos.length === 0) {
+      alertEl.className='alert alert-error';
+      alertEl.textContent='Para registrar a venda, adicione pelo menos um produto com quantidade e valor.';
+      alertEl.style.display='';
+      abrirSecaoComercial();
+      return;
+    }
+    const prodIncompleto = prodAtivos.find(p => !p.produto_nome || !(p.quantidade > 0) || !(p.valor_unitario > 0));
+    if (prodIncompleto) {
+      alertEl.className='alert alert-error';
+      alertEl.textContent='Preencha produto, quantidade e valor antes de registrar a venda.';
+      alertEl.style.display='';
+      abrirSecaoComercial();
+      return;
+    }
+    if (vv <= 0) faltando.push('Valor da Venda (soma dos produtos deve ser > 0)');
     if (faltando.length) {
       alertEl.className='alert alert-error';
       alertEl.textContent=`Para registrar a venda, preencha: ${faltando.join(', ')}.`;
       alertEl.style.display='';
       abrirSecaoComercial();
-      return; // bloqueia — não chama API, não salva nada
+      return;
     }
   }
 
@@ -635,21 +662,193 @@ async function confirmarMotivo() {
 
 // ── Funções comerciais ───────────────────────────────────────
 function popularSelProdutos(selecionado) {
+  // Mantém o select legado (oculto) populado para compatibilidade
   const sel = document.getElementById('fl-produto');
-  sel.innerHTML = '<option value="">— Selecione ou adicione —</option>' +
+  sel.innerHTML = '<option value="">—</option>' +
     _produtos.map(p => `<option value="${p.id}" data-cor="${p.cor||'#aaa'}">${p.nome}</option>`).join('');
   if (selecionado) sel.value = selecionado;
-  atualizarProdutoBadge();
 }
 
-function atualizarProdutoBadge() {
-  const sel = document.getElementById('fl-produto');
-  const opt = sel.selectedOptions[0];
-  const badge = document.getElementById('produto-badge');
-  if (!sel.value || !opt) { badge.style.display='none'; return; }
-  document.getElementById('produto-badge-dot').style.background = opt.dataset.cor||'#aaa';
-  document.getElementById('produto-badge-nome').textContent = opt.text;
-  badge.style.display='flex';
+// ── Multi-produto ─────────────────────────────────────────────
+
+// Carrega itens do banco e inicializa a lista
+async function carregarProdutosLead(leadId, lead) {
+  _leadProdutos = [];
+  _leadProdutosNovas = [];
+
+  // Tenta buscar do endpoint lead_produtos
+  const r = await Auth.api('GET', `/leads/${leadId}/produtos`);
+  if (r?.ok && r.data.dados?.length) {
+    _leadProdutos = r.data.dados.map(p => ({ ...p, _salvo: true }));
+  } else if (lead?.produto_nome || lead?.produto_id) {
+    // Fallback: lead antigo tem produto único — exibe como linha visual
+    const pid = lead.produto_id || '';
+    const prodMestre = _produtos.find(p => p.id === pid);
+    _leadProdutos = [{
+      id: null, // não tem id em lead_produtos ainda
+      lead_id: leadId,
+      produto_id: pid,
+      produto_nome: lead.produto_nome || prodMestre?.nome || 'Produto',
+      produto_cor: lead.produto_cor || prodMestre?.cor || '#6CFF4E',
+      quantidade: 1,
+      valor_unitario: Number(lead.valor_venda || 0),
+      valor_total: Number(lead.valor_venda || 0),
+      _legado: true, _salvo: false,
+    }];
+  }
+  renderProdutosLead();
+}
+
+// Recalcula o total e atualiza o campo valor_venda
+function recalcularTotalVenda() {
+  const total = _leadProdutos
+    .filter(p => !p._removido)
+    .reduce((s, p) => s + Number(p.valor_total || (p.quantidade * p.valor_unitario) || 0), 0);
+  document.getElementById('fl-valor-venda').value = total > 0 ? total.toFixed(2) : '';
+  const totalEl = document.getElementById('lp-total-valor');
+  const wrapEl  = document.getElementById('lp-total-wrap');
+  const ativos  = _leadProdutos.filter(p => !p._removido);
+  if (totalEl) totalEl.textContent = `R$ ${total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+  if (wrapEl)  wrapEl.style.display = ativos.length ? 'flex' : 'none';
+}
+
+// Renderiza a lista de produtos da venda
+function renderProdutosLead() {
+  const lista   = document.getElementById('lp-lista');
+  const empty   = document.getElementById('lp-empty');
+  const header  = document.getElementById('lp-header');
+  if (!lista) return;
+
+  const ativos = _leadProdutos.filter(p => !p._removido);
+  empty.style.display  = ativos.length ? 'none' : '';
+  header.style.display = ativos.length ? 'grid' : 'none';
+  lista.innerHTML = '';
+
+  ativos.forEach((p, i) => {
+    const idx = _leadProdutos.indexOf(p);
+    const prodOpts = _produtos.map(pr =>
+      `<option value="${pr.id}" data-cor="${pr.cor||'#6CFF4E'}" ${pr.id === p.produto_id ? 'selected' : ''}>${pr.nome}</option>`
+    ).join('');
+    const row = document.createElement('div');
+    row.style.cssText = 'display:grid;grid-template-columns:1fr 70px 100px 90px 28px;gap:4px;align-items:center';
+    row.dataset.lpIdx = idx;
+    row.innerHTML = `
+      <select class="input lp-produto-sel" style="font-size:.78rem;padding:4px 6px" data-idx="${idx}">
+        <option value="">— Produto —</option>${prodOpts}
+      </select>
+      <input type="number" class="input lp-qty" style="font-size:.78rem;padding:4px 6px" min="0.001" step="any" placeholder="Qtd" value="${p.quantidade||1}" data-idx="${idx}">
+      <input type="number" class="input lp-vunit" style="font-size:.78rem;padding:4px 6px" min="0" step="0.01" placeholder="R$ unit" value="${p.valor_unitario||''}" data-idx="${idx}">
+      <input type="number" class="input lp-vtot" style="font-size:.78rem;padding:4px 6px;background:var(--surface-2)" readonly placeholder="Total" value="${Number(p.valor_total||(p.quantidade*p.valor_unitario)||0).toFixed(2)}" data-idx="${idx}">
+      <button type="button" class="lp-rm" data-idx="${idx}" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:1rem;line-height:1" title="Remover">✕</button>`;
+
+    // Evento: selecionar produto do catálogo
+    row.querySelector('.lp-produto-sel').addEventListener('change', async e => {
+      const pidx = +e.target.dataset.idx;
+      const prodId = e.target.value;
+      const opt    = e.target.selectedOptions[0];
+      _leadProdutos[pidx].produto_id   = prodId;
+      _leadProdutos[pidx].produto_nome = opt?.text || _leadProdutos[pidx].produto_nome;
+      _leadProdutos[pidx].produto_cor  = opt?.dataset.cor || '#6CFF4E';
+      await salvarLinhaProduto(pidx);
+    });
+
+    // Evento: editar quantidade
+    row.querySelector('.lp-qty').addEventListener('change', async e => {
+      const pidx = +e.target.dataset.idx;
+      const qty  = Number(e.target.value) || 1;
+      _leadProdutos[pidx].quantidade = qty;
+      const vunit = Number(_leadProdutos[pidx].valor_unitario) || 0;
+      _leadProdutos[pidx].valor_total = Number((qty * vunit).toFixed(2));
+      row.querySelector('.lp-vtot').value = _leadProdutos[pidx].valor_total;
+      recalcularTotalVenda();
+      await salvarLinhaProduto(pidx);
+    });
+
+    // Evento: editar valor unitário
+    row.querySelector('.lp-vunit').addEventListener('change', async e => {
+      const pidx  = +e.target.dataset.idx;
+      const vunit = Number(e.target.value) || 0;
+      _leadProdutos[pidx].valor_unitario = vunit;
+      const qty   = Number(_leadProdutos[pidx].quantidade) || 1;
+      _leadProdutos[pidx].valor_total = Number((qty * vunit).toFixed(2));
+      row.querySelector('.lp-vtot').value = _leadProdutos[pidx].valor_total;
+      recalcularTotalVenda();
+      await salvarLinhaProduto(pidx);
+    });
+
+    // Evento: remover linha
+    row.querySelector('.lp-rm').addEventListener('click', async e => {
+      const pidx = +e.target.dataset.idx;
+      await removerLinhaProduto(pidx);
+    });
+
+    lista.appendChild(row);
+  });
+
+  recalcularTotalVenda();
+}
+
+// Salva/atualiza uma linha no banco
+async function salvarLinhaProduto(idx) {
+  const p      = _leadProdutos[idx];
+  const leadId = _leadIdAberto;
+  if (!leadId || !p.produto_nome) return;
+
+  const payload = {
+    produto_id:     p.produto_id     || undefined,
+    produto_nome:   p.produto_nome,
+    produto_cor:    p.produto_cor    || undefined,
+    quantidade:     Number(p.quantidade) || 1,
+    valor_unitario: Number(p.valor_unitario) || 0,
+  };
+
+  if (p.id) {
+    // Já persistido — PATCH
+    const r = await Auth.api('PATCH', `/leads/${leadId}/produtos/${p.id}`, payload);
+    if (r?.ok) {
+      _leadProdutos[idx] = { ...p, ...payload, valor_total: r.data.dados?.valor_total ?? (payload.quantidade * payload.valor_unitario), _salvo: true };
+      recalcularTotalVenda();
+    }
+  } else {
+    // Não persistido ainda — POST
+    const r = await Auth.api('POST', `/leads/${leadId}/produtos`, payload);
+    if (r?.ok && r.data.dados?.id) {
+      _leadProdutos[idx] = { ...p, ...r.data.dados, _salvo: true };
+      recalcularTotalVenda();
+    }
+  }
+}
+
+// Remove linha (soft delete no banco ou só localmente se não persistida)
+async function removerLinhaProduto(idx) {
+  const p = _leadProdutos[idx];
+  const leadId = _leadIdAberto;
+  if (p.id && leadId) {
+    await Auth.api('DELETE', `/leads/${leadId}/produtos/${p.id}`);
+  }
+  _leadProdutos[idx]._removido = true;
+  recalcularTotalVenda();
+  renderProdutosLead();
+}
+
+// Adiciona nova linha vazia
+function adicionarLinhaProduto() {
+  _leadProdutos.push({
+    id: null,
+    lead_id: _leadIdAberto,
+    produto_id: '',
+    produto_nome: '',
+    produto_cor: '#6CFF4E',
+    quantidade: 1,
+    valor_unitario: 0,
+    valor_total: 0,
+    _salvo: false,
+  });
+  renderProdutosLead();
+  abrirSecaoComercial();
+  // Foca o select da última linha adicionada
+  const rows = document.querySelectorAll('#lp-lista [data-lp-idx]');
+  if (rows.length) rows[rows.length-1].querySelector('.lp-produto-sel')?.focus();
 }
 
 function renderParcelas() {
@@ -702,6 +901,20 @@ async function salvarNovoProduto() {
   document.getElementById('form-novo-produto').style.display='none';
   document.getElementById('np-nome').value='';
   Toast.show('Produto cadastrado!','success');
+  // Adiciona automaticamente como nova linha na lista de venda
+  const novo = r.data.dados;
+  _leadProdutos.push({
+    id: null,
+    lead_id: _leadIdAberto,
+    produto_id: novo.id,
+    produto_nome: novo.nome,
+    produto_cor: novo.cor || '#6CFF4E',
+    quantidade: 1,
+    valor_unitario: 0,
+    valor_total: 0,
+    _salvo: false,
+  });
+  renderProdutosLead();
 }
 
 // ── Events ────────────────────────────────────────────────────
@@ -771,11 +984,9 @@ function bindEvents() {
     else fecharSecaoComercial();
   });
   document.getElementById('btn-add-parcela').addEventListener('click', adicionarParcela);
-  document.getElementById('fl-produto').addEventListener('change', atualizarProdutoBadge);
-  document.getElementById('btn-add-produto').addEventListener('click', () => {
-    document.getElementById('form-novo-produto').style.display='';
-    document.getElementById('np-nome').focus();
-  });
+  // Multi-produto: botão adicionar linha
+  document.getElementById('btn-add-linha-produto').addEventListener('click', adicionarLinhaProduto);
+  // Botão + Novo produto (cadastrar no catálogo)
   document.getElementById('btn-salvar-produto').addEventListener('click', salvarNovoProduto);
   document.getElementById('btn-cancelar-produto').addEventListener('click', () => {
     document.getElementById('form-novo-produto').style.display='none';
