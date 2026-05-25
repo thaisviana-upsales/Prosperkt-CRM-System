@@ -22,9 +22,14 @@ const automacoesCtrl  = require('../controllers/automacoesMsgController');
 const msgsPadraoCtrl     = require('../controllers/msgsPadraoController');
 const motivosPerdaCtrl   = require('../controllers/motivosPerdaController');
 const produtosCtrl       = require('../controllers/produtosController');
+const auditCtrl          = require('../controllers/auditController');
+const backupCtrl         = require('../controllers/backupController');
 
 // Seed funis iniciais (só roda se vazio)
 funisCtrl.seedFunis();
+
+// Agenda backups automáticos (diário às 3h, semanal às segundas, mensal dia 1)
+try { require('../services/backupService').agendarBackups(); } catch(e) { console.warn('[Backup] Agendador não iniciado:', e.message); }
 
 // Aplica audit middleware em todas as rotas
 router.use(auditMiddleware);
@@ -154,6 +159,21 @@ router.get   ('/produtos',     autenticar, produtosCtrl.listar);
 router.post  ('/produtos',     autenticar, produtosCtrl.criar);
 router.patch ('/produtos/:id', autenticar, exigirRole('GESTOR'), produtosCtrl.atualizar);
 router.delete('/produtos/:id', autenticar, exigirRole('GESTOR'), produtosCtrl.deletar);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUDITORIA (GESTOR+)
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/audit',                autenticar, exigirRole('GESTOR'), auditCtrl.listarAudit);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN — LIXEIRA + RESTORE + BACKUP + STATS (SUPER_ADMIN)
+// ─────────────────────────────────────────────────────────────────────────────
+router.get ('/admin/stats',           autenticar, exigirSuperAdmin, auditCtrl.statsAudit);
+router.get ('/admin/lixeira',         autenticar, exigirRole('GESTOR'), auditCtrl.listarLixeira);
+router.post('/admin/restore',         autenticar, exigirSuperAdmin, auditCtrl.restore);
+router.get ('/admin/backups',         autenticar, exigirSuperAdmin, backupCtrl.listar);
+router.post('/admin/backups',         autenticar, exigirSuperAdmin, backupCtrl.executar);
+router.get ('/admin/backups/:arquivo',autenticar, exigirSuperAdmin, backupCtrl.download);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HEALTH CHECK

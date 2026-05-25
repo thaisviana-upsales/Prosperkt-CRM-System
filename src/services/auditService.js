@@ -9,7 +9,7 @@ const { MODE } = require('../database/dbProvider');
 /**
  * Registra uma entrada de auditoria
  */
-async function registrarLog({ acao, entidade, entidade_id, antes, depois, usuario, ip, ua }) {
+async function registrarLog({ acao, entidade, entidade_id, antes, depois, usuario, ip, ua, origem }) {
   try {
     const id = crypto.randomBytes(16).toString('hex');
 
@@ -19,7 +19,7 @@ async function registrarLog({ acao, entidade, entidade_id, antes, depois, usuari
       const { sb } = getProvider();
       if (!sb) return; // sem client, ignora silenciosamente
 
-      await sb.from('logs').insert({
+      const payload = {
         id,
         usuario_id:  usuario?.id   || null,
         acao,
@@ -29,7 +29,19 @@ async function registrarLog({ acao, entidade, entidade_id, antes, depois, usuari
         depois:      depois ? depois : null,
         ip:          ip            || null,
         user_agent:  ua            || null,
-      });
+      };
+
+      // Grava na tabela logs (histórico do lead — existente)
+      await sb.from('logs').insert(payload).catch(() => {});
+
+      // Grava na tabela audit_logs (imutável — hardening)
+      await sb.from('audit_logs').insert({
+        ...payload,
+        usuario_nome: usuario?.nome || null,
+        usuario_role: usuario?.role || null,
+        origem: origem || 'web',
+      }).catch(() => {}); // silencioso se tabela ainda não existir
+
     } else {
       // SQLite
       const { getDb } = require('../database/db');

@@ -45,6 +45,8 @@ async function listar(req, res) {
       if (status)         q = q.eq('status', toSupaStatus(status));
       if (req.usuario.role === 'VENDEDOR') q = q.eq('responsavel_id', req.usuario.id);
       if (busca) q = q.or(`nome.ilike.%${busca}%,email.ilike.%${busca}%,telefone.ilike.%${busca}%,empresa.ilike.%${busca}%`);
+      // Exclui soft-deleted (apenas se coluna existir — silencioso)
+      q = q.is('deleted_at', null);
 
       q = q.order('criado_em', { ascending: false });
 
@@ -367,15 +369,30 @@ async function transferir(req, res) {
 async function deletar(req, res) {
   const { sb, isSupa, sqlite } = getProvider();
   if (req.usuario.role==='VENDEDOR') return res.status(403).json({ sucesso:false, erro:'Acesso negado.' });
+  const agora = new Date().toISOString();
   try {
     if (isSupa) {
-      const { error } = await sb.from('leads').delete().eq('id', req.params.id);
+      const { data: lead, error: errBusca } = await sb.from('leads').select('*').eq('id', req.params.id).single();
+      if (errBusca || !lead) return res.status(404).json({ sucesso:false, erro:'Lead não encontrado.' });
+      if (lead.deleted_at) return res.status(400).json({ sucesso:false, erro:'Lead já está na lixeira.' });
+      const { error } = await sb.from('leads').update({
+        deleted_at: agora,
+        deleted_by: req.usuario.id,
+        atualizado_em: agora,
+      }).eq('id', req.params.id);
       if (error) throw error;
-      return res.json({ sucesso:true, mensagem:'Lead excluído.' });
+      req.log({ acao:'DELETE', entidade:'leads', entidade_id:req.params.id, antes:lead, depois:{ deleted_at:agora, deleted_by:req.usuario.id } });
+      return res.json({ sucesso:true, mensagem:'Lead movido para a lixeira. Use /admin/restore para recuperar.' });
     }
+    // SQLite: soft delete se a coluna existir, senão DELETE físico como fallback seguro
     const lead = sqlite.prepare('SELECT * FROM leads WHERE id=?').get(req.params.id);
     if (!lead) return res.status(404).json({ sucesso:false, erro:'Lead não encontrado.' });
-    sqlite.prepare('DELETE FROM leads WHERE id=?').run(req.params.id);
+    try {
+      sqlite.prepare('UPDATE leads SET deleted_at=?, deleted_by=?, atualizado_em=? WHERE id=?').run(agora, req.usuario.id, agora, req.params.id);
+    } catch {
+      // Coluna deleted_at não existe ainda no SQLite — usa DELETE físico (migration pendente)
+      sqlite.prepare('DELETE FROM leads WHERE id=?').run(req.params.id);
+    }
     return res.json({ sucesso:true, mensagem:'Lead excluído.' });
   } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
 }
