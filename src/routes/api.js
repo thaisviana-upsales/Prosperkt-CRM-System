@@ -141,6 +141,9 @@ router.patch ('/whatsapp/conversas/:id/status',   autenticar, whatsappCtrl.atual
 router.get   ('/whatsapp/lead/:lead_id',          autenticar, whatsappCtrl.conversaPorLead);
 router.get   ('/whatsapp/pendentes',              autenticar, whatsappCtrl.listarPendentes); // somente GESTOR+
 router.post  ('/whatsapp/webhook/trafego',        whatsappCtrl.webhookTrafego); // sem auth (webhook externo)
+// ── Webhook de recebimento WhatsApp Light (modo teste) ─────────────────────
+// POST /api/whatsapp/webhook — sem JWT, protegido por WHATSAPP_WEBHOOK_SECRET
+router.post  ('/whatsapp/webhook',                whatsappCtrl.webhookReceberMensagem);
 
 // ── WhatsApp Supabase — novos endpoints (tabela whatsapp_mensagens) ────────────
 // IMPORTANTE: /conversas-sb antes de /conversas/:id para não colidir

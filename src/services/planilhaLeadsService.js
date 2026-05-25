@@ -328,6 +328,7 @@ module.exports = {
   iniciarPolling,
   pararPolling,
   normTel,
+  resolverDestino,
   CSV_URL,
   COLUNAS,
 };

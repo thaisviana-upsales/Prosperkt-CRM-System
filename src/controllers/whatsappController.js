@@ -7,7 +7,9 @@
  */
 const crypto = require('crypto');
 const { getDb } = require('../database/db');
+const { getProvider } = require('../database/dbProvider');
 const waSvc   = require('../services/whatsappService');
+const planilhaSvc = require('../services/planilhaLeadsService');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -601,6 +603,197 @@ async function mensagemManual(req, res) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/whatsapp/webhook
+// Recebe mensagens do WhatsApp Light (modo teste — número da Thaís)
+// Payload flexível — normaliza campos de diferentes versões do WA Light
+// Sem autenticação JWT (webhook externo) — protegido por WHATSAPP_WEBHOOK_SECRET
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Normaliza telefone de qualquer formato WhatsApp:
+ *   5511999990001@c.us → 5511999990001
+ *   +55 11 9 9999-0001 → 5511999990001
+ */
+function normalizarTelWhatsApp(raw) {
+  if (!raw) return '';
+  // Remove @c.us, @s.whatsapp.net, @g.us (grupos — ignorar depois)
+  let tel = String(raw).split('@')[0];
+  // Remove +, espaços, traços, parênteses
+  tel = tel.replace(/\D/g, '');
+  // Se vier vazio, retorna vazio
+  return tel;
+}
+
+/**
+ * Extrai campos do payload em qualquer formato que o WhatsApp Light envie.
+ */
+function normalizarPayloadWA(body) {
+  const tel = normalizarTelWhatsApp(
+    body.telefone || body.phone || body.from ||
+    body.remoteJid || body.sender || body.number || ''
+  );
+
+  const nome = (
+    body.nome || body.name || body.pushName ||
+    body.contactName || body.senderName || tel || ''
+  ).trim();
+
+  const conteudo = (
+    body.mensagem || body.message || body.text ||
+    body.body || body.content || body.caption || ''
+  ).trim() || null;
+
+  const tipo = (['texto','audio','imagem','video','documento','sticker','localizacao','contato']
+    .includes(body.tipo || body.type)
+      ? (body.tipo || body.type)
+      : 'texto');
+
+  const messageId = (
+    body.messageId || body.message_id || body.id ||
+    body.wamid || body.msgId || null
+  );
+
+  const midiaUrl = body.midia_url || body.mediaUrl || body.media_url || null;
+  const arquivoNome = body.arquivo_nome || body.fileName || body.filename || null;
+  const mimeType  = body.mime_type || body.mimeType || null;
+
+  return { tel, nome, conteudo, tipo, messageId, midiaUrl, arquivoNome, mimeType };
+}
+
+async function webhookReceberMensagem(req, res) {
+  // ── 0. Validação de secret opcional ──────────────────────────────────────
+  const secretEsperado = process.env.WHATSAPP_WEBHOOK_SECRET;
+  if (secretEsperado) {
+    const secretRecebido = req.headers['x-webhook-secret'] || req.query.secret;
+    if (secretRecebido !== secretEsperado) {
+      console.warn(`[WA Webhook] Secret inválido de ${req.ip}`);
+      return res.status(401).json({ sucesso: false, erro: 'Não autorizado.' });
+    }
+  }
+
+  const body = req.body;
+  if (!body || typeof body !== 'object') {
+    return res.status(400).json({ sucesso: false, erro: 'Payload JSON inválido.' });
+  }
+
+  // ── 1. Normalizar payload ─────────────────────────────────────────────────
+  const { tel, nome, conteudo, tipo, messageId, midiaUrl, arquivoNome, mimeType } =
+    normalizarPayloadWA(body);
+
+  if (!tel) {
+    return res.status(400).json({ sucesso: false, erro: 'Telefone não identificado no payload.' });
+  }
+
+  // Ignora mensagens de grupos (JID com @g.us)
+  const rawFrom = String(body.from || body.remoteJid || body.sender || '');
+  if (rawFrom.includes('@g.us')) {
+    return res.json({ sucesso: true, ignorado: true, motivo: 'grupo_ignorado' });
+  }
+
+  const { sb, isSupa } = getProvider();
+  const agora = new Date().toISOString();
+
+  try {
+    // ── 2. Idempotência por messageId ─────────────────────────────────────
+    if (messageId && isSupa) {
+      const { data: existing } = await sb.from('whatsapp_mensagens')
+        .select('id,lead_id')
+        .eq('whatsapp_message_id', messageId)
+        .limit(1);
+      if (existing?.[0]) {
+        console.log(`[WA Webhook] Mensagem duplicada ignorada: ${messageId}`);
+        return res.json({ sucesso: true, ignorado: true, motivo: 'mensagem_ja_salva', lead_id: existing[0].lead_id });
+      }
+    }
+
+    // ── 3. Busca lead pelo telefone ───────────────────────────────────────
+    let leadId = null;
+    if (isSupa) {
+      const { data: leads } = await sb.from('leads').select('id,nome,telefone')
+        .eq('telefone', tel).is('deleted_at', null).limit(1);
+      leadId = leads?.[0]?.id || null;
+    }
+
+    // ── 4. Cria lead se não existir ───────────────────────────────────────
+    if (!leadId && isSupa) {
+      let destino;
+      try {
+        destino = await planilhaSvc.resolverDestino();
+      } catch (e) {
+        console.warn('[WA Webhook] Funil Tráfego Pago não encontrado. Mensagem salva sem lead_id:', e.message);
+        destino = null;
+      }
+
+      if (destino) {
+        const novoLeadId = crypto.randomBytes(16).toString('hex');
+        const payloadLead = {
+          id:           novoLeadId,
+          nome:         nome || `WhatsApp ${tel}`,
+          telefone:     tel,
+          status:       'ABERTO',
+          funil_id:     destino.funil.id,
+          pipeline_id:  destino.pipeline.id,
+          etapa_id:     destino.etapa.id,
+          observacoes:  'Lead criado automaticamente via WhatsApp Light (teste).',
+          dados_extras: JSON.stringify({ fonte: 'whatsapp_light_teste', numero_wa: tel }),
+          criado_em:    agora,
+          atualizado_em:agora,
+        };
+        const { data: novoLead, error: errLead } = await sb.from('leads').insert(payloadLead).select('id').single();
+
+        if (!errLead && novoLead) {
+          leadId = novoLead.id;
+          console.log(`[WA Webhook] ✅ Lead criado: ${leadId} (${tel})`);
+        } else {
+          console.error('[WA Webhook] ❌ Erro ao criar lead:', errLead?.message, '| Payload:', JSON.stringify(payloadLead));
+        }
+      } else {
+        console.warn('[WA Webhook] destino nulo — funil Tráfego Pago não resolvido.');
+      }
+    }
+
+    // ── 5. Salva mensagem em whatsapp_mensagens ───────────────────────────
+    const salvo = await waSvc.salvarMensagem({
+      lead_id:             leadId,
+      telefone:            tel,
+      nome_contato:        nome || null,
+      direcao:             'recebida',
+      tipo,
+      conteudo,
+      midia_url:           midiaUrl,
+      arquivo_nome:        arquivoNome,
+      mime_type:           mimeType,
+      whatsapp_message_id: messageId,
+      status_envio:        'recebido',
+      recebido_em:         agora,
+    });
+
+    if (!salvo.sucesso) {
+      // Tabela pode não existir — retorna sucesso parcial sem quebrar o CRM
+      console.error('[WA Webhook] Falha ao salvar mensagem:', salvo.erro);
+      return res.status(200).json({
+        sucesso: false,
+        aviso:   'Lead vinculado mas mensagem não salva (tabela whatsapp_mensagens ausente?)',
+        lead_id: leadId,
+        erro:    salvo.erro,
+      });
+    }
+
+    console.log(`[WA Webhook] Mensagem salva — lead: ${leadId || 'sem_lead'}, tel: ${tel}`);
+    return res.status(201).json({
+      sucesso:    true,
+      lead_id:    leadId,
+      mensagem_id:salvo.dados?.id,
+      novo_lead:  !!(leadId && !body._leadJaExistia),
+    });
+  } catch (e) {
+    console.error('[WA Webhook] Erro interno:', e.message);
+    // Nunca deixa o CRM quebrar por causa do webhook
+    return res.status(500).json({ sucesso: false, erro: 'Erro interno ao processar mensagem.' });
+  }
+}
+
 module.exports = {
   // Legado SQLite (não alterados)
   listarConversas,
@@ -617,4 +810,5 @@ module.exports = {
   conversasPorLeadSupabase,
   conversasDoLead,
   mensagemManual,
+  webhookReceberMensagem,
 };
