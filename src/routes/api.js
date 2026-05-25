@@ -24,12 +24,16 @@ const motivosPerdaCtrl   = require('../controllers/motivosPerdaController');
 const produtosCtrl       = require('../controllers/produtosController');
 const auditCtrl          = require('../controllers/auditController');
 const backupCtrl         = require('../controllers/backupController');
+const importacaoCtrl     = require('../controllers/importacaoLeadsController');
 
 // Seed funis iniciais (só roda se vazio)
 funisCtrl.seedFunis();
 
 // Agenda backups automáticos (diário às 3h, semanal às segundas, mensal dia 1)
 try { require('../services/backupService').agendarBackups(); } catch(e) { console.warn('[Backup] Agendador não iniciado:', e.message); }
+
+// Inicia polling da planilha de leads (a cada 60s)
+try { require('../services/planilhaLeadsService').iniciarPolling(); } catch(e) { console.warn('[Planilha] Polling não iniciado:', e.message); }
 
 // Aplica audit middleware em todas as rotas
 router.use(auditMiddleware);
@@ -80,6 +84,14 @@ router.delete('/etapas/:id',        autenticar, exigirRole('GESTOR'), etapasCtrl
 // ─────────────────────────────────────────────────────────────────────────────
 router.get   ('/leads/distribuicao',        autenticar, leadsCtrl.getDistribuicao);
 router.post  ('/leads/distribuicao',        autenticar, exigirRole('GESTOR'), leadsCtrl.setDistribuicao);
+
+// ── Importação de leads via planilha (GESTOR+) ———————————————————————————
+// Rotas estáticas ANTES de /leads/:id para não colidir
+router.post  ('/leads/importar-planilha',   autenticar, exigirRole('GESTOR'), importacaoCtrl.importarPlanilha);
+router.post  ('/leads/webhook-planilha',    importacaoCtrl.webhookPlanilha); // sem JWT — valida secret no header
+router.get   ('/leads/importacoes',         autenticar, exigirRole('GESTOR'), importacaoCtrl.listarImportacoes);
+router.post  ('/leads/sync-planilha',       autenticar, exigirRole('GESTOR'), importacaoCtrl.syncManual);
+
 router.get   ('/leads',                     autenticar, leadsCtrl.listar);
 router.get   ('/leads/:id',                 autenticar, leadsCtrl.buscarPorId);
 router.post  ('/leads',                     autenticar, leadsCtrl.criar);
@@ -129,6 +141,13 @@ router.patch ('/whatsapp/conversas/:id/status',   autenticar, whatsappCtrl.atual
 router.get   ('/whatsapp/lead/:lead_id',          autenticar, whatsappCtrl.conversaPorLead);
 router.get   ('/whatsapp/pendentes',              autenticar, whatsappCtrl.listarPendentes); // somente GESTOR+
 router.post  ('/whatsapp/webhook/trafego',        whatsappCtrl.webhookTrafego); // sem auth (webhook externo)
+
+// ── WhatsApp Supabase — novos endpoints (tabela whatsapp_mensagens) ────────────
+// IMPORTANTE: /conversas-sb antes de /conversas/:id para não colidir
+router.get   ('/whatsapp/conversas-sb',           autenticar, whatsappCtrl.conversasSupabase);
+router.get   ('/whatsapp/conversas-sb/:leadId',   autenticar, whatsappCtrl.conversasPorLeadSupabase);
+router.post  ('/whatsapp/mensagens/manual',        autenticar, whatsappCtrl.mensagemManual);
+router.get   ('/leads/:id/conversas',              autenticar, whatsappCtrl.conversasDoLead);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AUTOMAÇÕES DE MENSAGEM (SUPER_ADMIN)

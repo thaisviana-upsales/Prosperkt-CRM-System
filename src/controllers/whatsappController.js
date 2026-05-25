@@ -1,9 +1,13 @@
 /**
  * PROSPERKT CRM — WhatsApp Controller
  * Módulo de conversas, histórico e automação tráfego pago
+ *
+ * LEGADO: funções originais usam SQLite (getDb)
+ * NOVO: funções *Supabase usam whatsappService (tabela whatsapp_mensagens)
  */
 const crypto = require('crypto');
 const { getDb } = require('../database/db');
+const waSvc   = require('../services/whatsappService');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -505,7 +509,100 @@ function listarPendentes(req, res) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// NOVOS ENDPOINTS SUPABASE (tabela whatsapp_mensagens)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /api/whatsapp/conversas (Supabase)
+// Lista todas as conversas agrupadas por lead/telefone
+async function conversasSupabase(req, res) {
+  const { limite = 50 } = req.query;
+  try {
+    const resultado = await waSvc.listarConversas({ limite: Number(limite) });
+    return res.json({ sucesso: resultado.sucesso, dados: resultado.dados || [], erro: resultado.erro });
+  } catch (e) {
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}
+
+// GET /api/whatsapp/conversas/:leadId (Supabase)
+// Mensagens de um lead pelo leadId
+async function conversasPorLeadSupabase(req, res) {
+  const { leadId } = req.params;
+  const { limite = 100, offset = 0 } = req.query;
+  try {
+    const resultado = await waSvc.listarMensagensLead(leadId, { limite: Number(limite), offset: Number(offset) });
+    return res.json({ sucesso: resultado.sucesso, dados: resultado.dados || [], erro: resultado.erro });
+  } catch (e) {
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}
+
+// GET /api/leads/:id/conversas
+// Mensagens WhatsApp vinculadas ao lead (alias de conversasPorLeadSupabase)
+async function conversasDoLead(req, res) {
+  const leadId = req.params.id;
+  const { limite = 100, offset = 0 } = req.query;
+  try {
+    const resultado = await waSvc.listarMensagensLead(leadId, { limite: Number(limite), offset: Number(offset) });
+    return res.json({
+      sucesso: resultado.sucesso,
+      dados: resultado.dados || [],
+      total: resultado.dados?.length || 0,
+      aviso: resultado.aviso,
+      erro: resultado.erro,
+    });
+  } catch (e) {
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}
+
+// POST /api/whatsapp/mensagens/manual
+// Salva mensagem manual para testes sem WhatsApp Light
+async function mensagemManual(req, res) {
+  const { lead_id, telefone, direcao, tipo, conteudo, nome_contato } = req.body;
+
+  if (!telefone) return res.status(400).json({ sucesso: false, erro: 'telefone é obrigatório.' });
+  if (!direcao || !['recebida','enviada'].includes(direcao)) {
+    return res.status(400).json({ sucesso: false, erro: 'direcao deve ser recebida ou enviada.' });
+  }
+  if (!conteudo && tipo === 'texto') {
+    return res.status(400).json({ sucesso: false, erro: 'conteudo é obrigatório para tipo texto.' });
+  }
+
+  try {
+    const resultado = await waSvc.salvarMensagem({
+      lead_id:      lead_id      || null,
+      telefone,
+      nome_contato: nome_contato || null,
+      direcao,
+      tipo:         tipo         || 'texto',
+      conteudo:     conteudo     || null,
+      status_envio: direcao === 'enviada' ? 'enviado' : 'recebido',
+      enviado_por:  direcao === 'enviada' ? req.usuario?.id : null,
+    });
+
+    if (!resultado.sucesso) {
+      return res.status(500).json({ sucesso: false, erro: resultado.erro });
+    }
+
+    // Registra auditoria sem quebrar a resposta
+    req.log?.({
+      acao: 'WHATSAPP_MANUAL',
+      entidade: 'whatsapp_mensagens',
+      entidade_id: lead_id || resultado.dados?.id,
+      depois: { direcao, tipo, lead_id, telefone },
+    });
+
+    return res.status(201).json({ sucesso: true, dados: resultado.dados });
+  } catch (e) {
+    console.error('[WA] mensagemManual:', e.message);
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}
+
 module.exports = {
+  // Legado SQLite (não alterados)
   listarConversas,
   listarMensagens,
   enviarMensagem,
@@ -515,4 +612,9 @@ module.exports = {
   buscarConversa,
   conversaPorLead,
   listarPendentes,
+  // Novos — Supabase
+  conversasSupabase,
+  conversasPorLeadSupabase,
+  conversasDoLead,
+  mensagemManual,
 };
