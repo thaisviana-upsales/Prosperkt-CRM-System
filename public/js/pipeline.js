@@ -7,19 +7,23 @@
 let _funis=[], _etapas=[], _leads=[], _usuarios=[], _usuario=null;
 let _funilAtivo=null, _pipelineAtivo=null;
 let _dragLeadId=null, _dragEtapaOrigem=null;
-let _motivosPerda=[];
+let _motivosPerda=[], _produtos=[];
 // Estado de filtros
 let _filtros = { funil:'', resp:'', dataTipo:'', dataPeriodo:'', dataInicio:'', dataFim:'', busca:'' };
 // Mapa nome→[ids] para agrupar leads no modo "Todos"
 let _nomeParaIds = {};
 // Callback de motivo de perda pendente
 let _pendingMoverCallback = null;
+// Parcelas em edição
+let _parcelas = [];
+// Lead original aberto no modal (para fallback de etapa/funil/pipeline)
+let _leadEmEdicao = null;
 
 // ── Init ──────────────────────────────────────────────────────
 async function init() {
   _usuario = await Sidebar.init('pipeline');
   if (!_usuario) return;
-  await Promise.all([carregarFunis(), carregarUsuarios(), carregarMotivos()]);
+  await Promise.all([carregarFunis(), carregarUsuarios(), carregarMotivos(), carregarProdutos()]);
 
   const params = new URLSearchParams(location.search);
   const paramFunil = params.get('funil_id');
@@ -49,6 +53,11 @@ async function carregarMotivos() {
     'Preço fora da expectativa','Sem perfil','Lead duplicado',
     'Não tem interesse','Prazo incompatível','Outro'
   ];
+}
+
+async function carregarProdutos() {
+  const r = await Auth.api('GET','/produtos');
+  _produtos = r?.data?.dados || [];
 }
 
 function popularSelFunil() {
@@ -236,12 +245,49 @@ async function moverLead(etapaId) {
     etapaDest?.nome?.toLowerCase().includes('perdid') ||
     etapaDest?.nome?.toLowerCase().includes('desqualif');
 
-  if (isPerdido) {
-    // Abre modal de motivo de perda antes de mover
-    abrirModalMotivo((motivo) => {
-      _executarMover(_dragLeadId, etapaId, pid, etapaDest, motivo);
-    });
+  const isGanho = etapaDest?.is_ganho || etapaDest?.probabilidade>=100 ||
+    /venda|vendas|ganho|fechad|fechamento/i.test(etapaDest?.nome||'');
+
+  if (isGanho) {
+    const leadIdLocal = _dragLeadId;
+    const pidLocal = pid;
+    const leadObj = lead;
     _dragLeadId=null; _dragEtapaOrigem=null;
+    if (!leadIdLocal) return;
+    // Valida campos obrigatórios no frontend antes de chamar API
+    const faltando=[];
+    if (!leadObj?.email)        faltando.push('Email');
+    if (!leadObj?.funil_id)     faltando.push('Funil');
+    if (!(leadObj?.valor_venda>0)) faltando.push('Valor da Venda');
+    if (!leadObj?.forma_pagamento) faltando.push('Forma de Pagamento');
+    if (!leadObj?.produto_id && !leadObj?.produto_nome) faltando.push('Produto Adquirido');
+    if (faltando.length) {
+      Toast.show(`Para registrar a venda, preencha: ${faltando.join(', ')}.`,'error');
+      await abrirLead(leadIdLocal);
+      abrirSecaoComercial();
+      return;
+    }
+    await _executarMover(leadIdLocal, etapaId, pidLocal, etapaDest, null);
+    return;
+  }
+
+  if (isPerdido) {
+    // Captura o ID e pid em variáveis locais ANTES de zerá-los,
+    // pois o callback é executado de forma assíncrona (após confirmação no modal)
+    // e _dragLeadId já estaria null nesse momento.
+    const leadIdLocal = _dragLeadId;
+    const pidLocal = pid;
+    _dragLeadId=null; _dragEtapaOrigem=null;
+
+    if (!leadIdLocal) {
+      console.error('[moverLead] leadId está vazio ao tentar mover para etapa perdida.');
+      return;
+    }
+
+    abrirModalMotivo((motivo) => {
+      if (!motivo) { console.error('[moverLead] motivo_perda vazio ao confirmar.'); return; }
+      _executarMover(leadIdLocal, etapaId, pidLocal, etapaDest, motivo);
+    });
     return;
   }
 
@@ -312,6 +358,16 @@ async function abrirLead(id) {
   document.getElementById('fl-funil').value=funilId;
   document.getElementById('fl-etapa').value=l.etapa_id||'';
   document.getElementById('fl-resp').value=l.responsavel_id||'';
+  // Campos comerciais
+  document.getElementById('fl-valor-venda').value = l.valor_venda||'';
+  document.getElementById('fl-forma-pgto').value  = l.forma_pagamento||'';
+  popularSelProdutos(l.produto_id||'');
+  _parcelas = l.parcelas_json ? (typeof l.parcelas_json==='string' ? JSON.parse(l.parcelas_json) : l.parcelas_json) : [];
+  renderParcelas();
+  // Abre seção comercial se tiver dados preenchidos
+  if (l.valor_venda || l.forma_pagamento || l.produto_id) abrirSecaoComercial();
+  // Guarda lead original para fallback de etapa/funil/pipeline no salvar
+  _leadEmEdicao = l;
   // Histórico via endpoint dedicado
   carregarHistorico(id);
   // Botão excluir só para GESTOR+
@@ -349,11 +405,21 @@ function resetModal() {
   const fSel=document.getElementById('fl-funil');
   fSel.innerHTML=_funis.map(f=>`<option value="${f.id}">${f.nome}</option>`).join('');
   fSel.value=_filtros.funil||(_funis[0]?.id||'');
-  onFlFunilChange();
+  // onFlFunilChange() NÃO é chamado aqui para evitar race condition.
+  // abrirLead() faz await onFlFunilChange() depois; abrirNovoLead() chama explicitamente.
   const rSel=document.getElementById('fl-resp');
   rSel.innerHTML=_usuarios.map(u=>`<option value="${u.id}">${u.nome}</option>`).join('');
   if (_usuario.role==='VENDEDOR') { rSel.value=_usuario.id; rSel.disabled=true; }
   else { rSel.disabled=false; rSel.value=_usuario.id; }
+  // Limpa lead em edição
+  _leadEmEdicao = null;
+  // Comercial reset
+  document.getElementById('fl-valor-venda').value='';
+  document.getElementById('fl-forma-pgto').value='';
+  popularSelProdutos('');
+  _parcelas=[];
+  renderParcelas();
+  fecharSecaoComercial();
 }
 
 // Atualiza o badge de status no modal (somente leitura)
@@ -400,6 +466,34 @@ async function salvarLead() {
 
   const etapaId=document.getElementById('fl-etapa').value;
   const funilId=document.getElementById('fl-funil').value;
+  const statusAtual=document.getElementById('fl-status').value;
+
+  // ── Detecção de ganho (etapa ou status) ──────────────────────
+  const etapaSel = _etapas.find(e=>e.id===etapaId);
+  const isGanhoEtapa = etapaSel?.is_ganho || etapaSel?.probabilidade>=100 ||
+    /venda|vendas|ganho|fechad|fechamento/i.test(etapaSel?.nome||'');
+  const isGanhoStatus = /^(ganho|GANHO|vendido|venda)$/i.test(statusAtual);
+
+  // ── Validação ANTES de qualquer chamada API ───────────────────
+  if (isGanhoEtapa || isGanhoStatus) {
+    const email = document.getElementById('fl-email').value.trim();
+    const vv    = parseFloat(document.getElementById('fl-valor-venda').value)||0;
+    const fp    = document.getElementById('fl-forma-pgto').value;
+    const prd   = document.getElementById('fl-produto').value;
+    const faltando=[];
+    if (!email)   faltando.push('E-mail');
+    if (!funilId) faltando.push('Funil');
+    if (vv<=0)    faltando.push('Valor da Venda');
+    if (!fp)      faltando.push('Forma de Pagamento');
+    if (!prd)     faltando.push('Produto Adquirido');
+    if (faltando.length) {
+      alertEl.className='alert alert-error';
+      alertEl.textContent=`Para registrar a venda, preencha: ${faltando.join(', ')}.`;
+      alertEl.style.display='';
+      abrirSecaoComercial();
+      return; // bloqueia — não chama API, não salva nada
+    }
+  }
 
   // Sempre resolve pipeline_id a partir do funil selecionado (nunca usa 'todos' ou _pipelineAtivo nulo)
   let pipelineId = _pipelineAtivo; // válido quando há funil ativo no filtro
@@ -411,6 +505,13 @@ async function salvarLead() {
     }
   }
 
+  // — Preserva etapa/funil/pipeline do lead original se o usuário não alterou —
+  // etapa_id: usa o do formulário, mas se estiver igual ao do lead original (não mudou),
+  // ou se o formulário estiver vazio, usa o original para não sobrescrever.
+  const etapaIdFinal    = etapaId    || _leadEmEdicao?.etapa_id    || undefined;
+  const funilIdFinal    = funilId    || _leadEmEdicao?.funil_id    || undefined;
+  const pipelineIdFinal = pipelineId || _leadEmEdicao?.pipeline_id || undefined;
+
   const tagsRaw=document.getElementById('fl-tags').value;
   const obsVal=document.getElementById('fl-obs').value.trim();
   const motivoPerdaVal=document.getElementById('fl-motivo-perda').value.trim()||undefined;
@@ -421,15 +522,22 @@ async function salvarLead() {
     email:     document.getElementById('fl-email').value.trim()||undefined,
     valor:     parseFloat(document.getElementById('fl-valor').value)||0,
     data_fechamento: document.getElementById('fl-data-fechamento').value||undefined,
-    etapa_id:    etapaId||undefined,
-    funil_id:    funilId||undefined,
-    pipeline_id: pipelineId||undefined,
+    etapa_id:    etapaIdFinal,
+    funil_id:    funilIdFinal,
+    pipeline_id: pipelineIdFinal,
     responsavel_id: document.getElementById('fl-resp').value||undefined,
     tags: tagsRaw?tagsRaw.split(',').map(t=>t.trim()).filter(Boolean):[],
     observacoes: obsVal||null,
     motivo_perda: motivoPerdaVal,
+    // Campos comerciais da venda
+    valor_venda:          parseFloat(document.getElementById('fl-valor-venda').value)||undefined,
+    forma_pagamento:      document.getElementById('fl-forma-pgto').value||undefined,
+    quantidade_parcelas:  _parcelas.length||undefined,
+    parcelas_json:        _parcelas.length ? _parcelas : undefined,
+    produto_id:           document.getElementById('fl-produto').value||undefined,
+    produto_nome:         document.getElementById('fl-produto').selectedOptions[0]?.text||undefined,
+    produto_cor:          document.getElementById('fl-produto').selectedOptions[0]?.dataset?.cor||undefined,
   };
-  // NOTA: valor_venda NAO e campo de leads — pertence a comissoes. Nao enviar dados_extras.
 
   const btn=document.getElementById('ml-salvar');
   btn.disabled=true;
@@ -438,13 +546,14 @@ async function salvarLead() {
 
   try {
     if (id) {
-      // Lead existente: salva dados gerais e, se a etapa mudou, move o lead (o /mover atualiza o status corretamente)
-      const leadAtual = _leads.find(l=>l.id===id);
-      const etapaMudou = leadAtual && leadAtual.etapa_id !== etapaId;
+      // Lead existente: detecta etapaMudou ANTES do PATCH
+      // Compara etapa do formulário com a etapa original (não com _leads cache que pode estar desatualizado)
+      const etapaOriginal = _leadEmEdicao?.etapa_id || _leads.find(l=>l.id===id)?.etapa_id;
+      const etapaMudou = etapaIdFinal && etapaOriginal && etapaOriginal !== etapaIdFinal;
       const r = await Auth.api('PATCH',`/leads/${id}`,body);
       if (r?.ok) {
         if (etapaId && etapaMudou) {
-          const etapaSel = _etapas.find(e=>e.id===etapaId);
+          // etapaSel e isGanhoEtapa já calculados no topo — validação de ganho já passou
           const isPerdidoSel = etapaSel?.is_perdido || etapaSel?.probabilidade===0 ||
             etapaSel?.nome?.toLowerCase().includes('perdid') ||
             etapaSel?.nome?.toLowerCase().includes('desqualif');
@@ -452,13 +561,19 @@ async function salvarLead() {
             alertEl.className='alert alert-error';
             alertEl.textContent='Selecione o Motivo de Perda antes de mover para esta etapa.';
             alertEl.style.display='';
-            btn.disabled=false;
-            document.getElementById('ml-salvar-txt').textContent='Salvar';
-            document.getElementById('ml-spinner').classList.add('hidden');
             return;
           }
           const payload = { etapa_id:etapaId, pipeline_id:pipelineId };
           if (isPerdidoSel && motivoPerdaVal) payload.motivo_perda = motivoPerdaVal;
+          if (isGanhoEtapa) {
+            payload.valor_venda         = parseFloat(document.getElementById('fl-valor-venda').value)||0;
+            payload.forma_pagamento     = document.getElementById('fl-forma-pgto').value;
+            payload.quantidade_parcelas = _parcelas.length||1;
+            payload.parcelas_json       = _parcelas.length ? _parcelas : undefined;
+            payload.produto_id          = document.getElementById('fl-produto').value||undefined;
+            payload.produto_nome        = document.getElementById('fl-produto').selectedOptions[0]?.text||undefined;
+            payload.produto_cor         = document.getElementById('fl-produto').selectedOptions[0]?.dataset?.cor||undefined;
+          }
           await Auth.api('PATCH',`/leads/${id}/mover`,payload);
         }
         Toast.show('Lead atualizado!','success');
@@ -516,6 +631,77 @@ async function confirmarMotivo() {
   const cb=_pendingMoverCallback;
   fecharModalMotivo();
   if (cb) await cb(motivo);
+}
+
+// ── Funções comerciais ───────────────────────────────────────
+function popularSelProdutos(selecionado) {
+  const sel = document.getElementById('fl-produto');
+  sel.innerHTML = '<option value="">— Selecione ou adicione —</option>' +
+    _produtos.map(p => `<option value="${p.id}" data-cor="${p.cor||'#aaa'}">${p.nome}</option>`).join('');
+  if (selecionado) sel.value = selecionado;
+  atualizarProdutoBadge();
+}
+
+function atualizarProdutoBadge() {
+  const sel = document.getElementById('fl-produto');
+  const opt = sel.selectedOptions[0];
+  const badge = document.getElementById('produto-badge');
+  if (!sel.value || !opt) { badge.style.display='none'; return; }
+  document.getElementById('produto-badge-dot').style.background = opt.dataset.cor||'#aaa';
+  document.getElementById('produto-badge-nome').textContent = opt.text;
+  badge.style.display='flex';
+}
+
+function renderParcelas() {
+  const lista = document.getElementById('parcelas-lista');
+  const empty = document.getElementById('parcelas-empty');
+  lista.innerHTML = '';
+  empty.style.display = _parcelas.length ? 'none' : '';
+  _parcelas.forEach((p, i) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;align-items:center';
+    row.innerHTML = `
+      <span style="font-size:.75rem;color:var(--text-muted);min-width:24px">${i+1}x</span>
+      <input type="number" class="input" style="flex:1;padding:5px 8px;font-size:.82rem" placeholder="Valor (R$)" value="${p.valor||''}" data-idx="${i}" data-field="valor">
+      <input type="date" class="input date-input" style="flex:1;padding:5px 8px;font-size:.82rem" value="${p.vencimento||''}" data-idx="${i}" data-field="vencimento" title="Vencimento (opcional)">
+      <button type="button" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:1rem;line-height:1" data-rm="${i}" title="Remover">✕</button>`;
+    row.querySelectorAll('input').forEach(inp => inp.addEventListener('change', e => {
+      _parcelas[+e.target.dataset.idx][e.target.dataset.field] = e.target.value;
+    }));
+    row.querySelector('[data-rm]').addEventListener('click', e => {
+      _parcelas.splice(+e.target.dataset.rm, 1);
+      renderParcelas();
+    });
+    lista.appendChild(row);
+  });
+}
+
+function adicionarParcela() {
+  _parcelas.push({ numero: _parcelas.length+1, valor:'', vencimento:'' });
+  renderParcelas();
+}
+
+function abrirSecaoComercial() {
+  document.getElementById('comercial-body').style.display='';
+  document.getElementById('toggle-comercial-icon').style.transform='rotate(90deg)';
+}
+
+function fecharSecaoComercial() {
+  document.getElementById('comercial-body').style.display='none';
+  document.getElementById('toggle-comercial-icon').style.transform='';
+}
+
+async function salvarNovoProduto() {
+  const nome = document.getElementById('np-nome').value.trim();
+  const cor  = document.getElementById('np-cor').value;
+  if (!nome) { Toast.show('Informe o nome do produto.','error'); return; }
+  const r = await Auth.api('POST','/produtos',{ nome, cor });
+  if (!r?.ok) { Toast.show(r?.data?.erro||'Erro ao cadastrar produto.','error'); return; }
+  await carregarProdutos();
+  popularSelProdutos(r.data.dados.id);
+  document.getElementById('form-novo-produto').style.display='none';
+  document.getElementById('np-nome').value='';
+  Toast.show('Produto cadastrado!','success');
 }
 
 // ── Events ────────────────────────────────────────────────────
@@ -578,6 +764,22 @@ function bindEvents() {
   document.getElementById('btn-motivo-confirmar').addEventListener('click', confirmarMotivo);
   document.getElementById('btn-motivo-cancelar').addEventListener('click', fecharModalMotivo);
   document.getElementById('ov-motivo').addEventListener('click', e=>{ if(e.target===document.getElementById('ov-motivo')) fecharModalMotivo(); });
+  // Comercial
+  document.getElementById('toggle-comercial').addEventListener('click', () => {
+    const body = document.getElementById('comercial-body');
+    if (body.style.display==='none'||!body.style.display) abrirSecaoComercial();
+    else fecharSecaoComercial();
+  });
+  document.getElementById('btn-add-parcela').addEventListener('click', adicionarParcela);
+  document.getElementById('fl-produto').addEventListener('change', atualizarProdutoBadge);
+  document.getElementById('btn-add-produto').addEventListener('click', () => {
+    document.getElementById('form-novo-produto').style.display='';
+    document.getElementById('np-nome').focus();
+  });
+  document.getElementById('btn-salvar-produto').addEventListener('click', salvarNovoProduto);
+  document.getElementById('btn-cancelar-produto').addEventListener('click', () => {
+    document.getElementById('form-novo-produto').style.display='none';
+  });
 }
 
 init();

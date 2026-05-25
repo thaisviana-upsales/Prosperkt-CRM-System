@@ -21,6 +21,7 @@ const whatsappCtrl   = require('../controllers/whatsappController');
 const automacoesCtrl  = require('../controllers/automacoesMsgController');
 const msgsPadraoCtrl     = require('../controllers/msgsPadraoController');
 const motivosPerdaCtrl   = require('../controllers/motivosPerdaController');
+const produtosCtrl       = require('../controllers/produtosController');
 
 // Seed funis iniciais (só roda se vazio)
 funisCtrl.seedFunis();
@@ -145,6 +146,14 @@ router.get   ('/motivos-perda',        autenticar, motivosPerdaCtrl.listar);
 router.post  ('/motivos-perda',        autenticar, exigirRole('GESTOR'), motivosPerdaCtrl.criar);
 router.patch ('/motivos-perda/:id',    autenticar, exigirRole('GESTOR'), motivosPerdaCtrl.atualizar);
 router.delete('/motivos-perda/:id',    autenticar, exigirRole('GESTOR'), motivosPerdaCtrl.deletar);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PRODUTOS
+// ─────────────────────────────────────────────────────────────────────────────
+router.get   ('/produtos',     autenticar, produtosCtrl.listar);
+router.post  ('/produtos',     autenticar, produtosCtrl.criar);
+router.patch ('/produtos/:id', autenticar, exigirRole('GESTOR'), produtosCtrl.atualizar);
+router.delete('/produtos/:id', autenticar, exigirRole('GESTOR'), produtosCtrl.deletar);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HEALTH CHECK

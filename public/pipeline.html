@@ -142,6 +142,80 @@
     <div class="input-group"><label class="input-label">Observações</label>
       <textarea id="fl-obs" class="input" rows="3" placeholder="Observações sobre o lead..." style="resize:vertical"></textarea>
     </div>
+
+    <!-- ── DADOS COMERCIAIS DA VENDA ─────────────────────────── -->
+    <div id="secao-comercial" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;cursor:pointer" id="toggle-comercial">
+        <svg id="toggle-comercial-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="transition:transform .2s"><polyline points="9 18 15 12 9 6"/></svg>
+        <span style="font-size:.8rem;font-weight:700;letter-spacing:.06em;color:var(--text-secondary);text-transform:uppercase">Dados Comerciais da Venda</span>
+      </div>
+      <div id="comercial-body" style="display:none">
+        <div class="fr">
+          <div class="input-group">
+            <label class="input-label">Valor da Venda (R$) <span style="color:var(--green);font-size:.7rem">obrigatório para ganho</span></label>
+            <input id="fl-valor-venda" class="input" type="number" placeholder="0,00" min="0" step="0.01">
+          </div>
+          <div class="input-group">
+            <label class="input-label">Forma de Pagamento <span style="color:var(--green);font-size:.7rem">obrigatório para ganho</span></label>
+            <select id="fl-forma-pgto" class="input">
+              <option value="">— Selecione —</option>
+              <option value="Boleto">Boleto</option>
+              <option value="Cartão de Crédito">Cartão de Crédito</option>
+              <option value="Pix">Pix</option>
+              <option value="Variadas">Variadas</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Produto Adquirido -->
+        <div class="input-group" style="margin-top:4px">
+          <label class="input-label">Produto Adquirido <span style="color:var(--green);font-size:.7rem">obrigatório para ganho</span></label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="fl-produto" class="input" style="flex:1">
+              <option value="">— Selecione ou adicione —</option>
+            </select>
+            <button type="button" id="btn-add-produto" class="btn btn-secondary btn-sm" style="white-space:nowrap;flex-shrink:0" title="Adicionar novo produto">+ Novo</button>
+          </div>
+          <!-- Badge do produto selecionado -->
+          <div id="produto-badge" style="display:none;margin-top:6px;display:none;align-items:center;gap:6px">
+            <span id="produto-badge-dot" style="display:inline-block;width:10px;height:10px;border-radius:50%"></span>
+            <span id="produto-badge-nome" style="font-size:.8rem;color:var(--text-secondary)"></span>
+          </div>
+        </div>
+
+        <!-- Mini form novo produto (oculto) -->
+        <div id="form-novo-produto" style="display:none;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-top:8px">
+          <div style="font-size:.75rem;font-weight:700;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">Cadastrar Novo Produto</div>
+          <div class="fr">
+            <div class="input-group">
+              <label class="input-label">Nome do produto *</label>
+              <input id="np-nome" class="input" placeholder="Ex: Plano Essencial">
+            </div>
+            <div class="input-group" style="max-width:120px">
+              <label class="input-label">Cor</label>
+              <input id="np-cor" class="input" type="color" value="#6CFF4E" style="height:38px;padding:2px 4px;cursor:pointer">
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <button type="button" id="btn-salvar-produto" class="btn btn-primary btn-sm">Cadastrar</button>
+            <button type="button" id="btn-cancelar-produto" class="btn btn-secondary btn-sm">Cancelar</button>
+          </div>
+        </div>
+
+        <!-- Parcelas -->
+        <div class="input-group" style="margin-top:12px">
+          <label class="input-label" style="display:flex;align-items:center;justify-content:space-between">
+            <span>Parcelamento</span>
+            <button type="button" id="btn-add-parcela" class="btn btn-secondary btn-sm" style="font-size:.72rem;padding:3px 10px">+ Parcela</button>
+          </label>
+          <div id="parcelas-lista" style="display:flex;flex-direction:column;gap:6px;margin-top:6px"></div>
+          <div id="parcelas-empty" style="font-size:.8rem;color:var(--text-muted);padding:8px 0">
+            Nenhuma parcela adicionada. Clique em "+ Parcela" ou deixe em branco para venda à vista.
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- ── FIM DADOS COMERCIAIS ────────────────────────────────── -->
   </div>
   </div>
 

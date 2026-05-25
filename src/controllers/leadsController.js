@@ -188,10 +188,33 @@ async function atualizar(req, res) {
       if (errAtual || !atual) return res.status(404).json({ sucesso:false, erro:'Lead não encontrado.' });
       if (req.usuario.role==='VENDEDOR' && atual.responsavel_id !== req.usuario.id) return res.status(403).json({ sucesso:false, erro:'Acesso negado.' });
 
-      const allow = ['nome','email','telefone','empresa','cargo','valor','origem','data_fechamento','motivo_perda','observacoes','funil_id','etapa_id','pipeline_id'];
+      const allow = [
+        'nome','email','telefone','empresa','cargo','valor','origem','data_fechamento',
+        'motivo_perda','observacoes','funil_id','etapa_id','pipeline_id',
+        // campos comerciais da venda
+        'valor_venda','forma_pagamento','quantidade_parcelas','parcelas_json',
+        'produto_id','produto_nome','produto_cor',
+      ];
       const upd = { atualizado_em: new Date().toISOString() };
       allow.forEach(k => { if (req.body[k] !== undefined) upd[k] = req.body[k]; });
       if (req.body.responsavel_id && req.usuario.role !== 'VENDEDOR') upd.responsavel_id = req.body.responsavel_id;
+
+      // Bloqueia se etapa destino é de ganho e campos obrigatórios faltam
+      if (req.body.etapa_id && req.body.etapa_id !== atual.etapa_id) {
+        const { data: etDest } = await sb.from('etapas').select('*').eq('id', req.body.etapa_id).maybeSingle();
+        const etIsGanho = etDest?.is_ganho || etDest?.probabilidade >= 100 ||
+          /venda|vendas|ganho|fechad|fechamento/i.test(etDest?.nome || '');
+        if (etIsGanho) {
+          const faltando = [];
+          if (!(req.body.email || atual.email))                                    faltando.push('E-mail');
+          if (!(req.body.funil_id || atual.funil_id))                              faltando.push('Funil');
+          if (!((req.body.valor_venda ?? atual.valor_venda) > 0))                  faltando.push('Valor da Venda');
+          if (!(req.body.forma_pagamento || atual.forma_pagamento))                faltando.push('Forma de Pagamento');
+          if (!(req.body.produto_id || atual.produto_id || req.body.produto_nome || atual.produto_nome)) faltando.push('Produto Adquirido');
+          if (faltando.length)
+            return res.status(400).json({ sucesso: false, erro: `Para registrar a venda, preencha: ${faltando.join(', ')}.`, campos_faltando: faltando });
+        }
+      }
 
       const { data, error } = await sb.from('leads').update(upd).eq('id', id).select().single();
       if (error) throw error;
@@ -238,6 +261,27 @@ async function mover(req, res) {
       if (isPerdido && !motivo_perda && !lead.perdido_motivo && !lead.motivo_perda)
         return res.status(400).json({ sucesso:false, erro:'motivo_perda é obrigatório ao mover para etapa perdida.' });
 
+      // Validação obrigatória para etapa de ganho
+      if (isGanho) {
+        const faltando = [];
+        if (!lead.nome)                              faltando.push('Nome');
+        if (!lead.email)                             faltando.push('Email');
+        if (!(lead.funil_id || req.body.funil_id))   faltando.push('Funil');
+        const vv = req.body.valor_venda ?? lead.valor_venda;
+        if (!vv || Number(vv) <= 0)                  faltando.push('Valor da Venda');
+        const fp = req.body.forma_pagamento ?? lead.forma_pagamento;
+        if (!fp)                                     faltando.push('Forma de Pagamento');
+        const pid = req.body.produto_id ?? lead.produto_id;
+        const pnm = req.body.produto_nome ?? lead.produto_nome;
+        if (!pid && !pnm)                            faltando.push('Produto Adquirido');
+        if (faltando.length > 0)
+          return res.status(400).json({
+            sucesso: false,
+            erro: `Para registrar a venda, preencha: ${faltando.join(', ')}.`,
+            campos_faltando: faltando,
+          });
+      }
+
       const novoStatus = isGanho ? 'ganho' : isPerdido ? 'perdido' : 'ativo';
       const agora = new Date().toISOString();
       // Resolve funil_id e pipeline_id a partir da etapa se não vierem no body
@@ -248,6 +292,16 @@ async function mover(req, res) {
       if (pipeline_id) upd.pipeline_id = pipeline_id;
       if (isGanho && !lead.ganho_em) upd.ganho_em = agora;
       if (isPerdido && motivo_perda) { upd.perdido_em = agora; upd.perdido_motivo = motivo_perda; upd.motivo_perda = motivo_perda; }
+      // Salva campos comerciais ao mover para ganho
+      if (isGanho) {
+        if (req.body.valor_venda  !== undefined) upd.valor_venda       = req.body.valor_venda;
+        if (req.body.forma_pagamento)            upd.forma_pagamento   = req.body.forma_pagamento;
+        if (req.body.quantidade_parcelas)        upd.quantidade_parcelas = req.body.quantidade_parcelas;
+        if (req.body.parcelas_json !== undefined) upd.parcelas_json    = req.body.parcelas_json;
+        if (req.body.produto_id)                 upd.produto_id        = req.body.produto_id;
+        if (req.body.produto_nome)               upd.produto_nome      = req.body.produto_nome;
+        if (req.body.produto_cor)                upd.produto_cor       = req.body.produto_cor;
+      }
 
       const { data, error } = await sb.from('leads').update(upd).eq('id', id).select().single();
       if (error) throw error;
