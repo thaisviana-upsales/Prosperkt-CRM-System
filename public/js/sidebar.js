@@ -57,7 +57,7 @@ const Sidebar = (() => {
       <aside class="sidebar" role="navigation" aria-label="Menu principal">
         <div class="sidebar-logo">
           <div style="display:flex;align-items:center;gap:10px">
-            <img src="/img/logo.png" alt="PROSPERKT Logo" style="width:36px;height:36px;object-fit:contain;flex-shrink:0;mix-blend-mode:screen;">
+            <img src="/img/logo_original_backup.png" alt="PROSPERKT Logo" style="width:36px;height:36px;object-fit:contain;flex-shrink:0;">
             <div><div class="logo-text">PROSPERKT</div><div class="logo-sub">CRM Enterprise</div></div>
           </div>
         </div>
