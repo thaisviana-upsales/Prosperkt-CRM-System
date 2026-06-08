@@ -32,8 +32,8 @@ funisCtrl.seedFunis();
 // Agenda backups automáticos (diário às 3h, semanal às segundas, mensal dia 1)
 try { require('../services/backupService').agendarBackups(); } catch(e) { console.warn('[Backup] Agendador não iniciado:', e.message); }
 
-// Inicia polling da planilha de leads (a cada 60s)
-try { require('../services/planilhaLeadsService').iniciarPolling(); } catch(e) { console.warn('[Planilha] Polling não iniciado:', e.message); }
+// Polling da planilha desativado — descomentar para reativar:
+// try { require('../services/planilhaLeadsService').iniciarPolling(); } catch(e) { console.warn('[Planilha] Polling não iniciado:', e.message); }
 
 // Aplica audit middleware em todas as rotas
 router.use(auditMiddleware);
@@ -49,11 +49,12 @@ router.get ('/auth/me',      autenticar, authCtrl.me);
 // ─────────────────────────────────────────────────────────────────────────────
 // USUARIOS
 // ─────────────────────────────────────────────────────────────────────────────
-router.get   ('/usuarios',     autenticar, usuariosCtrl.listar);
-router.get   ('/usuarios/:id', autenticar, usuariosCtrl.buscarPorId);
-router.post  ('/usuarios',     autenticar, exigirRole('GESTOR'), usuariosCtrl.criar);
-router.patch ('/usuarios/:id', autenticar, usuariosCtrl.atualizar);
-router.delete('/usuarios/:id', autenticar, exigirSuperAdmin,     usuariosCtrl.deletar);
+router.get   ('/usuarios',          autenticar, usuariosCtrl.listar);
+router.get   ('/usuarios/:id',      autenticar, usuariosCtrl.buscarPorId);
+router.post  ('/usuarios',          autenticar, exigirRole('GESTOR'), usuariosCtrl.criar);
+router.patch ('/usuarios/:id',      autenticar, usuariosCtrl.atualizar);
+router.post  ('/usuarios/:id/avatar', autenticar, usuariosCtrl.uploadAvatar);
+router.delete('/usuarios/:id',      autenticar, exigirSuperAdmin,     usuariosCtrl.deletar);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LOGS DE AUDITORIA
@@ -132,6 +133,15 @@ router.patch ('/comissoes/:id/status',        autenticar, comissoesCtrl.atualiza
 // ─────────────────────────────────────────────────────────────────────────────
 // WHATSAPP
 // ─────────────────────────────────────────────────────────────────────────────
+router.get   ('/whatsapp/integracao/status',          autenticar, exigirSuperAdmin, whatsappCtrl.statusIntegracao);
+
+// ── Evolution API — gerenciamento de instância (SUPER_ADMIN) ─────────────────
+router.get   ('/whatsapp/evolution/status',           autenticar, exigirSuperAdmin, whatsappCtrl.evoInstanciaStatus);
+router.post  ('/whatsapp/evolution/criar',            autenticar, exigirSuperAdmin, whatsappCtrl.evoCriarInstancia);
+router.get   ('/whatsapp/evolution/qrcode',           autenticar, exigirSuperAdmin, whatsappCtrl.evoQrCode);
+router.delete('/whatsapp/evolution/desconectar',      autenticar, exigirSuperAdmin, whatsappCtrl.evoDesconectar);
+router.delete('/whatsapp/evolution/deletar',          autenticar, exigirSuperAdmin, whatsappCtrl.evoDeletarInstancia);
+
 router.get   ('/whatsapp/conversas',              autenticar, whatsappCtrl.listarConversas);
 router.post  ('/whatsapp/conversas',              autenticar, whatsappCtrl.criarOuAbrirConversa);
 router.get   ('/whatsapp/conversas/:id',          autenticar, whatsappCtrl.buscarConversa);
@@ -144,6 +154,12 @@ router.post  ('/whatsapp/webhook/trafego',        whatsappCtrl.webhookTrafego); 
 // ── Webhook de recebimento WhatsApp Light (modo teste) ─────────────────────
 // POST /api/whatsapp/webhook — sem JWT, protegido por WHATSAPP_WEBHOOK_SECRET
 router.post  ('/whatsapp/webhook',                whatsappCtrl.webhookReceberMensagem);
+// ── Ping de diagnóstico — confirma conectividade Evolution → CRM ───────────
+router.post  ('/whatsapp/webhook-ping',           (req, res) => {
+  console.log('WEBHOOK_PING_RECEBIDO:', JSON.stringify(req.body));
+  return res.json({ ok: true, received: true, timestamp: new Date().toISOString() });
+});
+
 
 // ── WhatsApp Supabase — novos endpoints (tabela whatsapp_mensagens) ────────────
 // IMPORTANTE: /conversas-sb antes de /conversas/:id para não colidir
@@ -164,13 +180,15 @@ router.delete('/automacoes/mensagens/:id',          autenticar, automacoesCtrl.d
 // ─────────────────────────────────────────────────────────────────────────────
 // MENSAGENS PADRÃO (biblioteca de scripts)
 // ─────────────────────────────────────────────────────────────────────────────
-router.get   ('/mensagens-padrao/categorias',       autenticar, msgsPadraoCtrl.getCategorias);
-router.get   ('/mensagens-padrao',                  autenticar, msgsPadraoCtrl.listar);
-router.post  ('/mensagens-padrao',                  autenticar, msgsPadraoCtrl.criar);
-router.get   ('/mensagens-padrao/:id/preview',      autenticar, msgsPadraoCtrl.preview);
-router.get   ('/mensagens-padrao/:id',              autenticar, msgsPadraoCtrl.buscarPorId);
-router.patch ('/mensagens-padrao/:id',              autenticar, msgsPadraoCtrl.editar);
-router.delete('/mensagens-padrao/:id',              autenticar, msgsPadraoCtrl.deletar);
+router.get   ('/mensagens-padrao/categorias',            autenticar, msgsPadraoCtrl.getCategorias);
+router.get   ('/mensagens-padrao',                       autenticar, msgsPadraoCtrl.listar);
+router.post  ('/mensagens-padrao',                       autenticar, msgsPadraoCtrl.criar);
+router.post  ('/mensagens-padrao/reordenar',             autenticar, msgsPadraoCtrl.reordenar);
+router.patch ('/mensagens-padrao/renomear-subcategoria', autenticar, msgsPadraoCtrl.renomearSubcategoria);
+router.get   ('/mensagens-padrao/:id/preview',           autenticar, msgsPadraoCtrl.preview);
+router.get   ('/mensagens-padrao/:id',                   autenticar, msgsPadraoCtrl.buscarPorId);
+router.patch ('/mensagens-padrao/:id',                   autenticar, msgsPadraoCtrl.editar);
+router.delete('/mensagens-padrao/:id',                   autenticar, msgsPadraoCtrl.deletar);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MOTIVOS DE PERDA

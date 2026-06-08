@@ -1,5 +1,5 @@
 {
-  "exportado_em": "2026-05-25T19:24:48.446Z",
+  "exportado_em": "2026-06-02T20:51:37.486Z",
   "tabelas": {
     "usuarios": [
       {
@@ -73,7 +73,9 @@
         "criado_por": null,
         "criado_em": "2026-05-23T15:22:24.65196+00:00",
         "atualizado_em": "2026-05-23T15:22:24.65196+00:00",
-        "ordem": 0
+        "ordem": 0,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "funil-indicacao",
@@ -84,7 +86,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T14:39:25.665565+00:00",
         "atualizado_em": "2026-05-24T14:39:25.665565+00:00",
-        "ordem": 1
+        "ordem": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "funil-instagram",
@@ -95,7 +99,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T14:39:25.665565+00:00",
         "atualizado_em": "2026-05-24T14:39:25.665565+00:00",
-        "ordem": 2
+        "ordem": 2,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "funil-carteira-recorrente",
@@ -106,7 +112,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T14:39:25.665565+00:00",
         "atualizado_em": "2026-05-24T14:39:25.665565+00:00",
-        "ordem": 3
+        "ordem": 3,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "funil-parcerias",
@@ -117,7 +125,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T14:39:25.665565+00:00",
         "atualizado_em": "2026-05-24T14:39:25.665565+00:00",
-        "ordem": 4
+        "ordem": 4,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "funil-trafego-pago",
@@ -128,7 +138,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T14:39:25.665565+00:00",
         "atualizado_em": "2026-05-24T14:39:25.665565+00:00",
-        "ordem": 5
+        "ordem": 5,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "funil-whatsapp",
@@ -139,7 +151,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T14:39:25.665565+00:00",
         "atualizado_em": "2026-05-24T14:39:25.665565+00:00",
-        "ordem": 6
+        "ordem": 6,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "funil-site",
@@ -150,7 +164,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T14:39:25.665565+00:00",
         "atualizado_em": "2026-05-24T14:39:25.665565+00:00",
-        "ordem": 7
+        "ordem": 7,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "funil-evento",
@@ -161,7 +177,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T14:39:25.665565+00:00",
         "atualizado_em": "2026-05-24T14:39:25.665565+00:00",
-        "ordem": 8
+        "ordem": 8,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "funil-linkedin",
@@ -172,7 +190,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T14:39:25.665565+00:00",
         "atualizado_em": "2026-05-24T14:39:25.665565+00:00",
-        "ordem": 9
+        "ordem": 9,
+        "deleted_at": null,
+        "deleted_by": null
       }
     ],
     "pipelines": [
@@ -311,7 +331,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-lead-recebido-funil-indicacao",
@@ -326,7 +348,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-lead-recebido-funil-instagram",
@@ -341,7 +365,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-lead-recebido-funil-carteira-recorrente",
@@ -356,7 +382,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-lead-recebido-funil-parcerias",
@@ -371,7 +399,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-lead-recebido-funil-trafego-pago",
@@ -386,7 +416,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-lead-recebido-funil-whatsapp",
@@ -401,7 +433,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-lead-recebido-funil-site",
@@ -416,7 +450,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-lead-recebido-funil-evento",
@@ -431,7 +467,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-lead-recebido-funil-linkedin",
@@ -446,7 +484,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-contato-realizado-funil_padrao",
@@ -461,7 +501,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-contato-realizado-funil-indicacao",
@@ -476,7 +518,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-contato-realizado-funil-instagram",
@@ -491,7 +535,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-contato-realizado-funil-carteira-recorrente",
@@ -506,7 +552,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-contato-realizado-funil-parcerias",
@@ -521,7 +569,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-contato-realizado-funil-trafego-pago",
@@ -536,7 +586,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-contato-realizado-funil-whatsapp",
@@ -551,7 +603,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-contato-realizado-funil-site",
@@ -566,7 +620,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-contato-realizado-funil-evento",
@@ -581,7 +637,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-contato-realizado-funil-linkedin",
@@ -596,7 +654,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-tratativa-funil_padrao",
@@ -611,7 +671,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-tratativa-funil-indicacao",
@@ -626,7 +688,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-tratativa-funil-instagram",
@@ -641,7 +705,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-tratativa-funil-carteira-recorrente",
@@ -656,7 +722,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-tratativa-funil-parcerias",
@@ -671,7 +739,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-tratativa-funil-trafego-pago",
@@ -686,7 +756,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-lead-desqualificado-funil_padrao",
@@ -701,7 +773,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-lead-desqualificado-funil-indicacao",
@@ -716,7 +790,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-lead-desqualificado-funil-instagram",
@@ -731,7 +807,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-lead-desqualificado-funil-carteira-recorrente",
@@ -746,7 +824,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-lead-desqualificado-funil-parcerias",
@@ -761,7 +841,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-lead-desqualificado-funil-trafego-pago",
@@ -776,7 +858,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-lead-desqualificado-funil-whatsapp",
@@ -791,7 +875,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-lead-desqualificado-funil-site",
@@ -806,7 +892,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-lead-desqualificado-funil-evento",
@@ -821,7 +909,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-lead-desqualificado-funil-linkedin",
@@ -836,7 +926,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-tratativa-funil-whatsapp",
@@ -851,7 +943,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-tratativa-funil-site",
@@ -866,7 +960,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-tratativa-funil-evento",
@@ -881,7 +977,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-tratativa-funil-linkedin",
@@ -896,7 +994,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-orcamento-enviado-funil_padrao",
@@ -911,7 +1011,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-orcamento-enviado-funil-indicacao",
@@ -926,7 +1028,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-orcamento-enviado-funil-instagram",
@@ -941,7 +1045,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-orcamento-enviado-funil-carteira-recorrente",
@@ -956,7 +1062,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-orcamento-enviado-funil-parcerias",
@@ -971,7 +1079,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-orcamento-enviado-funil-trafego-pago",
@@ -986,7 +1096,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-orcamento-enviado-funil-whatsapp",
@@ -1001,7 +1113,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-orcamento-enviado-funil-site",
@@ -1016,7 +1130,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-orcamento-enviado-funil-evento",
@@ -1031,7 +1147,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-orcamento-enviado-funil-linkedin",
@@ -1046,7 +1164,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-follow-up-funil_padrao",
@@ -1061,7 +1181,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-follow-up-funil-indicacao",
@@ -1076,7 +1198,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-follow-up-funil-instagram",
@@ -1091,7 +1215,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-follow-up-funil-carteira-recorrente",
@@ -1106,7 +1232,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-follow-up-funil-parcerias",
@@ -1121,7 +1249,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-follow-up-funil-trafego-pago",
@@ -1136,7 +1266,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-follow-up-funil-whatsapp",
@@ -1151,7 +1283,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-follow-up-funil-site",
@@ -1166,7 +1300,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-follow-up-funil-evento",
@@ -1181,7 +1317,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-follow-up-funil-linkedin",
@@ -1196,7 +1334,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-vendas-funil_padrao",
@@ -1211,7 +1351,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-vendas-funil-indicacao",
@@ -1226,7 +1368,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-vendas-funil-instagram",
@@ -1241,7 +1385,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-vendas-funil-carteira-recorrente",
@@ -1256,7 +1402,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-vendas-funil-parcerias",
@@ -1271,7 +1419,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-vendas-funil-trafego-pago",
@@ -1286,7 +1436,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-vendas-funil-whatsapp",
@@ -1301,7 +1453,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-perdidos-funil_padrao",
@@ -1316,7 +1470,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-perdidos-funil-indicacao",
@@ -1331,7 +1487,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-perdidos-funil-instagram",
@@ -1346,7 +1504,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-perdidos-funil-carteira-recorrente",
@@ -1361,7 +1521,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-vendas-funil-site",
@@ -1376,7 +1538,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-vendas-funil-evento",
@@ -1391,7 +1555,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-vendas-funil-linkedin",
@@ -1406,7 +1572,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-perdidos-funil-parcerias",
@@ -1421,7 +1589,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-perdidos-funil-trafego-pago",
@@ -1436,7 +1606,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-perdidos-funil-whatsapp",
@@ -1451,7 +1623,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-perdidos-funil-site",
@@ -1466,7 +1640,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-perdidos-funil-evento",
@@ -1481,7 +1657,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "etapa-perdidos-funil-linkedin",
@@ -1496,7 +1674,9 @@
         "criado_por": null,
         "criado_em": "2026-05-24T15:01:06.759016+00:00",
         "atualizado_em": "2026-05-24T15:01:06.759016+00:00",
-        "ativo": 1
+        "ativo": 1,
+        "deleted_at": null,
+        "deleted_by": null
       }
     ],
     "leads": [
@@ -1531,40 +1711,9 @@
         "parcelas_json": null,
         "produto_id": null,
         "produto_nome": null,
-        "produto_cor": null
-      },
-      {
-        "id": "6631937ff34e8301bca2000c4d7c5ac9",
-        "nome": "teste",
-        "email": "teste@gmail.com",
-        "telefone": "11964646464",
-        "empresa": "teste",
-        "cargo": null,
-        "valor": 0,
-        "pipeline_id": null,
-        "etapa_id": "etapa-follow-up-funil_padrao",
-        "responsavel_id": "aa7d16892ce5a009777735071d24928b",
-        "origem": "manual",
-        "tags": null,
-        "dados_extras": null,
-        "status": "ativo",
-        "data_fechamento": null,
-        "motivo_perda": null,
-        "criado_por": null,
-        "criado_em": "2026-05-24T17:58:27.801+00:00",
-        "atualizado_em": "2026-05-25T16:36:19.121+00:00",
-        "funil_id": "funil-indicacao",
-        "ganho_em": null,
-        "perdido_em": null,
-        "perdido_motivo": null,
-        "observacoes": null,
-        "valor_venda": 0,
-        "forma_pagamento": null,
-        "quantidade_parcelas": 0,
-        "parcelas_json": null,
-        "produto_id": null,
-        "produto_nome": null,
-        "produto_cor": null
+        "produto_cor": null,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "744e6bbe00365c172011239d844836da",
@@ -1597,32 +1746,250 @@
         "parcelas_json": null,
         "produto_id": null,
         "produto_nome": "— Selecione ou adicione —",
-        "produto_cor": null
+        "produto_cor": null,
+        "deleted_at": null,
+        "deleted_by": null
+      },
+      {
+        "id": "6631937ff34e8301bca2000c4d7c5ac9",
+        "nome": "teste",
+        "email": "teste@gmail.com",
+        "telefone": "11964646464",
+        "empresa": "teste",
+        "cargo": null,
+        "valor": 0,
+        "pipeline_id": "funil-indicacao",
+        "etapa_id": "etapa-vendas-funil-trafego-pago",
+        "responsavel_id": "aa7d16892ce5a009777735071d24928b",
+        "origem": "manual",
+        "tags": null,
+        "dados_extras": null,
+        "status": "ganho",
+        "data_fechamento": null,
+        "motivo_perda": null,
+        "criado_por": null,
+        "criado_em": "2026-05-24T17:58:27.801+00:00",
+        "atualizado_em": "2026-05-25T20:05:29.891+00:00",
+        "funil_id": "funil-indicacao",
+        "ganho_em": "2026-05-25T20:05:29.891+00:00",
+        "perdido_em": null,
+        "perdido_motivo": null,
+        "observacoes": null,
+        "valor_venda": 200,
+        "forma_pagamento": "Boleto",
+        "quantidade_parcelas": 1,
+        "parcelas_json": [
+          {
+            "valor": "",
+            "numero": 1,
+            "vencimento": ""
+          }
+        ],
+        "produto_id": null,
+        "produto_nome": "—",
+        "produto_cor": null,
+        "deleted_at": null,
+        "deleted_by": null
+      },
+      {
+        "id": "c9bdcfe3cdab0d54e53fbdb271de9f02",
+        "nome": "Webhook Teste 1779741990389",
+        "email": "webhook.teste@planilha.com",
+        "telefone": "11900009999",
+        "empresa": "Empresa Webhook",
+        "cargo": null,
+        "valor": 0,
+        "pipeline_id": "funil-trafego-pago",
+        "etapa_id": "etapa-lead-recebido-funil-trafego-pago",
+        "responsavel_id": null,
+        "origem": null,
+        "tags": null,
+        "dados_extras": "{\"produto_interesse\":\"Canecas personalizadas\",\"fonte\":\"google_sheets\",\"origem\":\"planilha\",\"planilha_id\":\"1n4SmQfpV6qu0boPH3Tlaexlhp4KgZ7W9g8kBX0n45s4\"}",
+        "status": "ABERTO",
+        "data_fechamento": null,
+        "motivo_perda": null,
+        "criado_por": null,
+        "criado_em": "2026-05-25T20:46:30.389+00:00",
+        "atualizado_em": "2026-05-25T20:46:30.837+00:00",
+        "funil_id": "funil-trafego-pago",
+        "ganho_em": null,
+        "perdido_em": null,
+        "perdido_motivo": null,
+        "observacoes": "Interesse: Canecas personalizadas",
+        "valor_venda": 0,
+        "forma_pagamento": null,
+        "quantidade_parcelas": 0,
+        "parcelas_json": null,
+        "produto_id": null,
+        "produto_nome": null,
+        "produto_cor": null,
+        "deleted_at": null,
+        "deleted_by": null
+      },
+      {
+        "id": "654c452ec9742e3b5b77d330fe106429",
+        "nome": "Webhook Teste 1779742042241",
+        "email": "webhook.1779742042241@planilha.com",
+        "telefone": "11942042240",
+        "empresa": "Empresa Webhook",
+        "cargo": null,
+        "valor": 0,
+        "pipeline_id": "funil-trafego-pago",
+        "etapa_id": "etapa-lead-recebido-funil-trafego-pago",
+        "responsavel_id": null,
+        "origem": null,
+        "tags": null,
+        "dados_extras": "{\"produto_interesse\":\"Canecas personalizadas\",\"fonte\":\"google_sheets\",\"origem\":\"planilha\",\"planilha_id\":\"1n4SmQfpV6qu0boPH3Tlaexlhp4KgZ7W9g8kBX0n45s4\"}",
+        "status": "ABERTO",
+        "data_fechamento": null,
+        "motivo_perda": null,
+        "criado_por": null,
+        "criado_em": "2026-05-25T20:47:22.24+00:00",
+        "atualizado_em": "2026-05-25T20:47:22.514+00:00",
+        "funil_id": "funil-trafego-pago",
+        "ganho_em": null,
+        "perdido_em": null,
+        "perdido_motivo": null,
+        "observacoes": "Interesse: Canecas personalizadas",
+        "valor_venda": 0,
+        "forma_pagamento": null,
+        "quantidade_parcelas": 0,
+        "parcelas_json": null,
+        "produto_id": null,
+        "produto_nome": null,
+        "produto_cor": null,
+        "deleted_at": null,
+        "deleted_by": null
+      },
+      {
+        "id": "b697f305f695e4520135755bfe1e3927",
+        "nome": "Webhook Teste 1779742106860",
+        "email": "webhook.1779742106860@planilha.com",
+        "telefone": "11942106859",
+        "empresa": "Empresa Webhook",
+        "cargo": null,
+        "valor": 0,
+        "pipeline_id": "funil-trafego-pago",
+        "etapa_id": "etapa-lead-recebido-funil-trafego-pago",
+        "responsavel_id": null,
+        "origem": null,
+        "tags": null,
+        "dados_extras": "{\"produto_interesse\":\"Canecas personalizadas\",\"fonte\":\"google_sheets\",\"origem\":\"planilha\",\"planilha_id\":\"1n4SmQfpV6qu0boPH3Tlaexlhp4KgZ7W9g8kBX0n45s4\"}",
+        "status": "ABERTO",
+        "data_fechamento": null,
+        "motivo_perda": null,
+        "criado_por": null,
+        "criado_em": "2026-05-25T20:48:26.859+00:00",
+        "atualizado_em": "2026-05-25T20:48:27.147+00:00",
+        "funil_id": "funil-trafego-pago",
+        "ganho_em": null,
+        "perdido_em": null,
+        "perdido_motivo": null,
+        "observacoes": "Interesse: Canecas personalizadas",
+        "valor_venda": 0,
+        "forma_pagamento": null,
+        "quantidade_parcelas": 0,
+        "parcelas_json": null,
+        "produto_id": null,
+        "produto_nome": null,
+        "produto_cor": null,
+        "deleted_at": null,
+        "deleted_by": null
+      },
+      {
+        "id": "01d48da9f3dc6b8dac8e7e006e8b775f",
+        "nome": "Webhook Teste 1779742280577",
+        "email": "webhook.1779742280577@planilha.com",
+        "telefone": "11942280576",
+        "empresa": "Empresa Webhook",
+        "cargo": null,
+        "valor": 0,
+        "pipeline_id": "funil-trafego-pago",
+        "etapa_id": "etapa-lead-recebido-funil-trafego-pago",
+        "responsavel_id": null,
+        "origem": null,
+        "tags": null,
+        "dados_extras": "{\"produto_interesse\":\"Canecas personalizadas\",\"fonte\":\"google_sheets\",\"origem\":\"planilha\",\"planilha_id\":\"1n4SmQfpV6qu0boPH3Tlaexlhp4KgZ7W9g8kBX0n45s4\"}",
+        "status": "ABERTO",
+        "data_fechamento": null,
+        "motivo_perda": null,
+        "criado_por": null,
+        "criado_em": "2026-05-25T20:51:20.576+00:00",
+        "atualizado_em": "2026-05-25T20:51:21.094+00:00",
+        "funil_id": "funil-trafego-pago",
+        "ganho_em": null,
+        "perdido_em": null,
+        "perdido_motivo": null,
+        "observacoes": "Interesse: Canecas personalizadas",
+        "valor_venda": 0,
+        "forma_pagamento": null,
+        "quantidade_parcelas": 0,
+        "parcelas_json": null,
+        "produto_id": null,
+        "produto_nome": null,
+        "produto_cor": null,
+        "deleted_at": null,
+        "deleted_by": null
+      },
+      {
+        "id": "5f0521cb3b4c4cb452a11330f8b36f29",
+        "nome": "Lead WhatsApp Teste",
+        "email": null,
+        "telefone": "551193434257",
+        "empresa": null,
+        "cargo": null,
+        "valor": 0,
+        "pipeline_id": "funil-trafego-pago",
+        "etapa_id": "etapa-lead-recebido-funil-trafego-pago",
+        "responsavel_id": null,
+        "origem": null,
+        "tags": null,
+        "dados_extras": "{\"fonte\":\"whatsapp_light_teste\",\"numero_wa\":\"551193434257\"}",
+        "status": "ABERTO",
+        "data_fechamento": null,
+        "motivo_perda": null,
+        "criado_por": null,
+        "criado_em": "2026-05-25T21:10:34.276+00:00",
+        "atualizado_em": "2026-05-25T21:10:34.276+00:00",
+        "funil_id": "funil-trafego-pago",
+        "ganho_em": null,
+        "perdido_em": null,
+        "perdido_motivo": null,
+        "observacoes": "Lead criado automaticamente via WhatsApp Light (teste).",
+        "valor_venda": 0,
+        "forma_pagamento": null,
+        "quantidade_parcelas": 0,
+        "parcelas_json": null,
+        "produto_id": null,
+        "produto_nome": null,
+        "produto_cor": null,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "8db5fe03fa8f55d9b7ca5fb3c0ea2c9f",
-        "nome": "Tuane",
+        "nome": "Tuane S.",
         "email": "teste@gmail.com",
         "telefone": "11964646464",
         "empresa": "teste",
         "cargo": null,
         "valor": 0,
         "pipeline_id": "funil-trafego-pago",
-        "etapa_id": "etapa-contato-realizado-funil_padrao",
+        "etapa_id": "etapa-contato-realizado-funil-trafego-pago",
         "responsavel_id": "aa7d16892ce5a009777735071d24928b",
         "origem": "manual",
         "tags": null,
         "dados_extras": null,
         "status": "ativo",
         "data_fechamento": null,
-        "motivo_perda": null,
+        "motivo_perda": "Lead duplicado",
         "criado_por": null,
         "criado_em": "2026-05-25T16:10:56.579+00:00",
-        "atualizado_em": "2026-05-25T16:45:33.206+00:00",
+        "atualizado_em": "2026-05-28T13:35:27.275+00:00",
         "funil_id": "funil-trafego-pago",
         "ganho_em": "2026-05-25T16:11:36.96+00:00",
-        "perdido_em": null,
-        "perdido_motivo": null,
+        "perdido_em": "2026-05-25T19:30:06.871+00:00",
+        "perdido_motivo": "Lead duplicado",
         "observacoes": null,
         "valor_venda": 20000,
         "forma_pagamento": "Boleto",
@@ -1639,9 +2006,46 @@
             "vencimento": "2026-07-25"
           }
         ],
+        "produto_id": "94d6949c9cb5fbbc7b506757349775cb",
+        "produto_nome": "Camisea",
+        "produto_cor": "#4deaff",
+        "deleted_at": null,
+        "deleted_by": null
+      },
+      {
+        "id": "c4bb5d28ffe095a286310ef29b096260",
+        "nome": "Lead WhatsApp Teste",
+        "email": null,
+        "telefone": "551193638078",
+        "empresa": null,
+        "cargo": null,
+        "valor": 0,
+        "pipeline_id": "funil-trafego-pago",
+        "etapa_id": "etapa-orcamento-enviado-funil_padrao",
+        "responsavel_id": null,
+        "origem": null,
+        "tags": null,
+        "dados_extras": "{\"fonte\":\"whatsapp_light_teste\",\"numero_wa\":\"551193638078\"}",
+        "status": "ativo",
+        "data_fechamento": null,
+        "motivo_perda": null,
+        "criado_por": null,
+        "criado_em": "2026-05-25T21:13:58.088+00:00",
+        "atualizado_em": "2026-05-28T13:38:39.722+00:00",
+        "funil_id": "funil-trafego-pago",
+        "ganho_em": null,
+        "perdido_em": null,
+        "perdido_motivo": null,
+        "observacoes": "Lead criado automaticamente via WhatsApp Light (teste).",
+        "valor_venda": 0,
+        "forma_pagamento": null,
+        "quantidade_parcelas": 0,
+        "parcelas_json": null,
         "produto_id": null,
-        "produto_nome": "— Selecione ou adicione —",
-        "produto_cor": null
+        "produto_nome": "—",
+        "produto_cor": null,
+        "deleted_at": null,
+        "deleted_by": null
       },
       {
         "id": "b6debe261f1a8b4dfefee763acfead6c",
@@ -1652,8 +2056,8 @@
         "cargo": null,
         "valor": 0,
         "pipeline_id": "funil-instagram",
-        "etapa_id": "etapa-vendas-funil-instagram",
-        "responsavel_id": "b7c09462f2575b1c910fe26d1cd578f1",
+        "etapa_id": "etapa-vendas-funil-trafego-pago",
+        "responsavel_id": "552a63b057bc578a4e2328cb6a839454",
         "origem": "manual",
         "tags": null,
         "dados_extras": null,
@@ -1662,7 +2066,7 @@
         "motivo_perda": null,
         "criado_por": null,
         "criado_em": "2026-05-25T16:46:05.868+00:00",
-        "atualizado_em": "2026-05-25T18:50:51.583+00:00",
+        "atualizado_em": "2026-05-28T13:51:49.672+00:00",
         "funil_id": "funil-instagram",
         "ganho_em": "2026-05-25T18:50:51.583+00:00",
         "perdido_em": null,
@@ -1685,7 +2089,9 @@
         ],
         "produto_id": "b12074a05ba945476c257a9d87070931",
         "produto_nome": "squaze",
-        "produto_cor": "#6cff4e"
+        "produto_cor": "#6cff4e",
+        "deleted_at": null,
+        "deleted_by": null
       }
     ],
     "produtos": [
@@ -1696,13 +2102,35 @@
         "cor": "#6cff4e",
         "ativo": true,
         "criado_em": "2026-05-25T16:47:10.43+00:00",
-        "atualizado_em": "2026-05-25T16:47:10.43+00:00"
+        "atualizado_em": "2026-05-25T16:47:10.43+00:00",
+        "deleted_at": null,
+        "deleted_by": null
+      },
+      {
+        "id": "4c7d8e0dcf7b5adc0e00494b8d4e0b49",
+        "nome": "Camiseta",
+        "nome_normalizado": null,
+        "cor": "#ff4dde",
+        "ativo": true,
+        "criado_em": "2026-05-25T19:30:41.567+00:00",
+        "atualizado_em": "2026-05-25T19:30:41.567+00:00",
+        "deleted_at": null,
+        "deleted_by": null
+      },
+      {
+        "id": "94d6949c9cb5fbbc7b506757349775cb",
+        "nome": "Camisea",
+        "nome_normalizado": null,
+        "cor": "#4deaff",
+        "ativo": true,
+        "criado_em": "2026-05-25T19:31:10.258+00:00",
+        "atualizado_em": "2026-05-25T19:31:10.258+00:00",
+        "deleted_at": null,
+        "deleted_by": null
       }
     ],
     "logs": [],
-    "audit_logs": {
-      "erro": "Could not find the table 'public.audit_logs' in the schema cache"
-    },
+    "audit_logs": [],
     "motivos_perda": [
       {
         "id": "mp-sem-orcamento",

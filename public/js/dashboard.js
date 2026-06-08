@@ -29,7 +29,7 @@ async function init() {
 }
 
 async function carregarFunis() {
-  const r = await Auth.api('GET', '/funis');
+  const r = await Auth.api('GET', '/funis?somente_ativos=true');
   _funis = r?.data?.dados || [];
   const sel = document.getElementById('f-funil');
   sel.innerHTML = '<option value="">Todos</option>' +

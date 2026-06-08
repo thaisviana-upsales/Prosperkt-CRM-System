@@ -9,7 +9,8 @@ const crypto = require('crypto');
 const { getProvider } = require('../database/dbProvider');
 const { registrarLog } = require('../services/auditService');
 
-const CAMPOS_PUBLICOS_SUPA = 'id, nome, email, role, ativo, criado_em, atualizado_em';
+const CAMPOS_PUBLICOS_SUPA = 'id, nome, email, role, ativo, avatar_url, criado_em, atualizado_em';
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/usuarios
@@ -211,4 +212,58 @@ async function deletar(req, res) {
   }
 }
 
-module.exports = { listar, buscarPorId, criar, atualizar, deletar };
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/usuarios/:id/avatar — salva avatar como data URL
+// ─────────────────────────────────────────────────────────────────────────────
+async function uploadAvatar(req, res) {
+  const { sb, isSupa } = getProvider();
+  const { id } = req.params;
+  const { role: roleAtual, id: meId } = req.usuario;
+
+  // Vendedor só pode atualizar o próprio avatar
+  if (roleAtual === 'VENDEDOR' && id !== meId) {
+    return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
+  }
+
+  const { avatar_url } = req.body;
+  if (!avatar_url) {
+    return res.status(400).json({ sucesso: false, erro: 'Campo avatar_url é obrigatório.' });
+  }
+
+  // Valida formato: aceita data:image/... ou URL externa
+  const isDataUrl = avatar_url.startsWith('data:image/');
+  const isUrl = avatar_url.startsWith('http://') || avatar_url.startsWith('https://');
+  const isEmpty = avatar_url === '';
+  if (!isDataUrl && !isUrl && !isEmpty) {
+    return res.status(400).json({ sucesso: false, erro: 'Formato de imagem inválido. Use JPG, PNG ou WEBP.' });
+  }
+
+  // Limita tamanho: data URL de 2MB ≈ ~2.7MB em base64
+  if (avatar_url.length > 3_000_000) {
+    return res.status(413).json({ sucesso: false, erro: 'Imagem muito grande. Máximo 2MB.' });
+  }
+
+  try {
+    if (isSupa) {
+      const { data, error } = await sb.from('usuarios')
+        .update({ avatar_url: avatar_url || null, atualizado_em: new Date().toISOString() })
+        .eq('id', id)
+        .select(CAMPOS_PUBLICOS_SUPA)
+        .single();
+      if (error) throw error;
+      return res.json({ sucesso: true, dados: data });
+    }
+    const { getDb } = require('../database/db');
+    const db = getDb();
+    db.prepare('UPDATE usuarios SET avatar_url = ?, atualizado_em = ? WHERE id = ?')
+      .run(avatar_url || null, new Date().toISOString(), id);
+    const atualizado = db.prepare('SELECT id,nome,email,role,ativo,avatar_url,criado_em,atualizado_em FROM usuarios WHERE id = ?').get(id);
+    return res.json({ sucesso: true, dados: atualizado });
+  } catch (e) {
+    console.error('[usuarios.uploadAvatar]', e.message);
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}
+
+module.exports = { listar, buscarPorId, criar, atualizar, deletar, uploadAvatar };
+

@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Logs de Auditoria — PROSPERKT CRM</title>
+<meta name="description" content="Registro imutável de todas as ações realizadas no sistema PROSPERKT CRM.">
+<link rel="stylesheet" href="/css/design-system.css">
+<style>
+/* ── Filtros ── */
+.fbar{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:16px}
+.fg{display:flex;flex-direction:column;gap:3px}
+.fl{font-size:.6rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em}
+.fs{background:var(--surface-2);border:1px solid var(--border);border-radius:7px;color:var(--text-primary);font-family:inherit;font-size:.8125rem;padding:6px 10px;outline:none;min-width:130px;cursor:pointer}
+.fs:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(91,222,62,.12)}
+.di{background:var(--surface-2);border:1px solid var(--border);border-radius:7px;color:var(--text-primary);font-family:inherit;font-size:.8125rem;padding:6px 9px;outline:none;color-scheme:dark;width:130px}
+.di:focus{border-color:var(--green)}
+
+/* ── Stats cards ── */
+.stats-bar{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:16px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;position:relative;overflow:hidden}
+.stat-card::after{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.stat-card.green::after{background:var(--green)}
+.stat-card.pink::after{background:var(--pink)}
+.stat-card.blue::after{background:#3B8BFF}
+.stat-card.yellow::after{background:#F5A623}
+.stat-label{font-size:.6rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px}
+.stat-val{font-size:1.4rem;font-weight:800;letter-spacing:-.03em}
+
+/* ── Tabela ── */
+.table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.log-table{width:100%;border-collapse:collapse;font-size:.8rem}
+.log-table thead{background:var(--surface-2)}
+.log-table th{padding:9px 14px;text-align:left;font-size:.65rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border)}
+.log-table td{padding:10px 14px;border-bottom:1px solid var(--border);vertical-align:middle;color:var(--text-primary)}
+.log-table tr:last-child td{border-bottom:none}
+.log-table tbody tr{transition:background .13s}
+.log-table tbody tr:hover{background:var(--surface-2)}
+
+/* ── Ação badge ── */
+.acao-badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:.65rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap}
+.acao-CREATE  {background:rgba(91,222,62,.13);color:var(--green)}
+.acao-UPDATE  {background:rgba(59,139,255,.13);color:#3B8BFF}
+.acao-DELETE  {background:rgba(255,59,92,.13);color:var(--error)}
+.acao-LOGIN   {background:rgba(91,222,62,.10);color:var(--green)}
+.acao-LOGOUT  {background:rgba(245,245,245,.07);color:var(--text-muted)}
+.acao-RESTORE {background:rgba(245,166,35,.13);color:#F5A623}
+.acao-default {background:var(--surface-2);color:var(--text-secondary)}
+
+/* ── Diff expandível ── */
+.diff-btn{background:none;border:1px solid var(--border);border-radius:6px;color:var(--text-muted);font-size:.68rem;padding:2px 8px;cursor:pointer;font-family:inherit;transition:all .13s}
+.diff-btn:hover{border-color:var(--green);color:var(--green)}
+.diff-row td{padding:0}
+.diff-content{padding:10px 14px;background:var(--surface-2);font-size:.75rem;font-family:monospace;white-space:pre-wrap;word-break:break-all;color:var(--text-secondary);border-top:1px solid var(--border)}
+
+/* ── Paginação ── */
+.pag{display:flex;align-items:center;gap:8px;padding:12px 14px;border-top:1px solid var(--border);font-size:.8125rem;color:var(--text-muted)}
+.pag-btn{background:var(--surface-2);border:1px solid var(--border);border-radius:7px;color:var(--text-secondary);font-size:.8rem;padding:5px 12px;cursor:pointer;font-family:inherit;transition:all .13s}
+.pag-btn:hover:not(:disabled){border-color:var(--green);color:var(--green)}
+.pag-btn:disabled{opacity:.35;cursor:not-allowed}
+.pag-info{margin-left:auto}
+
+/* ── Empty / loading ── */
+.empty{text-align:center;padding:48px;color:var(--text-muted);font-size:.875rem}
+.loading-wrap{text-align:center;padding:48px;color:var(--text-muted)}
+</style>
+</head>
+<body>
+<div class="app-layout">
+  <div id="sidebar-container"></div>
+  <main class="main-content animate-fade" style="padding:20px 24px">
+
+    <!-- Header -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div>
+        <h1 class="page-title" style="font-size:1.4rem;margin-bottom:2px">Logs de Auditoria</h1>
+        <p class="page-subtitle">Registro imutável de todas as ações realizadas no sistema</p>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span id="ultima-att" style="font-size:.72rem;color:var(--text-muted)"></span>
+        <button class="btn btn-secondary btn-sm" id="btn-refresh">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          Atualizar
+        </button>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-bar" id="stats-bar">
+      <div class="stat-card green"><div class="stat-label">Total de Logs</div><div class="stat-val" id="stat-total">—</div></div>
+      <div class="stat-card pink"><div class="stat-label">Leads na Lixeira</div><div class="stat-val" id="stat-lixeira">—</div></div>
+      <div class="stat-card blue"><div class="stat-label">Produtos na Lixeira</div><div class="stat-val" id="stat-produtos">—</div></div>
+      <div class="stat-card yellow"><div class="stat-label">Backups Concluídos</div><div class="stat-val" id="stat-backups">—</div></div>
+    </div>
+
+    <!-- Filtros -->
+    <div class="fbar">
+      <div class="fg">
+        <span class="fl">Entidade</span>
+        <select id="f-entidade" class="fs">
+          <option value="">Todas</option>
+          <option value="leads">Leads</option>
+          <option value="usuarios">Usuários</option>
+          <option value="funis">Funis</option>
+          <option value="etapas">Etapas</option>
+          <option value="produtos">Produtos</option>
+          <option value="metas">Metas</option>
+          <option value="comissoes">Comissões</option>
+        </select>
+      </div>
+      <div class="fg">
+        <span class="fl">Ação</span>
+        <select id="f-acao" class="fs">
+          <option value="">Todas</option>
+          <option value="CREATE">CREATE</option>
+          <option value="UPDATE">UPDATE</option>
+          <option value="DELETE">DELETE</option>
+          <option value="LOGIN">LOGIN</option>
+          <option value="LOGOUT">LOGOUT</option>
+          <option value="RESTORE">RESTORE</option>
+        </select>
+      </div>
+      <div class="fg">
+        <span class="fl">De</span>
+        <input type="date" id="f-inicio" class="di">
+      </div>
+      <div class="fg">
+        <span class="fl">Até</span>
+        <input type="date" id="f-fim" class="di">
+      </div>
+      <div style="display:flex;gap:8px;align-items:flex-end">
+        <button class="btn btn-primary btn-sm" id="btn-filtrar">Filtrar</button>
+        <button class="btn btn-secondary btn-sm" id="btn-limpar">Limpar</button>
+      </div>
+      <div class="fg" style="margin-left:auto">
+        <span class="fl">Exibir</span>
+        <select id="f-limite" class="fs" style="min-width:80px">
+          <option value="50">50</option>
+          <option value="100" selected>100</option>
+          <option value="200">200</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Tabela -->
+    <div class="table-wrap">
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th>Data/Hora</th>
+            <th>Ação</th>
+            <th>Entidade</th>
+            <th>ID do Registro</th>
+            <th>Usuário</th>
+            <th>IP</th>
+            <th>Diff</th>
+          </tr>
+        </thead>
+        <tbody id="logs-tbody">
+          <tr><td colspan="7"><div class="loading-wrap">
+            <div class="spinner" style="margin:0 auto 10px"></div>
+            Carregando logs...
+          </div></td></tr>
+        </tbody>
+      </table>
+      <!-- Paginação -->
+      <div class="pag" id="pag-bar" style="display:none">
+        <button class="pag-btn" id="btn-prev">← Anterior</button>
+        <button class="pag-btn" id="btn-next">Próximo →</button>
+        <span class="pag-info" id="pag-info"></span>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<div id="toast-container"></div>
+<script src="/js/auth.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/avatar.js"></script>
+<script src="/js/sidebar.js"></script>
+<script>
+let _offset = 0;
+let _total  = 0;
+let _limite = 100;
+let _isSuperAdmin = false;
+
+// ── Inicialização ────────────────────────────────────────────
+async function init() {
+  const usuario = await Sidebar.init('logs', 'GESTOR');
+  if (!usuario) return;
+  _isSuperAdmin = usuario.role === 'SUPER_ADMIN';
+
+  // Stats apenas para SUPER_ADMIN (endpoint exigirSuperAdmin)
+  if (_isSuperAdmin) carregarStats();
+
+  await carregarLogs();
+  bindEvents();
+}
+
+// ── Stats cards ─────────────────────────────────────────────
+async function carregarStats() {
+  const res = await Auth.api('GET', '/admin/stats');
+  if (!res?.ok) return;
+  const d = res.data.dados;
+  document.getElementById('stat-total').textContent    = (d.total_audit_logs   ?? '—').toLocaleString('pt-BR');
+  document.getElementById('stat-lixeira').textContent  = (d.leads_na_lixeira   ?? '—').toLocaleString('pt-BR');
+  document.getElementById('stat-produtos').textContent = (d.produtos_na_lixeira ?? '—').toLocaleString('pt-BR');
+  document.getElementById('stat-backups').textContent  = (d.backups_concluidos  ?? '—').toLocaleString('pt-BR');
+}
+
+// ── Carregar logs ────────────────────────────────────────────
+async function carregarLogs(resetOffset = false) {
+  if (resetOffset) _offset = 0;
+  _limite = parseInt(document.getElementById('f-limite').value) || 100;
+
+  const entidade = document.getElementById('f-entidade').value;
+  const acao     = document.getElementById('f-acao').value;
+  const inicio   = document.getElementById('f-inicio').value;
+  const fim      = document.getElementById('f-fim').value;
+
+  const params = new URLSearchParams({ limite: _limite, offset: _offset });
+  if (entidade) params.set('entidade', entidade);
+  if (acao)     params.set('acao', acao);
+  if (inicio)   params.set('data_inicio', inicio);
+  if (fim)      params.set('data_fim', fim);
+
+  const tbody = document.getElementById('logs-tbody');
+  tbody.innerHTML = `<tr><td colspan="7"><div class="loading-wrap"><div class="spinner" style="margin:0 auto 10px"></div>Carregando...</div></td></tr>`;
+
+  const res = await Auth.api('GET', `/audit?${params}`);
+  if (!res?.ok) {
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty">Erro ao carregar logs.</div></td></tr>`;
+    Toast.show('Erro ao carregar logs de auditoria.', 'error');
+    return;
+  }
+
+  const logs = res.data.dados || [];
+  _total = res.data.total || logs.length;
+
+  atualizarPaginacao();
+
+  if (!logs.length) {
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty">Nenhum log encontrado para os filtros aplicados.</div></td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = logs.map((log, i) => {
+    const dt   = new Date(log.criado_em);
+    const data = dt.toLocaleDateString('pt-BR');
+    const hora = dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const acao = log.acao || '—';
+    const acaoClass = `acao-${acao}` in {} ? `acao-${acao}` : (['CREATE','UPDATE','DELETE','LOGIN','LOGOUT','RESTORE'].includes(acao) ? `acao-${acao}` : 'acao-default');
+    const temDiff = log.antes || log.depois;
+
+    return `
+      <tr>
+        <td style="white-space:nowrap;color:var(--text-secondary)">
+          <div style="font-weight:600;color:var(--text-primary)">${data}</div>
+          <div style="font-size:.72rem">${hora}</div>
+        </td>
+        <td><span class="acao-badge ${acaoClass}">${acao}</span></td>
+        <td style="font-weight:600">${log.entidade || '—'}</td>
+        <td style="font-size:.75rem;color:var(--text-muted);font-family:monospace">${(log.entidade_id||'—').toString().slice(0,16)}</td>
+        <td>${log.usuario_nome || log.usuario_id || '—'}</td>
+        <td style="font-size:.75rem;color:var(--text-muted)">${log.ip || '—'}</td>
+        <td>${temDiff ? `<button class="diff-btn" data-idx="${i}" onclick="toggleDiff(this,${i})">ver diff</button>` : '<span style="color:var(--text-muted);font-size:.72rem">—</span>'}</td>
+      </tr>
+      <tr class="diff-row" id="diff-${i}" style="display:none">
+        <td colspan="7">
+          <div class="diff-content">${formatDiff(log.antes, log.depois)}</div>
+        </td>
+      </tr>`;
+  }).join('');
+
+  // Timestamp da última atualização
+  document.getElementById('ultima-att').textContent = `Atualizado ${new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'})}`;
+}
+
+// ── Diff format ──────────────────────────────────────────────
+function formatDiff(antes, depois) {
+  const linhas = [];
+  if (antes) linhas.push('── ANTES ──\n' + JSON.stringify(antes, null, 2));
+  if (depois) linhas.push('── DEPOIS ──\n' + JSON.stringify(depois, null, 2));
+  return linhas.join('\n\n') || '(sem dados)';
+}
+
+function toggleDiff(btn, idx) {
+  const row = document.getElementById(`diff-${idx}`);
+  const aberto = row.style.display !== 'none';
+  row.style.display = aberto ? 'none' : '';
+  btn.textContent = aberto ? 'ver diff' : 'fechar';
+  btn.style.color = aberto ? '' : 'var(--green)';
+  btn.style.borderColor = aberto ? '' : 'var(--green)';
+}
+
+// ── Paginação ────────────────────────────────────────────────
+function atualizarPaginacao() {
+  const pagBar = document.getElementById('pag-bar');
+  const btnPrev = document.getElementById('btn-prev');
+  const btnNext = document.getElementById('btn-next');
+  const info    = document.getElementById('pag-info');
+
+  const inicio = _offset + 1;
+  const fim    = Math.min(_offset + _limite, _total);
+  info.textContent = `${inicio}–${fim} de ${_total} registros`;
+
+  btnPrev.disabled = _offset === 0;
+  btnNext.disabled = _offset + _limite >= _total;
+  pagBar.style.display = '';
+}
+
+// ── Eventos ──────────────────────────────────────────────────
+function bindEvents() {
+  document.getElementById('btn-filtrar').addEventListener('click', () => carregarLogs(true));
+  document.getElementById('btn-refresh').addEventListener('click', () => {
+    if (_isSuperAdmin) carregarStats();
+    carregarLogs(true);
+  });
+
+  document.getElementById('btn-limpar').addEventListener('click', () => {
+    document.getElementById('f-entidade').value = '';
+    document.getElementById('f-acao').value     = '';
+    document.getElementById('f-inicio').value   = '';
+    document.getElementById('f-fim').value      = '';
+    carregarLogs(true);
+  });
+
+  document.getElementById('btn-prev').addEventListener('click', () => {
+    _offset = Math.max(0, _offset - _limite);
+    carregarLogs();
+  });
+
+  document.getElementById('btn-next').addEventListener('click', () => {
+    _offset += _limite;
+    carregarLogs();
+  });
+
+  document.getElementById('f-limite').addEventListener('change', () => carregarLogs(true));
+}
+
+init();
+</script>
+</body>
+</html>

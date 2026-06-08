@@ -41,8 +41,8 @@ async function init() {
 }
 
 async function carregarFunis() {
-  const r = await Auth.api('GET','/funis');
-  _funis = (r?.data?.dados||[]).filter(f=>f.ativo);
+  const r = await Auth.api('GET','/funis?somente_ativos=true');
+  _funis = r?.data?.dados || [];
 }
 
 async function carregarUsuarios() {
@@ -201,6 +201,21 @@ function renderKanban() {
     body.addEventListener('drop', ev => { ev.preventDefault(); body.classList.remove('drag-over'); moverLead(etapa.id); });
     col.querySelector('.col-add').addEventListener('click', () => abrirNovoLead(etapa.id));
     body.querySelectorAll('.lead-card').forEach(card => {
+      // Botão WhatsApp: captura o clique ANTES do card, evita abrir o modal
+      const btnWa = card.querySelector('.btn-wa-nav');
+      if (btnWa) {
+        btnWa.addEventListener('click', (ev) => {
+          ev.stopPropagation();   // impede card de abrir o modal
+          ev.preventDefault();
+          const leadId = btnWa.dataset.waLeadId;
+          const tel    = btnWa.dataset.waTel;
+          const nome   = btnWa.dataset.waNome || '';
+          const urlDestino = `/whatsapp.html?lead_id=${encodeURIComponent(leadId)}&phone=${encodeURIComponent(tel)}&nome=${encodeURIComponent(nome)}`;
+          console.log('ABRIR_WHATSAPP_DO_LEAD:', { leadId, telefoneNormalizado: tel, urlDestino });
+          window.location.href = urlDestino;
+        });
+      }
+
       card.addEventListener('click', () => abrirLead(card.dataset.id));
       card.addEventListener('dragstart', ev => {
         _dragLeadId = card.dataset.id; _dragEtapaOrigem = etapa.id;
@@ -228,16 +243,22 @@ function renderCard(l, mostrarFunil) {
     ${funilBadge}
     ${tags.length?`<div class="lead-tags">${tagsHtml}</div>`:''}
     ${l.telefone ? `
-    <div class="lead-card-actions" onclick="event.stopPropagation()">
-      <a href="/whatsapp.html?lead_id=${l.id}&tel=${encodeURIComponent(l.telefone)}&nome=${encodeURIComponent(l.nome)}"
-         class="btn-wa-card" title="Abrir conversa WhatsApp com ${l.nome}">
+    <div class="lead-card-actions">
+      <button
+        class="btn-wa-card btn-wa-nav"
+        title="Abrir conversa WhatsApp"
+        data-wa-lead-id="${l.id}"
+        data-wa-tel="${(() => { let t = (l.telefone||'').replace(/\D/g,''); if (t.length===10||t.length===11) t='55'+t; return t; })()}"
+        data-wa-nome="${l.nome.replace(/"/g,'&quot;')}"
+      >
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
         </svg>
         WhatsApp
-      </a>
+      </button>
     </div>` : ''}
   </div>`;
+
 }
 
 async function moverLead(etapaId) {

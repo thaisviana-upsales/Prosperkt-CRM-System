@@ -105,10 +105,14 @@
 .wa-bubble-text{font-size:.84rem;line-height:1.45;color:var(--text-primary)}
 .wa-bubble-footer{display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:4px}
 .wa-bubble-time{font-size:.62rem;color:rgba(255,255,255,.45)}
-.wa-bubble-status{font-size:.7rem}
-.wa-bubble-status.enviado{color:rgba(255,255,255,.4)}
-.wa-bubble-status.entregue{color:rgba(255,255,255,.5)}
-.wa-bubble-status.lido{color:#4FC3F7}
+.wa-bubble-status{display:inline-flex;align-items:center;line-height:1;margin-left:2px}
+.wa-bubble-status.pending svg{stroke:rgba(255,255,255,.35)}
+.wa-bubble-status.sent svg,.wa-bubble-status.enviado svg{stroke:rgba(255,255,255,.45)}
+.wa-bubble-status.delivered svg,.wa-bubble-status.entregue svg{stroke:rgba(255,255,255,.55)}
+.wa-bubble-status.read svg,.wa-bubble-status.lido svg{stroke:#4FC3F7}
+.wa-bubble-status.failed svg,.wa-bubble-status.erro svg{stroke:#FF4C4C}
+@keyframes spin{to{transform:rotate(360deg)}}
+
 /* Áudio */
 .wa-audio{display:flex;align-items:center;gap:10px;padding:4px 0}
 .wa-audio-play{width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.1);border:none;color:var(--text-primary);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s}
@@ -143,6 +147,15 @@
 .wa-attach-btn:hover{color:var(--green);background:rgba(108,255,78,.1)}
 .wa-script-btn{background:none;border:1px solid var(--border);color:var(--text-muted);cursor:pointer;padding:6px 10px;border-radius:20px;transition:all .15s;font-size:.7rem;font-weight:700;display:flex;align-items:center;gap:5px;white-space:nowrap;flex-shrink:0;font-family:inherit}
 .wa-script-btn:hover{color:var(--green);border-color:var(--green);background:rgba(108,255,78,.06)}
+
+/* ─── AUTORIA ─── */
+/* Rótulo [Nome] acima da bolha enviada pelo vendedor — apenas no CRM, nunca enviado ao cliente */
+.wa-msg-autor{font-size:.62rem;font-weight:700;color:#3B8BFF;margin-bottom:3px;text-align:right;padding-right:4px;opacity:.85;letter-spacing:.02em}
+.wa-msg.enviada .wa-msg-autor{text-align:right}
+
+/* ─── BANNER STATUS CONEXÃO ─── */
+.wa-status-banner{background:rgba(255,182,39,.08);border-bottom:1px solid rgba(255,182,39,.25);padding:7px 18px;font-size:.74rem;color:#FFB627;display:flex;align-items:center;gap:8px;flex-shrink:0}
+.wa-status-banner a{color:#FFB627}
 
 /* ─── PICKER MODAL ─── */
 .picker-ov{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(8px);z-index:910;display:flex;align-items:flex-end;justify-content:center;opacity:0;pointer-events:none;transition:.25s}
@@ -204,6 +217,9 @@
         </button>
       </div>
     </div>
+
+    <!-- Banner de status da conexão (exibido quando sem atividade) -->
+    <div class="wa-status-banner" id="wa-status-banner" style="display:none"></div>
 
     <!-- Layout principal WA -->
     <div class="wa-layout" style="flex:1">
@@ -400,6 +416,7 @@
 <div id="toast-container"></div>
 <script src="/js/auth.js"></script>
 <script src="/js/toast.js"></script>
+<script src="/js/avatar.js"></script>
 <script src="/js/sidebar.js"></script>
 <script src="/js/whatsapp.js"></script>
 <script src="/js/whatsapp-picker.js"></script>

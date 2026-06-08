@@ -85,7 +85,7 @@ async function init() {
 // ─── Carrega funis do servidor ────────────────────────────────────────────────
 async function carregarFunis() {
   try {
-    const r = await Auth.api('GET', '/funis');
+    const r = await Auth.api('GET', '/funis?somente_ativos=true');
     _funis = r?.data?.dados || [];
     const opts = _funis.map(f => `<option value="${f.id}">${f.nome}</option>`).join('');
     // Filtro
@@ -97,6 +97,7 @@ async function carregarFunis() {
     console.warn('[Metas] carregarFunis error:', e);
   }
 }
+
 
 // ─── Carrega usuários do servidor ─────────────────────────────────────────────
 async function carregarUsuarios() {

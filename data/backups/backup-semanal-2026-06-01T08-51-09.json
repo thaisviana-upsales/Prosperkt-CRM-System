@@ -1,0 +1,38 @@
+{
+  "exportado_em": "2026-06-01T08:51:09.076Z",
+  "tabelas": {
+    "usuarios": {
+      "erro": "TypeError: fetch failed"
+    },
+    "funis": {
+      "erro": "TypeError: fetch failed"
+    },
+    "pipelines": {
+      "erro": "TypeError: fetch failed"
+    },
+    "etapas": {
+      "erro": "TypeError: fetch failed"
+    },
+    "leads": {
+      "erro": "TypeError: fetch failed"
+    },
+    "produtos": {
+      "erro": "TypeError: fetch failed"
+    },
+    "logs": {
+      "erro": "TypeError: fetch failed"
+    },
+    "audit_logs": {
+      "erro": "TypeError: fetch failed"
+    },
+    "motivos_perda": {
+      "erro": "TypeError: fetch failed"
+    },
+    "metas": {
+      "erro": "TypeError: fetch failed"
+    },
+    "conversas": {
+      "erro": "TypeError: fetch failed"
+    }
+  }
+}

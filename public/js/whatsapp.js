@@ -3,6 +3,16 @@
  * Central de conversas: lista, chat estilo WA, envio de mensagens
  */
 
+// ─── Normalização de telefone (espelho do backend) ───────────────────────────────
+function normalizePhone(tel) {
+  if (!tel) return '';
+  let t = String(tel).split('@')[0];
+  t = t.replace(/\D/g, '');
+  // 10-11 dígitos sem código de país → adiciona 55 (Brasil)
+  if (t.length === 10 || t.length === 11) t = '55' + t;
+  return t;
+}
+
 // ─── Estado ───────────────────────────────────────────────────────────────────
 let _usuario   = null;
 let _conversas = [];
@@ -24,21 +34,32 @@ async function init() {
   _usuario = await Sidebar.init('whatsapp');
   if (!_usuario) return;
 
-  // Verifica se veio via ?lead_id=...&tel=...&nome=... (botão WA do card)
+  // Lê parâmetros da URL — botão WA do card envia: ?lead_id=...&phone=...&nome=...
   const params = new URLSearchParams(location.search);
-  const leadId = params.get('lead_id');
-  const tel    = params.get('tel');
-  const nome   = params.get('nome') || '';
+  const leadIdParam = params.get('lead_id') || params.get('leadId') || '';
+  const phoneRaw    = params.get('phone') || params.get('tel') || '';
+  const phoneParam  = normalizePhone(phoneRaw);
+  const nomeParam   = decodeURIComponent(params.get('nome') || '');
 
-  // Guarda contexto do lead para uso após carregamento
-  if (leadId && tel) {
-    _leadCtx = { leadId, tel, nome };
+  // Log obrigatório — visível no console do browser
+  console.log('PIPELINE_WHATSAPP_CLICK:', {
+    leadId:             leadIdParam,
+    nomeLead:           nomeParam,
+    telefoneOriginal:   phoneRaw,
+    telefoneNormalizado: phoneParam,
+    urlDestino:         location.href,
+  });
+
+  // Guarda contexto do lead para o resolverConversaLead usar
+  if (leadIdParam || phoneParam) {
+    _leadCtx = { leadId: leadIdParam, tel: phoneParam, nome: nomeParam };
   }
 
-  // Carrega conversas e leads em paralelo
-  await Promise.all([carregarConversas(), carregarLeads()]);
+  // Carrega lista de conversas, leads e status em paralelo
+  await Promise.all([carregarConversas(), carregarLeads(), carregarStatusConexao()]);
 
-  // Se veio de um card, navega direto para a conversa do lead
+  // Se veio de um card do Pipeline, resolve e abre a conversa correta.
+  // IMPORTANTE: não abre outra conversa automaticamente — resolverConversaLead é determinístico.
   if (_leadCtx) {
     await resolverConversaLead(_leadCtx.leadId, _leadCtx.tel, _leadCtx.nome);
   }
@@ -50,6 +71,34 @@ async function init() {
     await carregarConversas(true);
     if (_convAtiva) await carregarMensagens(_convAtiva.id, true);
   }, 10000);
+}
+
+
+// ─── Status da conexão WhatsApp (banner topo) ────────────────────────────────
+async function carregarStatusConexao() {
+  try {
+    // Endpoint disponível apenas para SUPER_ADMIN — trata silenciosamente se der 403
+    const r = await Auth.api('GET', '/whatsapp/integracao/status');
+    const banner = document.getElementById('wa-status-banner');
+    if (!banner) return;
+    if (!r?.ok) { banner.style.display = 'none'; return; }
+    const d = r.data;
+    // Só exibe banner de aviso quando não há atividade recente
+    if (d.msgs_24h === 0) {
+      banner.style.display = '';
+      banner.innerHTML = `
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+        </svg>
+        <span>⚠️ WhatsApp sem atividade nas últimas 24h. As mensagens podem não estar chegando.
+        ${['SUPER_ADMIN','GESTOR'].includes(_usuario?.role) ? '<a href="/integracao-whatsapp.html" style="color:#FFB627;text-decoration:underline;margin-left:6px;font-weight:700">Ver conexão →</a>' : ''}
+        </span>`;
+    } else {
+      banner.style.display = 'none';
+    }
+  } catch(e) {
+    // Silencioso — banner não bloqueia a página
+  }
 }
 
 // ─── Carregar conversas ───────────────────────────────────────────────────────
@@ -164,27 +213,130 @@ async function abrirConversa(id) {
   await carregarMensagens(id);
 }
 
-// Resolve conversa de um lead vindo do card da Pipeline
-// Comportamento:
-// - Conversa existe → injeta na lista e abre direto
-// - Não existe → mostra estado "sem conversa" com botão Iniciar
+// ─── Resolver conversa do lead ────────────────────────────────────────────────
+// DETERMINÍSTICO: busca por telefone exato, nunca abre outra conversa
 async function resolverConversaLead(leadId, tel, nome) {
-  // 1. Consulta backend: já existe conversa para este lead?
-  const r = await Auth.api('GET', `/whatsapp/lead/${leadId}`);
+  const telNorm = normalizePhone(tel);
 
-  if (r?.ok && r.data.dados) {
-    // ✅ CONVERSA EXISTENTE — injeta no topo da lista e abre
-    const conv = { ...r.data.dados, lead_nome: nome };
-    // Remove se já estiver na lista (evita duplicata)
+  // ── LOGS OBRIGATÓRIOS ──────────────────────────────────────────────────────
+  console.log('WHATSAPP_PAGE_URL_PARAMS', {
+    leadId: new URLSearchParams(window.location.search).get('lead_id'),
+    phone:  new URLSearchParams(window.location.search).get('phone'),
+    nome:   new URLSearchParams(window.location.search).get('nome'),
+  });
+  console.log('WHATSAPP_TARGET_PHONE_NORMALIZED', telNorm);
+  console.log('WHATSAPP_URL_PARAMS:', { leadIdParam: leadId, phoneParam: telNorm, nomeParam: nome });
+
+  // Estado de loading na área de chat
+  document.getElementById('chat-empty').style.display = 'none';
+  document.getElementById('chat-header').style.display = '';
+  document.getElementById('wa-messages').style.display = '';
+  document.getElementById('wa-input-bar').style.display = 'none';
+  document.getElementById('chat-nome').textContent = nome || telNorm || 'Buscando...';
+  document.getElementById('chat-avatar').textContent = (nome || '??').slice(0, 2).toUpperCase();
+  document.getElementById('chat-tel').textContent = telNorm || '—';
+  document.getElementById('chat-status-text').innerHTML = '<span style="color:var(--text-muted)">Buscando conversa...</span>';
+  document.getElementById('wa-messages').innerHTML = '<div style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:.85rem">Carregando...</div>';
+
+  let conv = null;
+
+  // ── PASSO 1: Backend busca por lead_id (que internamente normaliza telefone) ─
+  if (leadId) {
+    try {
+      const r = await Auth.api('GET', `/whatsapp/lead/${leadId}`);
+      if (r?.ok && r.data.dados) {
+        const candidata = r.data.dados;
+        const telCandidato = normalizePhone(candidata.telefone);
+
+        // VALIDAÇÃO OBRIGATÓRIA: a conversa retornada deve ter o mesmo telefone da URL
+        if (telNorm && telCandidato !== telNorm) {
+          console.warn('WHATSAPP_SELECTED_CONVERSATION — TELEFONE DIVERGENTE, ignorando:', {
+            conversaId: candidata.id, telefoneDaConversa: telCandidato,
+            nomeDaConversa: candidata.nome_contato, telEsperado: telNorm
+          });
+          // NÃO usa essa conversa — é de outro lead/teste
+        } else {
+          conv = { ...candidata, lead_nome: nome };
+          console.log('WHATSAPP_SELECTED_CONVERSATION', {
+            conversaId: conv.id, telefoneDaConversa: telCandidato, nomeDaConversa: conv.nome_contato
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[WA] resolverConversaLead: erro busca por lead_id:', e.message);
+    }
+  }
+
+  // ── PASSO 2: Busca EXATA por telefone normalizado na lista completa ──────────
+  if (!conv && telNorm) {
+    try {
+      const r2 = await Auth.api('GET', '/whatsapp/conversas?limit=200');
+      const lista = r2?.ok ? (r2.data.dados || []) : [];
+      const porTel = lista.find(c => normalizePhone(c.telefone) === telNorm);
+      if (porTel) {
+        conv = { ...porTel, lead_nome: nome };
+        console.log('WHATSAPP_SELECTED_CONVERSATION', {
+          conversaId: conv.id, telefoneDaConversa: normalizePhone(conv.telefone),
+          nomeDaConversa: conv.nome_contato, metodo: 'busca_exata_local'
+        });
+        // Vincula lead_id se ausente
+        if (leadId && !porTel.lead_id) {
+          Auth.api('POST', '/whatsapp/conversas', { telefone: telNorm, lead_id: leadId, nome_contato: nome }).catch(() => {});
+        }
+      } else {
+        console.log('WHATSAPP_SELECTED_CONVERSATION — nenhuma conversa encontrada por telefone', telNorm, '— conversas existentes:', lista.map(c => normalizePhone(c.telefone)));
+      }
+    } catch (e) {
+      console.warn('[WA] resolverConversaLead: erro busca por telefone:', e.message);
+    }
+  }
+
+  // ── PASSO 3: Não existe → cria automaticamente ──────────────────────────────
+  if (!conv && telNorm) {
+    console.log('WHATSAPP_CONVERSA_RESOLVIDA: criando nova conversa para', telNorm);
+    try {
+      const rc = await Auth.api('POST', '/whatsapp/conversas', {
+        telefone: telNorm, lead_id: leadId || null,
+        nome_contato: nome || null, status: 'ABERTA'
+      });
+      if (rc?.ok && rc.data.dados) {
+        conv = { ...rc.data.dados, lead_nome: nome };
+        console.log('WHATSAPP_SELECTED_CONVERSATION', {
+          conversaId: conv.id, telefoneDaConversa: conv.telefone,
+          nomeDaConversa: conv.nome_contato, criada: true
+        });
+        Toast.show('Conversa iniciada!', 'success');
+      }
+    } catch (e) {
+      console.error('[WA] resolverConversaLead: erro ao criar conversa:', e.message);
+    }
+  }
+
+  // ── PASSO 4: Abre ou exibe erro ─────────────────────────────────────────────
+  if (conv) {
+    console.log('WHATSAPP_CONVERSA_RESOLVIDA:', {
+      leadIdParam: leadId, telefoneNormalizado: telNorm,
+      conversaEncontrada: !conv._criada, conversaCriada: !!conv._criada,
+      conversaIdAberta: conv.id,
+    });
     _conversas = _conversas.filter(c => c.id !== conv.id);
     _conversas.unshift(conv);
     renderListaConversas();
+    document.getElementById('wa-input-bar').style.display = '';
     await abrirConversa(conv.id);
   } else {
-    // ⚠️ SEM CONVERSA — mostra estado especial
-    mostrarEstadoSemConversa(leadId, tel, nome);
+    console.error('WHATSAPP_CONVERSA_RESOLVIDA: FALHA TOTAL — não abre outra conversa', { leadId, telNorm });
+    document.getElementById('chat-status-text').innerHTML = '<span style="color:var(--pink)">● Erro</span>';
+    document.getElementById('wa-messages').innerHTML = `
+      <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:48px 24px;gap:12px">
+        <div style="font-size:2rem;opacity:.4">⚠️</div>
+        <div style="font-size:.95rem;font-weight:700;color:var(--text-secondary)">Não foi possível abrir a conversa deste lead.</div>
+        <div style="font-size:.8rem;color:var(--text-muted)">${telNorm ? 'Telefone: ' + telNorm : 'Lead sem telefone cadastrado.'}</div>
+        ${!telNorm ? '<div style="font-size:.8rem;color:var(--pink);font-weight:600">Cadastre o telefone no card do lead e tente novamente.</div>' : ''}
+      </div>`;
   }
 }
+
 
 // Estado visual quando não há conversa para o lead
 function mostrarEstadoSemConversa(leadId, tel, nome) {
@@ -361,12 +513,55 @@ function renderMensagens() {
 }
 
 function renderMensagem(msg) {
-  const dir      = msg.direcao === 'enviada' ? 'enviada' : msg.tipo === 'sistema' ? 'sistema' : 'recebida';
-  const hora     = fmtHoraMsg(msg.criado_em);
-  const statusIcon = { enviado: '✓', entregue: '✓✓', lido: '✓✓', erro: '✕' };
-  const statusStr  = msg.direcao === 'enviada'
-    ? `<span class="wa-bubble-status ${msg.status}">${statusIcon[msg.status] || '✓'}</span>` : '';
+  const dir  = msg.direcao === 'enviada' ? 'enviada' : msg.tipo === 'sistema' ? 'sistema' : 'recebida';
+  const hora = fmtHoraMsg(msg.criado_em);
 
+  // ── Ícones de status (apenas mensagens enviadas pelo CRM) ─────────────────
+  // pending  → relógio (enfileirado)
+  // sent     → 1 check cinza (Evolution confirmou, ainda não entregue)
+  // enviado  → idem (nome antigo no banco)
+  // delivered → 2 checks cinza (entregue no aparelho)
+  // entregue → idem (nome antigo)
+  // read     → 2 checks turquesa (lida)
+  // lido     → idem (nome antigo)
+  // failed / erro → X vermelho
+  let statusStr = '';
+  if (dir === 'enviada') {
+    const s = (msg.status || 'sent').toLowerCase();
+    if (s === 'pending') {
+      statusStr = `<span class="wa-bubble-status pending" title="Enviando...">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      </span>`;
+    } else if (s === 'sent' || s === 'enviado') {
+      statusStr = `<span class="wa-bubble-status sent" title="Enviado">
+        <svg width="13" height="9" viewBox="0 0 16 10" fill="none"><path d="M1 5L5.5 9L15 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>`;
+    } else if (s === 'delivered' || s === 'entregue') {
+      statusStr = `<span class="wa-bubble-status delivered" title="Entregue">
+        <svg width="17" height="9" viewBox="0 0 20 10" fill="none"><path d="M1 5L5.5 9L15 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 5L10.5 9L20 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>`;
+    } else if (s === 'read' || s === 'lido') {
+      statusStr = `<span class="wa-bubble-status read" title="Lida">
+        <svg width="17" height="9" viewBox="0 0 20 10" fill="none"><path d="M1 5L5.5 9L15 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 5L10.5 9L20 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>`;
+    } else if (s === 'failed' || s === 'erro') {
+      statusStr = `<span class="wa-bubble-status failed" title="Falha no envio">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+      </span>`;
+    } else {
+      // fallback → 1 check cinza
+      statusStr = `<span class="wa-bubble-status sent" title="Enviado">
+        <svg width="13" height="9" viewBox="0 0 16 10" fill="none"><path d="M1 5L5.5 9L15 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>`;
+    }
+  }
+
+  // ── Rótulo de autoria (interno CRM — não vai para o cliente) ─────────────
+  const autorNome = msg.vendedor_nome || (dir === 'enviada' && _usuario?.nome) || '';
+  const autorLabel = (dir === 'enviada' && autorNome)
+    ? `<div class="wa-msg-autor">[${escHtml(autorNome)}]</div>` : '';
+
+  // ── Conteúdo da mensagem ──────────────────────────────────────────────────
   let conteudo = '';
   if (msg.tipo === 'texto' || msg.tipo === 'sistema') {
     conteudo = `<div class="wa-bubble-text">${escHtml(msg.mensagem || '')}</div>`;
@@ -388,7 +583,8 @@ function renderMensagem(msg) {
     </a>`;
   }
 
-  return `<div class="wa-msg ${dir}" data-id="${msg.id}">
+  return `<div class="wa-msg ${dir}" data-id="${msg.id}" data-status="${msg.status || ''}">
+    ${autorLabel}
     <div class="wa-bubble">
       ${conteudo}
       <div class="wa-bubble-footer">
@@ -400,6 +596,7 @@ function renderMensagem(msg) {
 }
 
 // ─── Enviar mensagem ──────────────────────────────────────────────────────────
+
 async function enviarMensagem() {
   if (!_convAtiva) return;
   const input = document.getElementById('msg-input');
@@ -407,47 +604,72 @@ async function enviarMensagem() {
   if (!txt) return;
 
   const btn = document.getElementById('btn-send');
-  btn.disabled = true;
-  input.value  = '';
-  input.style.height = '';
-  btn.disabled = true;
 
-  // Otimista: renderiza imediatamente
-  const msgTemp = {
-    id: 'temp-' + Date.now(),
-    direcao: 'enviada', tipo: 'texto',
-    mensagem: txt, status: 'enviado',
-    criado_em: new Date().toISOString(),
-    vendedor_nome: _usuario.nome
-  };
-  _mensagens.push(msgTemp);
-  renderMensagens();
+  // ── Estado de loading (não mostra nada antes da confirmação) ──────────────
+  btn.disabled = true;
+  btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="animation:spin 1s linear infinite"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4" stroke-dashoffset="10"/></svg>`;
+  input.disabled = true;
 
+  const telEnvio = normalizePhone(_convAtiva.telefone);
+
+  // Log obrigatório no frontend
+  console.log('CRM_SEND_WHATSAPP_START', {
+    conversaId:          _convAtiva.id,
+    leadId:              _convAtiva.lead_id || null,
+    telefoneOriginal:    _convAtiva.telefone,
+    telefoneNormalizado: telEnvio,
+    textoDigitado:       txt.slice(0, 80),
+    textoFinal:          txt.slice(0, 80), // cabeçalho é adicionado no backend
+  });
+
+  // ── Chama backend — backend chama Evolution PRIMEIRO, só salva se OK ──────
+  // NÃO limpa o input antes — só limpa após confirmação de sucesso
   const r = await Auth.api('POST', `/whatsapp/conversas/${_convAtiva.id}/mensagens`, {
     mensagem: txt, tipo: 'texto'
   });
 
+  // ── Restaura controles sempre ──────────────────────────────────────────────
+  btn.disabled = false;
+  btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`;
+  input.disabled = false;
+  input.focus();
+
   if (r?.ok) {
-    // Atualiza com dado real
-    _mensagens = _mensagens.filter(m => m.id !== msgTemp.id);
-    _mensagens.push(r.data.dados);
+    // ✅ Evolution confirmou envio → limpa input e mostra mensagem real vinda do banco
+    input.value = '';
+    input.style.height = '';
+    btn.disabled = true; // desabilita até novo texto ser digitado
+
+    const msgReal = r.data.dados;
+    _mensagens.push(msgReal);
     renderMensagens();
-    // Atualiza preview na lista
+
+    // Atualiza preview na lista de conversas
     _conversas = _conversas.map(c =>
-      c.id === _convAtiva.id ? { ...c, ultima_mensagem: txt, ultima_direcao: 'enviada', ultima_msg_em: new Date().toISOString() } : c
+      c.id === _convAtiva.id
+        ? { ...c, ultima_mensagem: txt, ultima_direcao: 'enviada', ultima_msg_em: new Date().toISOString() }
+        : c
     );
     renderListaConversas();
-    // Re-destaca a conversa ativa
     document.getElementById('conv-item-' + _convAtiva.id)?.classList.add('active');
-  } else {
-    // Marca como erro
-    _mensagens = _mensagens.map(m => m.id === msgTemp.id ? { ...m, status: 'erro' } : m);
-    renderMensagens();
-    Toast.show(r?.data?.erro || 'Erro ao enviar mensagem.', 'error');
-  }
 
-  btn.disabled = false;
+  } else {
+    // ❌ Evolution falhou ou erro de rede → NÃO mostra mensagem, texto permanece no input
+    const erroMsg = r?.data?.erro
+      || 'Mensagem não enviada pelo WhatsApp. Verifique a conexão e tente novamente.';
+
+    console.error('EVOLUTION_SEND_ERROR', {
+      status:  r?.status,
+      data:    r?.data,
+      message: erroMsg,
+    });
+
+    Toast.show(erroMsg, 'error');
+    // Texto permanece no input — usuário pode tentar novamente
+  }
 }
+
+
 
 // ─── Upload de arquivo ────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {

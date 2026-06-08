@@ -3,68 +3,123 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Mensagens Padrão — PROSPERKT CRM</title>
-<meta name="description" content="Biblioteca de scripts e mensagens padrão para a equipe de vendas.">
+<title>Biblioteca de Mensagens — PROSPERKT CRM</title>
+<meta name="description" content="Central de scripts comerciais organizados por categoria, subcategoria e cadência.">
 <link rel="stylesheet" href="/css/design-system.css">
 <style>
-/* ── Filtros sticky ── */
-.mp-filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:20px}
-.mp-cat-chip{padding:4px 12px;border-radius:20px;border:1px solid var(--border);background:none;color:var(--text-muted);font-size:.72rem;font-weight:700;cursor:pointer;font-family:inherit;transition:all .15s;white-space:nowrap}
-.mp-cat-chip.active,.mp-cat-chip:hover{background:rgba(108,255,78,.12);border-color:var(--green);color:var(--green)}
+/* ── Layout 2 colunas ── */
+.sc-layout{display:grid;grid-template-columns:260px 1fr;gap:0;background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;min-height:calc(100vh - 180px)}
+@media(max-width:860px){.sc-layout{grid-template-columns:1fr;min-height:auto}}
 
-/* ── Grid de cards ── */
-.mp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px}
-.mp-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;transition:all .2s;position:relative;overflow:hidden;display:flex;flex-direction:column;gap:12px}
-.mp-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--grad-brand);opacity:0;transition:opacity .2s}
-.mp-card:hover::before{opacity:1}
-.mp-card:hover{border-color:var(--border-hover);box-shadow:var(--shadow-md)}
-.mp-card.inactive{opacity:.55}
-.mp-card.inactive::before{background:var(--border-hover);opacity:1}
+/* ── Nav lateral ── */
+.sc-nav{border-right:1px solid var(--border);display:flex;flex-direction:column;background:var(--surface)}
+.sc-nav-head{padding:18px;border-bottom:1px solid var(--border);background:linear-gradient(160deg,rgba(26,58,107,.18) 0%,rgba(59,139,255,.06) 100%)}
+.sc-nav-label{font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.12em;color:var(--text-muted);margin-bottom:10px}
+.sc-search-wrap{position:relative}
+.sc-search{width:100%;box-sizing:border-box;background:rgba(0,0,0,.25);border:1px solid var(--border);border-radius:10px;padding:8px 12px 8px 32px;color:var(--text-primary);font-family:inherit;font-size:.78rem;outline:none;transition:border-color .2s}
+.sc-search:focus{border-color:var(--green)}
+.sc-search-ico{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-muted);pointer-events:none}
+.sc-nav-scroll{flex:1;overflow-y:auto;padding:8px 0}
 
-/* ── Texto preview ── */
-.mp-texto{font-size:.8rem;color:var(--text-muted);line-height:1.55;max-height:72px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;background:var(--surface-2);border-radius:8px;padding:10px 12px;white-space:pre-wrap;word-break:break-word}
+/* ── Nav items ── */
+.sc-all-btn{display:flex;align-items:center;justify-content:space-between;padding:9px 16px;margin:2px 8px;border-radius:9px;cursor:pointer;font-size:.78rem;font-weight:600;color:var(--text-muted);transition:all .15s;border:none;background:none;width:calc(100% - 16px);text-align:left;font-family:inherit}
+.sc-all-btn:hover,.sc-all-btn.active{background:rgba(108,255,78,.08);color:var(--green)}
+.sc-favs-btn{display:flex;align-items:center;justify-content:space-between;padding:9px 16px;margin:2px 8px;border-radius:9px;cursor:pointer;font-size:.78rem;font-weight:600;color:var(--text-muted);transition:all .15s;border:none;background:none;width:calc(100% - 16px);text-align:left;font-family:inherit}
+.sc-favs-btn:hover,.sc-favs-btn.active{background:rgba(255,182,39,.1);color:#FFB627}
+.sc-divider{margin:8px 16px;border:none;border-top:1px solid var(--border)}
+.sc-cat-hd{display:flex;align-items:center;gap:8px;padding:9px 16px;cursor:pointer;font-size:.79rem;font-weight:700;color:var(--text-secondary);transition:all .15s;user-select:none}
+.sc-cat-hd:hover{color:var(--text-primary);background:rgba(255,255,255,.03)}
+.sc-cat-hd.active{color:var(--green)}
+.sc-cat-chev{margin-left:auto;color:var(--text-muted);transition:transform .2s}
+.sc-cat-hd.open .sc-cat-chev{transform:rotate(90deg)}
+.sc-cat-cnt{font-size:.65rem;background:var(--surface-2);border:1px solid var(--border);border-radius:20px;padding:1px 7px;color:var(--text-muted);font-weight:700}
+.sc-sub-list{overflow:hidden;max-height:0;transition:max-height .25s ease}
+.sc-sub-list.open{max-height:300px}
+.sc-sub-btn{display:flex;align-items:center;justify-content:space-between;padding:7px 16px 7px 38px;cursor:pointer;font-size:.75rem;color:var(--text-muted);transition:all .14s;border-left:2px solid transparent;margin:1px 0;background:none;border-top:none;border-right:none;border-bottom:none;width:100%;text-align:left;font-family:inherit}
+.sc-sub-btn:hover{color:var(--text-primary)}
+.sc-sub-btn.active{color:var(--green);border-left-color:var(--green);font-weight:700;background:rgba(108,255,78,.05)}
+.sc-sub-cnt{font-size:.62rem;background:rgba(108,255,78,.12);color:var(--green);border-radius:20px;padding:1px 6px;font-weight:700}
 
-/* ── Category badge ── */
-.mp-cat-badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:.66rem;font-weight:700;background:rgba(59,139,255,.1);color:#3B8BFF;border:1px solid rgba(59,139,255,.2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* ── Conteúdo ── */
+.sc-main{display:flex;flex-direction:column;min-width:0}
+.sc-main-head{padding:18px 20px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;flex-shrink:0}
+.sc-ctx-title{font-size:.95rem;font-weight:800}
+.sc-ctx-sub{font-size:.72rem;color:var(--text-muted);margin-top:2px}
 
-/* ── Status toggle ── */
-.toggle{position:relative;width:40px;height:22px;flex-shrink:0}
-.toggle input{opacity:0;width:0;height:0}
+/* ── Stats ── */
+.sc-stats{display:flex;gap:0;border-bottom:1px solid var(--border);flex-shrink:0}
+.sc-stat{flex:1;padding:12px 16px;text-align:center;border-right:1px solid var(--border)}
+.sc-stat:last-child{border-right:none}
+.sc-stat-lbl{font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:3px}
+.sc-stat-val{font-size:1.3rem;font-weight:800}
+
+/* ── Lista de scripts ── */
+.sc-list{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:0}
+
+/* ── Grupo de cadência ── */
+.sc-cad-group{margin-bottom:4px}
+.sc-cad-hd{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;cursor:pointer;font-size:.8rem;font-weight:700;margin-bottom:2px;transition:all .15s;user-select:none}
+.sc-cad-hd:hover{border-color:var(--border-hover)}
+.sc-cad-badge{font-size:.65rem;font-weight:800;padding:3px 10px;border-radius:20px;background:linear-gradient(135deg,rgba(59,139,255,.15),rgba(108,255,78,.1));border:1px solid rgba(59,139,255,.25);color:#3B8BFF}
+.sc-cad-chev{margin-left:auto;color:var(--text-muted);transition:transform .2s}
+.sc-cad-hd.open .sc-cad-chev{transform:rotate(180deg)}
+.sc-cad-cnt{font-size:.65rem;color:var(--text-muted);font-weight:600}
+
+/* ── Card de script ── */
+.sc-card-wrap{overflow:hidden;max-height:0;transition:max-height .25s ease}
+.sc-card-wrap.open{max-height:2000px}
+.sc-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;margin:3px 0 4px 0;overflow:hidden;transition:border-color .2s;position:relative}
+.sc-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--grad-brand);opacity:0;transition:opacity .15s}
+.sc-card:hover::before{opacity:1}
+.sc-card.fav-card::before{background:linear-gradient(180deg,#FFB627,#FF8C00);opacity:1}
+.sc-card-row{display:flex;align-items:center;gap:10px;padding:11px 14px}
+.sc-card-title{flex:1;font-size:.82rem;font-weight:700;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sc-card-badges{display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-top:3px}
+.sc-badge-cat{font-size:.6rem;font-weight:700;padding:2px 7px;border-radius:20px;background:rgba(59,139,255,.1);color:#3B8BFF;border:1px solid rgba(59,139,255,.15)}
+.sc-badge-sub{font-size:.6rem;font-weight:700;padding:2px 7px;border-radius:20px;background:rgba(108,255,78,.08);color:var(--green);border:1px solid rgba(108,255,78,.15)}
+.sc-card-acts{display:flex;align-items:center;gap:4px;flex-shrink:0}
+.sc-fav-btn{background:none;border:none;cursor:pointer;font-size:.95rem;padding:4px;border-radius:7px;line-height:1;transition:transform .15s;color:var(--text-muted)}
+.sc-fav-btn:hover{transform:scale(1.2)}
+.sc-fav-btn.on{color:#FFB627}
+.sc-expand-btn{background:none;border:none;cursor:pointer;color:var(--text-muted);padding:4px;border-radius:7px;display:flex;align-items:center;transition:all .15s}
+.sc-expand-btn:hover{background:var(--surface-2);color:var(--text-primary)}
+.sc-card-body{max-height:0;overflow:hidden;transition:max-height .28s ease}
+.sc-card-body.open{max-height:800px}
+.sc-card-inner{padding:0 14px 14px}
+.sc-texto{font-size:.79rem;color:var(--text-secondary);line-height:1.7;background:rgba(0,0,0,.2);border-radius:9px;padding:12px 14px;white-space:pre-wrap;word-break:break-word;border:1px solid var(--border)}
+.sc-card-foot{display:flex;align-items:center;justify-content:space-between;margin-top:10px;gap:8px;flex-wrap:wrap}
+.sc-usar-btn{background:linear-gradient(135deg,#166921,#28a745);color:#fff;border:none;border-radius:8px;padding:7px 16px;font-size:.76rem;font-weight:700;cursor:pointer;font-family:inherit;transition:all .2s;display:flex;align-items:center;gap:6px}
+.sc-usar-btn:hover{box-shadow:0 4px 12px rgba(108,255,78,.35);transform:translateY(-1px)}
+.sc-dup-btn{background:rgba(59,139,255,.1);color:#3B8BFF;border:1px solid rgba(59,139,255,.2);border-radius:8px;padding:7px 12px;font-size:.72rem;font-weight:700;cursor:pointer;font-family:inherit;transition:all .15s}
+.sc-dup-btn:hover{background:rgba(59,139,255,.2)}
+.sc-card-info{font-size:.67rem;color:var(--text-muted)}
+/* ── Cat action buttons ── */
+.cat-act-btn{background:none;border:none;cursor:pointer;padding:4px 8px;border-radius:6px;font-size:.68rem;font-weight:700;color:var(--text-muted);transition:all .13s;font-family:inherit}
+.cat-act-btn:hover{background:var(--surface-2);color:var(--text-primary)}
+
+/* ── Toggle ── */
+.toggle{position:relative;width:34px;height:18px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0;position:absolute}
 .toggle-slider{position:absolute;inset:0;background:var(--surface-2);border:1px solid var(--border);border-radius:50px;cursor:pointer;transition:.2s}
-.toggle-slider::before{content:'';position:absolute;height:14px;width:14px;left:3px;bottom:3px;background:var(--text-muted);border-radius:50%;transition:.2s}
+.toggle-slider::before{content:'';position:absolute;height:11px;width:11px;left:3px;bottom:3px;background:var(--text-muted);border-radius:50%;transition:.2s}
 .toggle input:checked+.toggle-slider{background:rgba(108,255,78,.15);border-color:var(--green)}
-.toggle input:checked+.toggle-slider::before{background:var(--green);transform:translateX(18px)}
+.toggle input:checked+.toggle-slider::before{background:var(--green);transform:translateX(15px)}
 
 /* ── Modal ── */
-.mp-modal-ov{position:fixed;inset:0;background:rgba(0,0,0,.78);backdrop-filter:blur(10px);z-index:900;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:.25s}
-.mp-modal-ov.open{opacity:1;pointer-events:all}
-.mp-modal-box{background:var(--surface);border:1px solid var(--border);border-radius:20px;width:min(700px,96vw);max-height:92vh;overflow-y:auto;transform:scale(.95);transition:.25s}
-.mp-modal-ov.open .mp-modal-box{transform:scale(1)}
-.mp-modal-hd{padding:22px 26px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px}
-.mp-modal-body{padding:22px 26px;display:flex;flex-direction:column;gap:18px}
-.mp-modal-ft{padding:16px 26px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end}
-
-/* ── Variáveis chips ── */
-.var-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
-.var-chip{padding:4px 10px;border-radius:20px;font-size:.7rem;font-weight:700;background:rgba(108,255,78,.08);color:var(--green);cursor:pointer;border:1px solid rgba(108,255,78,.2);transition:all .15s}
+.sc-modal-ov{position:fixed;inset:0;background:rgba(0,0,0,.8);backdrop-filter:blur(10px);z-index:900;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:.22s}
+.sc-modal-ov.open{opacity:1;pointer-events:all}
+.sc-modal-box{background:var(--surface);border:1px solid var(--border);border-radius:20px;width:min(660px,96vw);max-height:90vh;overflow-y:auto;transform:scale(.95);transition:.22s}
+.sc-modal-ov.open .sc-modal-box{transform:scale(1)}
+.sc-modal-hd{padding:20px 24px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px}
+.sc-modal-body{padding:20px 24px;display:flex;flex-direction:column;gap:14px}
+.sc-modal-ft{padding:14px 24px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end}
+.var-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+.var-chip{padding:3px 9px;border-radius:20px;font-size:.68rem;font-weight:700;background:rgba(108,255,78,.08);color:var(--green);cursor:pointer;border:1px solid rgba(108,255,78,.2);transition:all .13s;font-family:inherit}
 .var-chip:hover{background:rgba(108,255,78,.2)}
 
-/* ── Phone preview ── */
-.phone-preview{background:#0b141a;border-radius:14px;padding:14px;max-width:340px}
-.phone-bubble{background:#005c4b;border-radius:12px 12px 0 12px;padding:10px 14px;color:#e9edef;font-size:.82rem;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-width:92%;margin-left:auto}
-.phone-meta{text-align:right;font-size:.66rem;color:#8696a0;margin-top:4px}
-
-/* ── Empty state ── */
-.mp-empty{text-align:center;padding:80px 24px;color:var(--text-muted)}
-.mp-empty-icon{font-size:3rem;opacity:.18;margin-bottom:14px}
-
-/* ── Search bar ── */
-.mp-search{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:10px 16px 10px 38px;color:var(--text-primary);font-family:inherit;font-size:.875rem;outline:none;width:240px;transition:border-color .2s}
-.mp-search:focus{border-color:var(--green)}
-.mp-search-wrap{position:relative}
-.mp-search-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text-muted);pointer-events:none}
-
-@keyframes spin{to{transform:rotate(360deg)}}
+/* ── Empty ── */
+.sc-empty{text-align:center;padding:60px 24px;color:var(--text-muted)}
+.sc-empty-ico{font-size:2.8rem;opacity:.18;margin-bottom:12px}
 </style>
 </head>
 <body>
@@ -73,133 +128,135 @@
   <main class="main-content animate-fade" style="padding:24px 28px">
 
     <!-- Header -->
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:24px">
-      <div style="display:flex;align-items:center;gap:16px">
-        <div style="width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#1a3a6b,#3B8BFF);display:flex;align-items:center;justify-content:center;flex-shrink:0">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-            <polyline points="14 2 14 8 20 8"/>
-            <line x1="16" y1="13" x2="8" y2="13"/>
-            <line x1="16" y1="17" x2="8" y2="17"/>
-            <polyline points="10 9 9 9 8 9"/>
-          </svg>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+      <div style="display:flex;align-items:center;gap:14px">
+        <div style="width:46px;height:46px;border-radius:13px;background:linear-gradient(135deg,#1a3a6b,#3B8BFF);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 4px 16px rgba(59,139,255,.3)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
         </div>
         <div>
-          <h1 class="page-title" style="font-size:1.35rem;margin-bottom:3px">Mensagens Padrão</h1>
-          <p class="page-subtitle">Biblioteca de scripts para uso na conversa com leads</p>
+          <h1 class="page-title" style="font-size:1.3rem;margin:0 0 2px">Biblioteca de Mensagens</h1>
+          <p class="page-subtitle" style="margin:0">Central de scripts comerciais organizados por categoria e cadência</p>
         </div>
       </div>
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <div class="mp-search-wrap">
-          <svg class="mp-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input class="mp-search" id="busca-input" placeholder="Buscar mensagem...">
+      <div style="display:flex;gap:8px;align-items:center">
+        <div id="info-perm" style="display:none;background:rgba(59,139,255,.06);border:1px solid rgba(59,139,255,.18);border-radius:9px;padding:7px 13px;font-size:.76rem;color:#3B8BFF">
+          Use os scripts nas conversas WhatsApp. Para criar novos, contate um Gestor.
         </div>
+        <button class="btn btn-secondary" id="btn-nova-cat" style="display:none" title="Criar nova categoria (Super Admin)">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Nova Categoria
+        </button>
         <button class="btn btn-primary" id="btn-nova" style="display:none">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           Nova Mensagem
         </button>
       </div>
     </div>
 
-    <!-- Info vendedor -->
-    <div id="info-perm" style="display:none;background:rgba(59,139,255,.06);border:1px solid rgba(59,139,255,.2);border-radius:12px;padding:12px 18px;margin-bottom:20px;font-size:.82rem;color:#3B8BFF;display:flex;align-items:center;gap:10px">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-      Você pode usar estas mensagens nas conversas WhatsApp. Para criar novas, contate um Gestor ou Admin.
-    </div>
+    <!-- Layout -->
+    <div class="sc-layout">
 
-    <!-- Filtros de categoria -->
-    <div class="mp-filters" id="cat-filters">
-      <button class="mp-cat-chip active" data-cat="">Todas</button>
-    </div>
+      <!-- Nav lateral -->
+      <nav class="sc-nav">
+        <div class="sc-nav-head">
+          <div class="sc-nav-label">Navegar</div>
+          <div class="sc-search-wrap">
+            <svg class="sc-search-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input class="sc-search" id="busca-input" placeholder="Buscar scripts...">
+          </div>
+        </div>
+        <div class="sc-nav-scroll" id="sc-nav-list">
+          <!-- gerado por JS -->
+        </div>
+      </nav>
 
-    <!-- Estatísticas -->
-    <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap">
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 20px;min-width:120px;flex:1">
-        <div style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:4px">Total</div>
-        <div id="stat-total" style="font-size:1.6rem;font-weight:800">—</div>
-      </div>
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 20px;min-width:120px;flex:1">
-        <div style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:4px">Ativas</div>
-        <div id="stat-ativas" style="font-size:1.6rem;font-weight:800;color:var(--green)">—</div>
-      </div>
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 20px;min-width:120px;flex:1">
-        <div style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:4px">Categorias</div>
-        <div id="stat-cats" style="font-size:1.6rem;font-weight:800;color:#3B8BFF">—</div>
-      </div>
-    </div>
+      <!-- Conteúdo principal -->
+      <div class="sc-main">
 
-    <!-- Grid -->
-    <div class="mp-grid" id="mp-grid">
-      <div class="mp-empty">
-        <div class="mp-empty-icon">📋</div>
-        <div style="font-size:.9rem">Carregando mensagens...</div>
+        <!-- Cabeçalho contextual -->
+        <div class="sc-main-head">
+          <div>
+            <div class="sc-ctx-title" id="ctx-title">Todos os Scripts</div>
+            <div class="sc-ctx-sub" id="ctx-sub">Selecione uma categoria ou subcategoria para filtrar</div>
+          </div>
+          <div id="ctx-actions" style="display:flex;gap:6px"></div>
+        </div>
+
+        <!-- Stats bar -->
+        <div class="sc-stats">
+          <div class="sc-stat"><div class="sc-stat-lbl">Scripts</div><div class="sc-stat-val" id="stat-total">—</div></div>
+          <div class="sc-stat"><div class="sc-stat-lbl">Ativos</div><div class="sc-stat-val" id="stat-ativos" style="color:var(--green)">—</div></div>
+          <div class="sc-stat"><div class="sc-stat-lbl">Favoritos</div><div class="sc-stat-val" id="stat-favs" style="color:#FFB627">—</div></div>
+          <div class="sc-stat"><div class="sc-stat-lbl">Categorias</div><div class="sc-stat-val" id="stat-cats" style="color:#3B8BFF">—</div></div>
+        </div>
+
+        <!-- Lista -->
+        <div class="sc-list" id="sc-list">
+          <div class="sc-empty"><div class="sc-empty-ico">📋</div><div>Carregando...</div></div>
+        </div>
       </div>
     </div>
 
   </main>
 </div>
 
-<!-- ── Modal Criar/Editar ── -->
-<div class="mp-modal-ov" id="modal-form-ov">
-  <div class="mp-modal-box">
-    <div class="mp-modal-hd">
-      <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#1a3a6b,#3B8BFF);display:flex;align-items:center;justify-content:center">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+<!-- ── Modal Novo/Editar Script ── -->
+<div class="sc-modal-ov" id="modal-form-ov">
+  <div class="sc-modal-box">
+    <div class="sc-modal-hd">
+      <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#1a3a6b,#3B8BFF);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       </div>
       <div>
-        <div id="modal-form-titulo" style="font-size:1rem;font-weight:800">Nova Mensagem Padrão</div>
-        <div style="font-size:.72rem;color:var(--text-muted)">Configure e salve o script</div>
+        <div id="modal-titulo" style="font-size:.95rem;font-weight:800">Novo Script</div>
+        <div style="font-size:.7rem;color:var(--text-muted)">Preencha os dados do script comercial</div>
       </div>
-      <button id="btn-modal-form-close" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;padding:6px;border-radius:8px">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      <button id="btn-modal-close" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;padding:6px;border-radius:8px">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
-    <div class="mp-modal-body">
+    <div class="sc-modal-body">
       <input type="hidden" id="f-id">
-
-      <div class="form-group">
-        <label class="form-label">Título *</label>
-        <input type="text" id="f-titulo" class="form-input" placeholder="Ex: Primeiro contato — Tráfego Pago">
-      </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="form-group">
           <label class="form-label">Categoria *</label>
-          <select id="f-categoria" class="form-input"></select>
+          <select id="f-cat" class="form-input"><option value="">Carregando...</option></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Subcategoria *</label>
+          <select id="f-subcat" class="form-input"><option value="">-- selecione a categoria --</option></select>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group">
+          <label class="form-label">Cadência *</label>
+          <select id="f-cadencia" class="form-input"><option value="">D+?</option></select>
+          <input id="f-cadencia-custom" class="form-input" type="text" placeholder="Ou digite ex: D+90" style="margin-top:6px;display:block">
         </div>
         <div class="form-group">
           <label class="form-label">Funil aplicável</label>
-          <select id="f-funil" class="form-input">
-            <option value="">Todos os funis</option>
-          </select>
+          <select id="f-funil" class="form-input"><option value="">Todos os funis</option></select>
         </div>
       </div>
 
       <div class="form-group">
         <label class="form-label">Variáveis dinâmicas</label>
         <div class="var-chips">
-          <span class="var-chip" data-var="[nome_lead]">[nome_lead]</span>
-          <span class="var-chip" data-var="[nome_vendedor]">[nome_vendedor]</span>
-          <span class="var-chip" data-var="[nome_empresa]">[nome_empresa]</span>
-          <span class="var-chip" data-var="[telefone_lead]">[telefone_lead]</span>
-          <span class="var-chip" data-var="[funil]">[funil]</span>
-          <span class="var-chip" data-var="[etapa]">[etapa]</span>
+          <button type="button" class="var-chip" data-var="[nome_lead]">[nome_lead]</button>
+          <button type="button" class="var-chip" data-var="[nome_vendedor]">[nome_vendedor]</button>
+          <button type="button" class="var-chip" data-var="[nome_empresa]">[nome_empresa]</button>
+          <button type="button" class="var-chip" data-var="[telefone_lead]">[telefone_lead]</button>
+          <button type="button" class="var-chip" data-var="[funil]">[funil]</button>
+          <button type="button" class="var-chip" data-var="[etapa]">[etapa]</button>
         </div>
       </div>
 
       <div class="form-group">
-        <label class="form-label">Texto da mensagem *</label>
-        <textarea id="f-texto" class="form-input" style="min-height:130px;resize:vertical;line-height:1.6" placeholder="Digite o script da mensagem..."></textarea>
-        <span style="font-size:.7rem;color:var(--text-muted);margin-top:4px;display:block">Clique nas variáveis acima para inserir no cursor</span>
-      </div>
-
-      <!-- Preview -->
-      <div>
-        <label class="form-label" style="margin-bottom:8px">Preview</label>
-        <div class="phone-preview">
-          <div class="phone-bubble" id="f-preview"><em style="opacity:.35">A mensagem aparecerá aqui...</em></div>
-          <div class="phone-meta">Agora ✓✓</div>
-        </div>
+        <label class="form-label">Texto do script *</label>
+        <textarea id="f-texto" class="form-input" style="min-height:160px;resize:vertical;line-height:1.7;font-size:.83rem" placeholder="Cole o script oficial aqui. Preserve emojis, quebras de linha e formatação."></textarea>
+        <span style="font-size:.68rem;color:var(--text-muted);margin-top:4px;display:block">⚠️ Mantenha emojis, espaçamentos e quebras de linha conforme o script oficial.</span>
       </div>
 
       <div style="display:flex;align-items:center;gap:10px">
@@ -207,34 +264,125 @@
           <input type="checkbox" id="f-ativo" checked>
           <span class="toggle-slider"></span>
         </label>
-        <span style="font-size:.875rem;font-weight:600">Mensagem ativa</span>
+        <span style="font-size:.85rem;font-weight:600">Script ativo</span>
       </div>
 
       <div id="form-alert" class="alert alert-error" style="display:none"></div>
     </div>
-    <div class="mp-modal-ft">
-      <button class="btn btn-secondary" id="btn-modal-form-cancelar">Cancelar</button>
-      <button class="btn btn-primary" id="btn-modal-form-salvar">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-        Salvar
+    <div class="sc-modal-ft">
+      <button class="btn btn-secondary" id="btn-modal-cancelar">Cancelar</button>
+      <button class="btn btn-primary" id="btn-modal-salvar">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>
+        <span id="btn-salvar-txt">Salvar Script</span>
       </button>
     </div>
   </div>
 </div>
 
-<!-- ── Modal Confirmar Exclusão ── -->
-<div class="mp-modal-ov" id="modal-del-ov">
-  <div class="mp-modal-box" style="max-width:420px">
-    <div class="mp-modal-hd">
-      <div style="width:36px;height:36px;border-radius:10px;background:rgba(225,0,152,.15);display:flex;align-items:center;justify-content:center">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--pink)" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+<!-- Modal Nova Categoria -->
+<div class="sc-modal-ov" id="modal-cat-ov">
+  <div class="sc-modal-box" style="max-width:460px">
+    <div class="sc-modal-hd">
+      <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#1a3a6b,#3B8BFF);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
       </div>
-      <div style="font-size:1rem;font-weight:800">Excluir mensagem?</div>
+      <div><div style="font-size:.95rem;font-weight:800">Nova Categoria</div><div style="font-size:.7rem;color:var(--text-muted)">Cria estrutura de categoria + subcategoria</div></div>
+      <button id="btn-cat-close" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;padding:6px;border-radius:8px"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </div>
-    <div class="mp-modal-body" style="color:var(--text-muted);font-size:.875rem">
-      Esta ação não pode ser desfeita.
+    <div class="sc-modal-body">
+      <div class="form-group">
+        <label class="form-label">Nome da Categoria *</label>
+        <input id="fc-cat" class="form-input" type="text" placeholder="Ex: 🏢 Agências, 🏭 Marca Direta">
+        <span style="font-size:.68rem;color:var(--text-muted);margin-top:4px;display:block">Você pode incluir emoji no início, ex: 🏢 Agências</span>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Nome da Subcategoria *</label>
+        <input id="fc-sub" class="form-input" type="text" placeholder="Ex: Follow Up - Lead Novo">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Cadências (uma por linha)</label>
+        <textarea id="fc-cads" class="form-input" style="min-height:80px;resize:vertical" placeholder="D+2
+D+15
+D+60
+D+3M"></textarea>
+        <span style="font-size:.68rem;color:var(--text-muted);margin-top:4px;display:block">Uma mensagem placeholder inativa será criada para cada cadência.</span>
+      </div>
+      <div id="cat-alert" class="alert alert-error" style="display:none"></div>
     </div>
-    <div class="mp-modal-ft">
+    <div class="sc-modal-ft">
+      <button class="btn btn-secondary" id="btn-cat-cancelar">Cancelar</button>
+      <button class="btn btn-primary" id="btn-cat-salvar">Criar Categoria</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Renomear/Editar Categoria -->
+<div class="sc-modal-ov" id="modal-rename-cat-ov">
+  <div class="sc-modal-box" style="max-width:420px">
+    <div class="sc-modal-hd">
+      <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#1a3a6b,#3B8BFF);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      </div>
+      <div><div style="font-size:.95rem;font-weight:800">Editar Categoria</div><div style="font-size:.7rem;color:var(--text-muted)">Renomear categoria pai e subcategoria</div></div>
+      <button id="btn-rc-close" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;padding:6px;border-radius:8px"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <div class="sc-modal-body">
+      <input type="hidden" id="rc-cat-orig">
+      <input type="hidden" id="rc-sub-orig">
+      <div class="form-group">
+        <label class="form-label">Nome da Categoria *</label>
+        <input id="rc-cat" class="form-input" type="text" placeholder="Ex: 🏢 Agências">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Nome da Subcategoria (opcional — deixe vazio para renomear só a categoria)</label>
+        <input id="rc-sub" class="form-input" type="text" placeholder="Ex: Follow Up - Lead Novo">
+      </div>
+      <div id="rc-alert" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="sc-modal-ft">
+      <button class="btn btn-secondary" id="btn-rc-cancelar">Cancelar</button>
+      <button class="btn btn-primary" id="btn-rc-salvar">Salvar Alterações</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Excluir Categoria -->
+<div class="sc-modal-ov" id="modal-del-cat-ov">
+  <div class="sc-modal-box" style="max-width:420px">
+    <div class="sc-modal-hd">
+      <div style="width:36px;height:36px;border-radius:10px;background:rgba(225,0,152,.12);display:flex;align-items:center;justify-content:center">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--pink)" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+      </div>
+      <div><div style="font-size:.95rem;font-weight:800">Excluir Categoria?</div><div style="font-size:.7rem;color:var(--text-muted)" id="del-cat-sub">Esta ação não pode ser desfeita.</div></div>
+    </div>
+    <div class="sc-modal-body">
+      <input type="hidden" id="del-cat-val">
+      <div id="del-cat-warn" style="background:rgba(255,182,39,.08);border:1px solid rgba(255,182,39,.3);border-radius:10px;padding:12px 14px;font-size:.82rem;color:var(--text-secondary);display:none"></div>
+      <div class="form-group" id="del-cat-mover-wrap" style="display:none">
+        <label class="form-label">Mover mensagens para outra categoria antes de excluir</label>
+        <select id="del-cat-mover" class="form-input"><option value="">— Não mover (excluir junto) —</option></select>
+      </div>
+      <div id="del-cat-alert" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="sc-modal-ft">
+      <button class="btn btn-secondary" id="btn-del-cat-cancelar">Cancelar</button>
+      <button class="btn" id="btn-del-cat-confirmar" style="background:var(--pink);color:#fff">Excluir Categoria</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ── Modal Excluir Script ── -->
+<div class="sc-modal-ov" id="modal-del-ov">
+  <div class="sc-modal-box" style="max-width:380px">
+    <div class="sc-modal-hd">
+      <div style="width:36px;height:36px;border-radius:10px;background:rgba(225,0,152,.12);display:flex;align-items:center;justify-content:center">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--pink)" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+      </div>
+      <div style="font-size:.95rem;font-weight:800">Excluir script?</div>
+    </div>
+    <div class="sc-modal-body" style="color:var(--text-muted);font-size:.85rem">Esta ação não pode ser desfeita. O histórico de mensagens enviadas será preservado.</div>
+    <div class="sc-modal-ft">
       <button class="btn btn-secondary" id="btn-del-cancelar">Cancelar</button>
       <button class="btn" id="btn-del-confirmar" style="background:var(--pink);color:#fff">Excluir</button>
     </div>
@@ -244,6 +392,7 @@
 <div id="toast-container"></div>
 <script src="/js/auth.js"></script>
 <script src="/js/toast.js"></script>
+<script src="/js/avatar.js"></script>
 <script src="/js/sidebar.js"></script>
 <script src="/js/mensagens-padrao.js"></script>
 </body>

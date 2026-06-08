@@ -37,12 +37,13 @@ async function init() {
 
 // ── Carregar funis ──────────────────────────────────────────────────────────
 async function carregarFunis() {
-  const r = await Auth.api('GET', '/funis');
+  const r = await Auth.api('GET', '/funis?somente_ativos=true');
   _funis = r?.data?.dados || [];
   const sel = document.getElementById('f-funil');
   sel.innerHTML = '<option value="">Todos os funis</option>' +
     _funis.map(f => `<option value="${f.id}">${escHtml(f.nome)}</option>`).join('');
 }
+
 
 // ── Carregar automações ─────────────────────────────────────────────────────
 async function carregarAutomacoes() {

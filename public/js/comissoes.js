@@ -36,12 +36,13 @@ async function init() {
 }
 
 async function carregarFunis() {
-  const r = await Auth.api('GET','/funis');
+  const r = await Auth.api('GET','/funis?somente_ativos=true');
   _funis = r?.data?.dados||[];
   const opts = _funis.map(f=>`<option value="${f.id}">${f.nome}</option>`).join('');
   document.getElementById('f-funil').innerHTML  = '<option value="">Todos</option>'+opts;
   document.getElementById('r-funil').innerHTML  = '<option value="">Todos os funis</option>'+opts;
 }
+
 
 async function carregarUsuarios() {
   if (_usuario.role === 'VENDEDOR') return;

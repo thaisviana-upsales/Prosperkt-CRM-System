@@ -10,22 +10,81 @@ const { getDb } = require('../database/db');
 const { getProvider } = require('../database/dbProvider');
 const waSvc   = require('../services/whatsappService');
 const planilhaSvc = require('../services/planilhaLeadsService');
+const evoSvc  = require('../services/evolutionApiService');
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Normaliza telefone de qualquer formato para apenas dígitos numéricos.
+ * Exemplos aceitos:
+ *   +55 (11) 97869-9663  →  5511978699663
+ *   (11) 97869-9663      →  5511978699663
+ *   11978699663          →  5511978699663  (adiciona 55 se 10-11 dígitos)
+ *   5511978699663        →  5511978699663
+ *   5511978699663@s.whatsapp.net  →  5511978699663
+ */
 function normalizePhone(tel) {
-  return (tel || '').replace(/\D/g, '');
+  if (!tel) return '';
+  // Remove sufixo WhatsApp JID
+  let t = String(tel).split('@')[0];
+  // Remove tudo que não é dígito
+  t = t.replace(/\D/g, '');
+  // Se 10 ou 11 dígitos (sem código de país), adiciona 55 (Brasil)
+  if (t.length === 10 || t.length === 11) {
+    t = '55' + t;
+  }
+  return t;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/whatsapp/conversas
 // Lista todas as conversas com última mensagem
 // ─────────────────────────────────────────────────────────────────────────────
-function listarConversas(req, res) {
+async function listarConversas(req, res) {
   try {
+    const { sb, isSupa } = getProvider();
+    const { vendedor_id, status, busca, limit = 50, offset = 0 } = req.query;
+    const role = req.usuario.role;
+
+    if (isSupa) {
+      let q = sb.from('conversas_whatsapp')
+        .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa)')
+        .order('ultima_msg_em', { ascending: false, nullsFirst: false })
+        .range(Number(offset), Number(offset) + Number(limit) - 1);
+      if (role === 'VENDEDOR') q = q.eq('vendedor_id', req.usuario.id);
+      if (vendedor_id) q = q.eq('vendedor_id', vendedor_id);
+      if (status)      q = q.eq('status', status);
+      if (busca)       q = q.or(`telefone.ilike.%${busca}%,nome_contato.ilike.%${busca}%`);
+      const { data, error } = await q;
+      if (error) throw error;
+      const conversas = (data || []).map(c => ({
+        ...c,
+        vendedor_nome: c.usuarios?.nome || null,
+        lead_nome:     c.leads?.nome    || null,
+        lead_empresa:  c.leads?.empresa || null,
+      }));
+      // Ultima mensagem por conversa
+      const ids = conversas.map(c => c.id);
+      let ultimaMap = {};
+      if (ids.length > 0) {
+        const { data: msgs } = await sb.from('mensagens_whatsapp')
+          .select('conversa_id,mensagem,direcao,criado_em')
+          .in('conversa_id', ids)
+          .order('criado_em', { ascending: false });
+        (msgs || []).forEach(m => { if (!ultimaMap[m.conversa_id]) ultimaMap[m.conversa_id] = m; });
+      }
+      const comUltima = conversas.map(c => ({
+        ...c,
+        ultima_mensagem: ultimaMap[c.id]?.mensagem || null,
+        ultima_direcao:  ultimaMap[c.id]?.direcao  || null,
+      }));
+      return res.json({ sucesso: true, dados: comUltima, total: comUltima.length });
+    }
+
     const db = getDb();
-    const { vendedor_id, status, funil_id, busca, limit = 50, offset = 0 } = req.query;
+    // SQLite fallback (variáveis já declaradas acima)
 
     let sql = `
       SELECT
@@ -80,34 +139,44 @@ function listarConversas(req, res) {
 // GET /api/whatsapp/conversas/:id/mensagens
 // Retorna mensagens paginadas de uma conversa
 // ─────────────────────────────────────────────────────────────────────────────
-function listarMensagens(req, res) {
+async function listarMensagens(req, res) {
   try {
-    const db = getDb();
+    const { sb, isSupa } = getProvider();
     const { id } = req.params;
-    const { limit = 100, offset = 0 } = req.query;
+    const { limit = 200, offset = 0 } = req.query;
 
-    // Verifica acesso
-    const conversa = db.prepare('SELECT * FROM conversas_whatsapp WHERE id = ?').get(id);
-    if (!conversa) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
-    if (req.usuario.role === 'VENDEDOR' && conversa.vendedor_id !== req.usuario.id) {
-      return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
+    if (isSupa) {
+      const { data: conversa, error: errC } = await sb.from('conversas_whatsapp')
+        .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa)')
+        .eq('id', id).single();
+      if (errC || !conversa) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
+      if (req.usuario.role === 'VENDEDOR' && conversa.vendedor_id !== req.usuario.id)
+        return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
+
+      const { data: msgs, error: errM } = await sb.from('mensagens_whatsapp')
+        .select('*, usuarios!mensagens_whatsapp_vendedor_id_fkey(nome)')
+        .eq('conversa_id', id)
+        .order('criado_em', { ascending: true })
+        .range(Number(offset), Number(offset) + Number(limit) - 1);
+      if (errM) throw errM;
+
+      const normalizado = (msgs || []).map(m => ({ ...m, vendedor_nome: m.usuarios?.nome || null }));
+      const convNorm = { ...conversa, vendedor_nome: conversa.usuarios?.nome, lead_nome: conversa.leads?.nome, lead_empresa: conversa.leads?.empresa };
+
+      // Marca como lidas (não bloqueia resposta)
+      sb.from('mensagens_whatsapp').update({ status: 'lido' })
+        .eq('conversa_id', id).eq('direcao', 'recebida').neq('status', 'lido').then(() => {});
+
+      return res.json({ sucesso: true, dados: normalizado, conversa: convNorm });
     }
 
-    const msgs = db.prepare(`
-      SELECT m.*, u.nome AS vendedor_nome
-      FROM mensagens_whatsapp m
-      LEFT JOIN usuarios u ON m.vendedor_id = u.id
-      WHERE m.conversa_id = ?
-      ORDER BY m.criado_em ASC
-      LIMIT ? OFFSET ?
-    `).all(id, Number(limit), Number(offset));
-
-    // Marca recebidas como lidas
-    db.prepare(`
-      UPDATE mensagens_whatsapp SET status = 'lido'
-      WHERE conversa_id = ? AND direcao = 'recebida' AND status != 'lido'
-    `).run(id);
-
+    const db = getDb();
+    const conversa = db.prepare('SELECT * FROM conversas_whatsapp WHERE id = ?').get(id);
+    if (!conversa) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
+    if (req.usuario.role === 'VENDEDOR' && conversa.vendedor_id !== req.usuario.id)
+      return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
+    const msgs = db.prepare(`SELECT m.*, u.nome AS vendedor_nome FROM mensagens_whatsapp m LEFT JOIN usuarios u ON m.vendedor_id = u.id WHERE m.conversa_id = ? ORDER BY m.criado_em ASC LIMIT ? OFFSET ?`).all(id, Number(limit), Number(offset));
+    db.prepare(`UPDATE mensagens_whatsapp SET status = 'lido' WHERE conversa_id = ? AND direcao = 'recebida' AND status != 'lido'`).run(id);
     return res.json({ sucesso: true, dados: msgs, conversa });
   } catch (e) {
     console.error('[WA] listarMensagens:', e);
@@ -119,55 +188,188 @@ function listarMensagens(req, res) {
 // POST /api/whatsapp/conversas/:id/mensagens
 // Envia uma mensagem (cria registro no banco)
 // ─────────────────────────────────────────────────────────────────────────────
-function enviarMensagem(req, res) {
+async function enviarMensagem(req, res) {
   try {
-    const db = getDb();
+    const { sb, isSupa } = getProvider();
     const { id } = req.params;
     const { mensagem, tipo = 'texto', arquivo_url, arquivo_nome } = req.body;
 
-    const conversa = db.prepare('SELECT * FROM conversas_whatsapp WHERE id = ?').get(id);
-    if (!conversa) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
-    if (req.usuario.role === 'VENDEDOR' && conversa.vendedor_id !== req.usuario.id) {
-      return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
-    }
-    if (!mensagem && !arquivo_url) {
+    if (!mensagem && !arquivo_url)
       return res.status(400).json({ sucesso: false, erro: 'Mensagem ou arquivo obrigatório.' });
+
+    // ── 1. Busca conversa ────────────────────────────────────────────────────
+    let conversa = null;
+    if (isSupa) {
+      const { data, error: errC } = await sb.from('conversas_whatsapp').select('*').eq('id', id).single();
+      if (errC || !data) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
+      conversa = data;
+    } else {
+      const db = getDb();
+      conversa = db.prepare('SELECT * FROM conversas_whatsapp WHERE id = ?').get(id);
+    }
+    if (!conversa) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
+
+    if (req.usuario.role === 'VENDEDOR' && conversa.vendedor_id !== req.usuario.id)
+      return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
+
+    // ── 2. Normaliza telefone da conversa ────────────────────────────────────
+    const telNormalizado = normalizePhone(conversa.telefone);
+    if (!telNormalizado)
+      return res.status(400).json({ sucesso: false, erro: 'Conversa sem telefone válido.' });
+
+    // ── 3. Monta texto com identificação do remetente ─────────────────────────
+    // Formato: "Nome | PROSPERKT\n\nMensagem"
+    // Guard: não duplica o cabeçalho se a mensagem já começar com "| PROSPERKT"
+    const nomeRemetente  = req.usuario.nome || 'CRM';
+    const cabecalho      = `${nomeRemetente} | PROSPERKT`;
+    const jaTemCabecalho = tipo === 'texto' && (mensagem || '').trimStart().includes('| PROSPERKT');
+    const textoParaCliente = tipo === 'texto'
+      ? (jaTemCabecalho ? mensagem : `${cabecalho}\n\n${mensagem}`)
+      : (mensagem || '');
+
+    // ── 4. ENVIA PELA EVOLUTION PRIMEIRO (antes de salvar) ────────────────────
+    let evoOk  = false;
+    let evoErr = null;
+    let evoRes = null; // ← declarado no escopo externo para evitar ReferenceError
+
+    if (evoSvc.isConfigured() && tipo === 'texto' && mensagem) {
+      const endpoint = `/message/sendText/${evoSvc.EVOLUTION_INSTANCE}`;
+      const payload  = { number: telNormalizado, textMessage: { text: textoParaCliente } };
+
+      // Logs obrigatórios antes do envio
+      console.log('CRM_SEND_WHATSAPP_START', {
+        conversaId: id,
+        leadId: conversa.lead_id || null,
+        telefoneOriginal: conversa.telefone,
+        telefoneNormalizado: telNormalizado,
+        textoDigitado: mensagem?.slice(0, 80),
+        textoFinal: textoParaCliente?.slice(0, 80),
+      });
+      console.log('EVOLUTION_SEND_ENDPOINT', `${process.env.EVOLUTION_API_URL || ''}${endpoint}`);
+      console.log('EVOLUTION_SEND_PAYLOAD', JSON.stringify(payload, null, 2));
+
+      evoRes = await evoSvc.enviarTexto(telNormalizado, textoParaCliente);
+
+      console.log('EVOLUTION_SEND_RESPONSE_STATUS', evoRes.status || (evoRes.sucesso ? 200 : 500));
+      console.log('EVOLUTION_SEND_RESPONSE_DATA', JSON.stringify(evoRes.dados || evoRes.erro, null, 2));
+
+      if (evoRes.sucesso) {
+        evoOk = true;
+      } else {
+        evoErr = evoRes.erro || 'Erro desconhecido na Evolution API';
+        console.error('EVOLUTION_SEND_ERROR', {
+          status:  evoRes.status,
+          data:    evoRes.dados,
+          message: evoErr,
+        });
+        // Retorna erro imediato — não salva mensagem não enviada
+        return res.status(502).json({
+          sucesso: false,
+          erro: `Evolution API recusou o envio: ${evoErr}`,
+          detalhe: { endpoint, numero: telNormalizado, evoStatus: evoRes.status },
+        });
+      }
+    } else if (arquivo_url) {
+      // Mídia: tenta enviar, mas não bloqueia se falhar
+      if (evoSvc.isConfigured()) {
+        const midiaRes = await evoSvc.enviarMidia(telNormalizado, {
+          media: arquivo_url, fileName: arquivo_nome, mediatype: tipo
+        });
+        if (midiaRes.sucesso) evoOk = true;
+        else {
+          evoErr = midiaRes.erro;
+          console.error('EVOLUTION_SEND_ERROR (midia):', evoErr);
+        }
+      }
+      evoOk = true; // mídia continua salvando mesmo sem Evolution
+    } else if (!evoSvc.isConfigured()) {
+      // Evolution não configurada: salva localmente como aviso
+      console.warn('[WA] enviarMensagem: Evolution API não configurada — salvando somente no CRM sem envio real.');
+      evoOk = true;
     }
 
-    const msgId = crypto.randomBytes(16).toString('hex');
+    // ── 5. SÓ SALVA após confirmação da Evolution ────────────────────────────
     const agora = new Date().toISOString();
+    const msgId = crypto.randomBytes(16).toString('hex');
+    // ID retornado pela Evolution — agora evoRes está acessível no escopo correto
+    const evoMsgId = evoRes?.dados?.key?.id || null;
 
+    if (isSupa) {
+      const dbPayload = {
+        id: msgId, conversa_id: id,
+        lead_id: conversa.lead_id || null,
+        telefone: telNormalizado,
+        mensagem: mensagem || null, tipo,
+        direcao: 'enviada',
+        // Schema Supabase: CHECK(status IN ('enviado','entregue','lido','erro'))
+        status: evoOk ? 'enviado' : 'erro',
+        vendedor_id: req.usuario.id,
+        arquivo_url: arquivo_url || null,
+        arquivo_nome: arquivo_nome || null,
+        criado_em: agora,
+        atualizado_em: agora,
+      };
+
+      // evolution_message_id: só inclui se a coluna existir (requer migração SQL)
+      if (evoMsgId) {
+        try {
+          dbPayload.evolution_message_id = evoMsgId;
+        } catch(e) { /* coluna ainda não existe */ }
+      }
+
+      const { data: nova, error: errI } = await sb.from('mensagens_whatsapp')
+        .insert(dbPayload)
+        .select('*, usuarios!mensagens_whatsapp_vendedor_id_fkey(nome)')
+        .single();
+
+      if (errI) {
+        // Se der erro por causa da coluna evolution_message_id não existir, tenta sem ela
+        if (errI.message?.includes('evolution_message_id')) {
+          delete dbPayload.evolution_message_id;
+          const { data: nova2, error: errI2 } = await sb.from('mensagens_whatsapp')
+            .insert(dbPayload)
+            .select('*, usuarios!mensagens_whatsapp_vendedor_id_fkey(nome)')
+            .single();
+          if (errI2) throw errI2;
+          const msg2 = { ...nova2, vendedor_nome: nova2?.usuarios?.nome || req.usuario.nome };
+          return res.status(201).json({ sucesso: true, dados: msg2 });
+        }
+        throw errI;
+      }
+
+      await sb.from('conversas_whatsapp')
+        .update({ ultima_msg_em: agora, atualizado_em: agora, status: 'ABERTA', ultima_mensagem: mensagem?.slice(0, 200) || null, ultima_direcao: 'enviada' })
+        .eq('id', id);
+      if (conversa.lead_id)
+        await sb.from('leads').update({ atualizado_em: agora }).eq('id', conversa.lead_id);
+
+      const msg = { ...nova, vendedor_nome: nova?.usuarios?.nome || req.usuario.nome };
+      req.log({ acao: 'WHATSAPP_SEND', entidade: 'conversas_whatsapp', entidade_id: id, depois: { mensagem: mensagem?.slice(0, 100), tipo, evo_ok: evoOk, evoMsgId } });
+      return res.status(201).json({ sucesso: true, dados: msg });
+    }
+
+
+    // SQLite path
+    const db = getDb();
     db.prepare(`
       INSERT INTO mensagens_whatsapp
         (id, conversa_id, lead_id, telefone, mensagem, tipo, direcao, status, vendedor_id, arquivo_url, arquivo_nome, criado_em)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
-      msgId, id, conversa.lead_id, conversa.telefone,
+      msgId, id, conversa.lead_id, telNormalizado,
       mensagem || null, tipo, 'enviada', 'enviado',
       req.usuario.id, arquivo_url || null, arquivo_nome || null, agora
     );
-
-    // Atualiza última mensagem e atualizado_em da conversa
-    db.prepare(`
-      UPDATE conversas_whatsapp SET ultima_msg_em = ?, atualizado_em = ?, status = 'ABERTA' WHERE id = ?
-    `).run(agora, agora, id);
-
-    // Atualiza atualizado_em do lead
-    if (conversa.lead_id) {
+    db.prepare(`UPDATE conversas_whatsapp SET ultima_msg_em = ?, atualizado_em = ?, status = 'ABERTA' WHERE id = ?`).run(agora, agora, id);
+    if (conversa.lead_id)
       db.prepare(`UPDATE leads SET atualizado_em = ? WHERE id = ?`).run(agora, conversa.lead_id);
-    }
 
-    req.log({ acao: 'WHATSAPP_SEND', entidade: 'conversas_whatsapp', entidade_id: id,
-      depois: { mensagem: mensagem?.slice(0, 100), tipo } });
-
-    const msg = db.prepare(`
-      SELECT m.*, u.nome AS vendedor_nome FROM mensagens_whatsapp m
-      LEFT JOIN usuarios u ON m.vendedor_id = u.id WHERE m.id = ?
-    `).get(msgId);
-
+    req.log({ acao: 'WHATSAPP_SEND', entidade: 'conversas_whatsapp', entidade_id: id, depois: { mensagem: mensagem?.slice(0, 100), tipo, evo_ok: evoOk } });
+    const msg = db.prepare(`SELECT m.*, u.nome AS vendedor_nome FROM mensagens_whatsapp m LEFT JOIN usuarios u ON m.vendedor_id = u.id WHERE m.id = ?`).get(msgId);
     return res.status(201).json({ sucesso: true, dados: msg });
+
   } catch (e) {
-    console.error('[WA] enviarMensagem:', e);
+    console.error('EVOLUTION_SEND_ERROR:', { message: e.message, stack: e.stack?.split('\n')[0] });
     return res.status(500).json({ sucesso: false, erro: 'Erro ao enviar mensagem.', detalhe: e.message });
   }
 }
@@ -176,39 +378,50 @@ function enviarMensagem(req, res) {
 // POST /api/whatsapp/conversas
 // Cria ou busca conversa existente por telefone
 // ─────────────────────────────────────────────────────────────────────────────
-function criarOuAbrirConversa(req, res) {
+async function criarOuAbrirConversa(req, res) {
   try {
-    const db = getDb();
+    const { sb, isSupa } = getProvider();
     const { telefone, lead_id, nome_contato, vendedor_id } = req.body;
-
     if (!telefone) return res.status(400).json({ sucesso: false, erro: 'Telefone obrigatório.' });
-
     const tel = normalizePhone(telefone);
+    const agora = new Date().toISOString();
 
-    // Busca conversa ativa existente pelo telefone
-    let conversa = db.prepare(
-      `SELECT * FROM conversas_whatsapp WHERE telefone = ? AND status != 'FECHADA' ORDER BY criado_em DESC LIMIT 1`
-    ).get(tel);
+    if (isSupa) {
+      // Busca conversa ativa
+      const { data: existing } = await sb.from('conversas_whatsapp')
+        .select('*').eq('telefone', tel).neq('status', 'FECHADA')
+        .order('criado_em', { ascending: false }).limit(1);
+      let conversa = existing?.[0] || null;
 
-    if (!conversa) {
-      // Cria nova conversa
-      const id = crypto.randomBytes(16).toString('hex');
-      const agora = new Date().toISOString();
-      db.prepare(`
-        INSERT INTO conversas_whatsapp (id, lead_id, telefone, nome_contato, vendedor_id, origem, criado_em, atualizado_em)
-        VALUES (?,?,?,?,?,?,?,?)
-      `).run(id, lead_id || null, tel, nome_contato || null, vendedor_id || req.usuario.id, 'MANUAL', agora, agora);
-      conversa = db.prepare('SELECT * FROM conversas_whatsapp WHERE id = ?').get(id);
+      if (!conversa) {
+        const novaId = crypto.randomBytes(16).toString('hex');
+        const { data: nova, error } = await sb.from('conversas_whatsapp').insert({
+          id: novaId, lead_id: lead_id || null, telefone: tel,
+          nome_contato: nome_contato || null,
+          vendedor_id: vendedor_id || req.usuario.id,
+          origem: 'MANUAL', criado_em: agora, atualizado_em: agora,
+        }).select().single();
+        if (error) throw error;
+        conversa = nova;
+      } else if (lead_id && !conversa.lead_id) {
+        await sb.from('conversas_whatsapp').update({ lead_id }).eq('id', conversa.id);
+        conversa.lead_id = lead_id;
+      }
+      req.log({ acao: 'WHATSAPP_OPEN', entidade: 'conversas_whatsapp', entidade_id: conversa.id, depois: { telefone: tel, lead_id } });
+      return res.json({ sucesso: true, dados: conversa });
     }
 
-    // Atualiza lead_id se veio agora
-    if (lead_id && !conversa.lead_id) {
+    const db = getDb();
+    let conversa = db.prepare(`SELECT * FROM conversas_whatsapp WHERE telefone = ? AND status != 'FECHADA' ORDER BY criado_em DESC LIMIT 1`).get(tel);
+    if (!conversa) {
+      const id = crypto.randomBytes(16).toString('hex');
+      db.prepare(`INSERT INTO conversas_whatsapp (id, lead_id, telefone, nome_contato, vendedor_id, origem, criado_em, atualizado_em) VALUES (?,?,?,?,?,?,?,?)`)
+        .run(id, lead_id || null, tel, nome_contato || null, vendedor_id || req.usuario.id, 'MANUAL', agora, agora);
+      conversa = db.prepare('SELECT * FROM conversas_whatsapp WHERE id = ?').get(id);
+    } else if (lead_id && !conversa.lead_id) {
       db.prepare('UPDATE conversas_whatsapp SET lead_id = ? WHERE id = ?').run(lead_id, conversa.id);
     }
-
-    req.log({ acao: 'WHATSAPP_OPEN', entidade: 'conversas_whatsapp', entidade_id: conversa.id,
-      depois: { telefone: tel, lead_id } });
-
+    req.log({ acao: 'WHATSAPP_OPEN', entidade: 'conversas_whatsapp', entidade_id: conversa.id, depois: { telefone: tel, lead_id } });
     return res.json({ sucesso: true, dados: conversa });
   } catch (e) {
     console.error('[WA] criarOuAbrirConversa:', e);
@@ -361,38 +574,43 @@ function webhookTrafego(req, res) {
 // PATCH /api/whatsapp/conversas/:id/status
 // Atualiza status da conversa
 // ─────────────────────────────────────────────────────────────────────────────
-function atualizarStatus(req, res) {
+async function atualizarStatus(req, res) {
   try {
-    const db = getDb();
+    const { sb, isSupa } = getProvider();
     const { id } = req.params;
     const { status } = req.body;
     const VALIDOS = ['ABERTA','FECHADA','AGUARDANDO'];
     if (!VALIDOS.includes(status)) return res.status(400).json({ sucesso: false, erro: 'Status inválido.' });
-
-    db.prepare('UPDATE conversas_whatsapp SET status = ?, atualizado_em = ? WHERE id = ?')
-      .run(status, new Date().toISOString(), id);
-
+    const agora = new Date().toISOString();
+    if (isSupa) {
+      const { error } = await sb.from('conversas_whatsapp').update({ status, atualizado_em: agora }).eq('id', id);
+      if (error) throw error;
+    } else {
+      getDb().prepare('UPDATE conversas_whatsapp SET status = ?, atualizado_em = ? WHERE id = ?').run(status, agora, id);
+    }
     return res.json({ sucesso: true });
   } catch (e) {
     return res.status(500).json({ sucesso: false, erro: e.message });
   }
 }
 
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/whatsapp/conversas/:id
 // Busca uma conversa por ID (para abrir pelo lead)
 // ─────────────────────────────────────────────────────────────────────────────
-function buscarConversa(req, res) {
+async function buscarConversa(req, res) {
   try {
+    const { sb, isSupa } = getProvider();
+    if (isSupa) {
+      const { data, error } = await sb.from('conversas_whatsapp')
+        .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa)')
+        .eq('id', req.params.id).single();
+      if (error || !data) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
+      return res.json({ sucesso: true, dados: { ...data, vendedor_nome: data.usuarios?.nome, lead_nome: data.leads?.nome, lead_empresa: data.leads?.empresa } });
+    }
     const db = getDb();
-    const conversa = db.prepare(`
-      SELECT c.*, u.nome AS vendedor_nome, l.nome AS lead_nome, l.empresa AS lead_empresa
-      FROM conversas_whatsapp c
-      LEFT JOIN usuarios u ON c.vendedor_id = u.id
-      LEFT JOIN leads l ON c.lead_id = l.id
-      WHERE c.id = ?
-    `).get(req.params.id);
-
+    const conversa = db.prepare(`SELECT c.*, u.nome AS vendedor_nome, l.nome AS lead_nome, l.empresa AS lead_empresa FROM conversas_whatsapp c LEFT JOIN usuarios u ON c.vendedor_id = u.id LEFT JOIN leads l ON c.lead_id = l.id WHERE c.id = ?`).get(req.params.id);
     if (!conversa) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
     return res.json({ sucesso: true, dados: conversa });
   } catch (e) {
@@ -404,22 +622,103 @@ function buscarConversa(req, res) {
 // GET /api/whatsapp/lead/:lead_id
 // Busca conversa de um lead específico
 // ─────────────────────────────────────────────────────────────────────────────
-function conversaPorLead(req, res) {
+async function conversaPorLead(req, res) {
   try {
-    const db = getDb();
-    const conversa = db.prepare(`
-      SELECT c.*, u.nome AS vendedor_nome
-      FROM conversas_whatsapp c
-      LEFT JOIN usuarios u ON c.vendedor_id = u.id
-      WHERE c.lead_id = ?
-      ORDER BY c.criado_em DESC LIMIT 1
-    `).get(req.params.lead_id);
+    const { sb, isSupa } = getProvider();
+    const leadId = req.params.lead_id;
 
-    return res.json({ sucesso: true, dados: conversa || null });
+    if (isSupa) {
+      // ── Fase 1: busca por lead_id ──────────────────────────────────────────
+      const { data: byLeadId } = await sb.from('conversas_whatsapp')
+        .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa)')
+        .eq('lead_id', leadId)
+        .neq('status', 'FECHADA')
+        .order('criado_em', { ascending: false })
+        .limit(1);
+
+      if (byLeadId?.[0]) {
+        const c = byLeadId[0];
+        console.log(`[WA] conversaPorLead: encontrou por lead_id=${leadId} conv=${c.id}`);
+        return res.json({ sucesso: true, dados: { ...c, vendedor_nome: c.usuarios?.nome, lead_nome: c.leads?.nome, lead_empresa: c.leads?.empresa } });
+      }
+
+      // ── Fase 2: busca pelo telefone NORMALIZADO do lead ────────────────────
+      // Cenário: conversa chegou via webhook sem lead_id vinculado ainda
+      const { data: lead } = await sb.from('leads').select('telefone').eq('id', leadId).single();
+      if (!lead?.telefone) {
+        console.log(`[WA] conversaPorLead: lead ${leadId} sem telefone`);
+        return res.json({ sucesso: true, dados: null });
+      }
+
+      // USA normalizePhone com prefixo 55 — igual ao formato salvo pelo webhook
+      const telNorm = normalizePhone(lead.telefone);
+      console.log(`[WA] conversaPorLead: buscando por telefone normalizado ${telNorm}`);
+
+      const { data: byTel } = await sb.from('conversas_whatsapp')
+        .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa)')
+        .eq('telefone', telNorm)
+        .order('criado_em', { ascending: false })
+        .limit(1);
+
+      if (byTel?.[0]) {
+        const c = byTel[0];
+        console.log(`[WA] conversaPorLead: encontrou por telefone=${telNorm} conv=${c.id}`);
+        // Vincula lead_id automaticamente se ainda não vinculado
+        if (!c.lead_id) {
+          await sb.from('conversas_whatsapp')
+            .update({ lead_id: leadId, atualizado_em: new Date().toISOString() })
+            .eq('id', c.id);
+        }
+        return res.json({ sucesso: true, dados: { ...c, lead_id: c.lead_id || leadId, vendedor_nome: c.usuarios?.nome, lead_nome: c.leads?.nome, lead_empresa: c.leads?.empresa } });
+      }
+
+      console.log(`[WA] conversaPorLead: nenhuma conversa para lead=${leadId} tel=${telNorm}`);
+      return res.json({ sucesso: true, dados: null });
+    }
+
+    // SQLite fallback
+    const db = getDb();
+
+    // Fase 1: por lead_id
+    const conversa = db.prepare(
+      `SELECT c.*, u.nome AS vendedor_nome, l.nome AS lead_nome, l.empresa AS lead_empresa
+       FROM conversas_whatsapp c
+       LEFT JOIN usuarios u ON c.vendedor_id = u.id
+       LEFT JOIN leads l ON c.lead_id = l.id
+       WHERE c.lead_id = ? AND c.status != 'FECHADA'
+       ORDER BY c.criado_em DESC LIMIT 1`
+    ).get(leadId);
+
+    if (conversa) return res.json({ sucesso: true, dados: conversa });
+
+    // Fase 2 SQLite: busca por telefone normalizado (com 55)
+    const lead = db.prepare('SELECT telefone FROM leads WHERE id = ?').get(leadId);
+    if (!lead?.telefone) return res.json({ sucesso: true, dados: null });
+
+    const telNorm = normalizePhone(lead.telefone);
+    const convByTel = db.prepare(
+      `SELECT c.*, u.nome AS vendedor_nome, l.nome AS lead_nome, l.empresa AS lead_empresa
+       FROM conversas_whatsapp c
+       LEFT JOIN usuarios u ON c.vendedor_id = u.id
+       LEFT JOIN leads l ON c.lead_id = l.id
+       WHERE c.telefone = ? AND c.status != 'FECHADA'
+       ORDER BY c.criado_em DESC LIMIT 1`
+    ).get(telNorm);
+
+    if (convByTel) {
+      if (!convByTel.lead_id) {
+        db.prepare('UPDATE conversas_whatsapp SET lead_id = ?, atualizado_em = ? WHERE id = ?').run(leadId, new Date().toISOString(), convByTel.id);
+      }
+      return res.json({ sucesso: true, dados: { ...convByTel, lead_id: convByTel.lead_id || leadId } });
+    }
+
+    return res.json({ sucesso: true, dados: null });
   } catch (e) {
+    console.error('[WA] conversaPorLead:', e.message);
     return res.status(500).json({ sucesso: false, erro: e.message });
   }
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/whatsapp/pendentes
@@ -605,192 +904,666 @@ async function mensagemManual(req, res) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/whatsapp/webhook
-// Recebe mensagens do WhatsApp Light (modo teste — número da Thaís)
-// Payload flexível — normaliza campos de diferentes versões do WA Light
+// Recebe eventos da Evolution API v1.8.6 e outros provedores WhatsApp
 // Sem autenticação JWT (webhook externo) — protegido por WHATSAPP_WEBHOOK_SECRET
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Normaliza telefone de qualquer formato WhatsApp:
- *   5511999990001@c.us → 5511999990001
- *   +55 11 9 9999-0001 → 5511999990001
+ * Normaliza telefone de qualquer formato WhatsApp para dígitos puros.
+ * USA a mesma função normalizePhone do topo do arquivo.
  */
 function normalizarTelWhatsApp(raw) {
-  if (!raw) return '';
-  // Remove @c.us, @s.whatsapp.net, @g.us (grupos — ignorar depois)
-  let tel = String(raw).split('@')[0];
-  // Remove +, espaços, traços, parênteses
-  tel = tel.replace(/\D/g, '');
-  // Se vier vazio, retorna vazio
-  return tel;
+  return normalizePhone(raw);
 }
 
 /**
- * Extrai campos do payload em qualquer formato que o WhatsApp Light envie.
+ * Extrai campos de qualquer formato de webhook WhatsApp.
+ * Suporta Evolution API v1.8.6 (payload aninhado em body.data)
+ * e formatos legados (campos na raiz).
+ */
+/**
+ * Extrai campos de qualquer formato de webhook WhatsApp.
+ * Evolution API v1.8.6 envia body.data como ARRAY em MESSAGES_UPSERT.
+ * Suporta body.data = objeto OU array — normaliza para objeto único antes de parsear.
  */
 function normalizarPayloadWA(body) {
-  const tel = normalizarTelWhatsApp(
-    body.telefone || body.phone || body.from ||
-    body.remoteJid || body.sender || body.number || ''
-  );
+  // ── Normaliza body.data: pode ser array (Evolution v1.8.6) ou objeto ───────
+  let dataRaw = body.data || null;
+  if (Array.isArray(dataRaw)) {
+    dataRaw = dataRaw[0] || null; // pega o primeiro item do array
+  }
 
+  // ── Detecta se é Evolution API (tem key com remoteJid) ───────────────────
+  const isEvolution = !!(dataRaw && dataRaw.key && dataRaw.key.remoteJid);
+
+  let remoteJid = '', fromMe = false, messageId = null, pushName = '', msgData = {};
+
+  if (isEvolution) {
+    remoteJid = dataRaw.key.remoteJid || '';
+    fromMe    = dataRaw.key.fromMe === true;
+    messageId = dataRaw.key.id || null;
+    pushName  = dataRaw.pushName || dataRaw.notifyName || '';
+    msgData   = dataRaw.message || {};
+  }
+
+  // ── Extrai telefone (todos os caminhos possíveis) ─────────────────────────
+  const rawTel = isEvolution
+    ? remoteJid
+    : (
+        dataRaw?.key?.remoteJid ||
+        dataRaw?.remoteJid ||
+        dataRaw?.from ||
+        dataRaw?.sender ||
+        dataRaw?.number ||
+        body.messages?.[0]?.key?.remoteJid ||
+        body.telefone || body.phone || body.from || body.remoteJid || body.sender || body.number || ''
+      );
+  const tel = normalizarTelWhatsApp(rawTel);
+
+  // ── Extrai nome do contato ────────────────────────────────────────────────
   const nome = (
-    body.nome || body.name || body.pushName ||
+    (isEvolution ? pushName : null) ||
+    dataRaw?.pushName || dataRaw?.notifyName ||
+    body.pushName || body.nome || body.name ||
     body.contactName || body.senderName || tel || ''
   ).trim();
 
-  const conteudo = (
-    body.mensagem || body.message || body.text ||
-    body.body || body.content || body.caption || ''
-  ).trim() || null;
+  // ── Extrai texto (todos os caminhos possíveis) ─────────────────────────────
+  const conteudo = isEvolution
+    ? (
+        msgData.conversation ||
+        msgData.extendedTextMessage?.text ||
+        msgData.textMessage?.text ||
+        msgData.text ||
+        msgData.imageMessage?.caption ||
+        msgData.videoMessage?.caption ||
+        msgData.documentMessage?.title ||
+        null
+      )
+    : (
+        dataRaw?.message?.conversation ||
+        dataRaw?.message?.extendedTextMessage?.text ||
+        dataRaw?.text ||
+        body.messages?.[0]?.message?.conversation ||
+        body.messages?.[0]?.message?.extendedTextMessage?.text ||
+        body.mensagem || body.message || body.text || body.body || body.content || body.caption || ''
+      )?.trim() || null;
 
-  const tipo = (['texto','audio','imagem','video','documento','sticker','localizacao','contato']
-    .includes(body.tipo || body.type)
-      ? (body.tipo || body.type)
-      : 'texto');
+  // ── Tipo da mensagem ──────────────────────────────────────────────────────
+  let tipo = 'texto';
+  if (isEvolution) {
+    if (msgData.imageMessage)                          tipo = 'imagem';
+    else if (msgData.audioMessage || msgData.pttMessage) tipo = 'audio';
+    else if (msgData.videoMessage)                     tipo = 'video';
+    else if (msgData.documentMessage)                  tipo = 'documento';
+    else if (msgData.stickerMessage)                   tipo = 'sticker';
+  } else {
+    const rawTipo = dataRaw?.type || body.tipo || body.type;
+    if (['texto','audio','imagem','video','documento','sticker','localizacao','contato'].includes(rawTipo)) {
+      tipo = rawTipo;
+    }
+  }
 
-  const messageId = (
-    body.messageId || body.message_id || body.id ||
-    body.wamid || body.msgId || null
-  );
+  // ── messageId (todos os caminhos) ─────────────────────────────────────────
+  const finalMsgId = messageId ||
+    dataRaw?.key?.id || dataRaw?.id ||
+    body.messages?.[0]?.key?.id ||
+    body.messageId || body.message_id || body.wamid || body.msgId || null;
 
-  const midiaUrl = body.midia_url || body.mediaUrl || body.media_url || null;
-  const arquivoNome = body.arquivo_nome || body.fileName || body.filename || null;
-  const mimeType  = body.mime_type || body.mimeType || null;
+  // ── Mídia ─────────────────────────────────────────────────────────────────
+  const midiaUrl    = dataRaw?.mediaUrl || body.midia_url || body.mediaUrl || body.media_url || null;
+  const arquivoNome = dataRaw?.fileName || body.arquivo_nome || body.fileName || body.filename || null;
+  const mimeType    = dataRaw?.mimeType || body.mime_type   || body.mimeType   || null;
 
-  return { tel, nome, conteudo, tipo, messageId, midiaUrl, arquivoNome, mimeType };
+  // ── fromMe / direção ──────────────────────────────────────────────────────
+  const resolvedFromMe = isEvolution
+    ? fromMe
+    : (dataRaw?.key?.fromMe === true || dataRaw?.fromMe === true || body.fromMe === true);
+  const direcao = resolvedFromMe ? 'enviada' : 'recebida';
+
+  // ── JID raw para detectar grupos (@g.us) ──────────────────────────────────
+  const rawJid = remoteJid || dataRaw?.remoteJid || body.from || body.remoteJid || body.sender || '';
+
+  return { tel, nome, conteudo, tipo, messageId: finalMsgId, midiaUrl, arquivoNome, mimeType, direcao, rawJid, isEvolution, fromMe: resolvedFromMe };
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MESSAGES_UPDATE: Atualiza status de entrega/leitura de uma mensagem enviada
+// Evolution v1.8.6 — payload esperado:
+//   body.event = "MESSAGES_UPDATE"
+//   body.data = array de { key: { id, remoteJid, fromMe }, update: { status } }
+//   ou body.data = { key: {...}, update: { status } }
+// Status Evolution → CRM:
+//   PENDING → pending
+//   SERVER_ACK → sent
+//   DELIVERY_ACK → delivered
+//   READ → read
+//   PLAYED → read
+//   ERROR → failed
+// ─────────────────────────────────────────────────────────────────────────────
+async function processarStatusMensagem(body, req, res) {
+  try {
+    const { sb, isSupa } = getProvider();
+    const agora = new Date().toISOString();
+
+    // A Evolution envia body.data como array ou objeto único
+    const updates = Array.isArray(body.data)
+      ? body.data
+      : (body.data ? [body.data] : []);
+
+    if (!updates.length) {
+      return res.json({ sucesso: true, ignorado: true, motivo: 'sem_updates_de_status' });
+    }
+
+    const EVO_STATUS_MAP = {
+      // Schema Supabase: CHECK(status IN ('enviado','entregue','lido','erro'))
+      'PENDING':      'enviado',
+      'SERVER_ACK':   'enviado',
+      'DELIVERY_ACK': 'entregue',
+      'READ':         'lido',
+      'PLAYED':       'lido',
+      'ERROR':        'erro',
+      // Variantes lowercase
+      'pending':      'enviado',
+      'sent':         'enviado',
+      'delivered':    'entregue',
+      'read':         'lido',
+      'played':       'lido',
+      'error':        'erro',
+    };
+
+    let atualizadas = 0;
+
+    for (const upd of updates) {
+      const evoMsgId = upd.key?.id || upd.id || null;
+      const evoStatus = upd.update?.status || upd.status || null;
+      const remoteJid = upd.key?.remoteJid || upd.remoteJid || null;
+
+      if (!evoMsgId || !evoStatus) {
+        console.log('[WA Status] Update sem messageId ou status:', JSON.stringify(upd));
+        continue;
+      }
+
+      const statusCRM = EVO_STATUS_MAP[evoStatus] || null;
+      if (!statusCRM) {
+        console.log('[WA Status] Status desconhecido:', evoStatus);
+        continue;
+      }
+
+      console.log('WEBHOOK_STATUS_UPDATE:', { evoMsgId, evoStatus, statusCRM, remoteJid });
+
+      const updatePayload = {
+        status: statusCRM,
+        atualizado_em: agora,
+        ...(statusCRM === 'entregue' ? { entregue_em: agora } : {}),
+        ...(statusCRM === 'lido'     ? { lido_em: agora }     : {}),
+      };
+
+      if (isSupa) {
+        // Busca por evolution_message_id (coluna nova) OU por id (coluna existente)
+        let updated = false;
+
+        // Tenta por evolution_message_id primeiro (coluna adicionada via migração)
+        try {
+          const { data: byEvoId, error: errEvo } = await sb.from('mensagens_whatsapp')
+            .update(updatePayload)
+            .eq('evolution_message_id', evoMsgId)
+            .select('id');
+          if (!errEvo && byEvoId?.length) {
+            updated = true;
+            atualizadas += byEvoId.length;
+            console.log('WEBHOOK_STATUS_SALVO:', { por: 'evolution_message_id', evoMsgId, statusCRM, ids: byEvoId.map(r=>r.id) });
+          }
+        } catch(e) { /* coluna pode não existir ainda */ }
+
+        // Fallback: busca por id (o campo id da mensagem = messageId da Evolution quando salvo)
+        if (!updated) {
+          const { data: byId, error: errId } = await sb.from('mensagens_whatsapp')
+            .update(updatePayload)
+            .eq('id', evoMsgId)
+            .select('id');
+          if (!errId && byId?.length) {
+            updated = true;
+            atualizadas += byId.length;
+            console.log('WEBHOOK_STATUS_SALVO:', { por: 'id', evoMsgId, statusCRM, ids: byId.map(r=>r.id) });
+          }
+        }
+
+        if (!updated) {
+          console.log('[WA Status] Mensagem não encontrada para atualizar:', evoMsgId);
+        }
+      } else {
+        // SQLite fallback
+        const db = getDb();
+        try {
+          const byEvoId = db.prepare('UPDATE mensagens_whatsapp SET status=?, atualizado_em=? WHERE evolution_message_id=?')
+            .run(statusCRM, agora, evoMsgId);
+          if (!byEvoId.changes) {
+            db.prepare('UPDATE mensagens_whatsapp SET status=?, atualizado_em=? WHERE id=?')
+              .run(statusCRM, agora, evoMsgId);
+          }
+          atualizadas++;
+        } catch(e) {
+          // Coluna evolution_message_id pode não existir no SQLite ainda — usa só id
+          db.prepare('UPDATE mensagens_whatsapp SET status=? WHERE id=?').run(statusCRM, evoMsgId);
+          atualizadas++;
+        }
+      }
+    }
+
+    return res.json({ sucesso: true, atualizadas });
+  } catch (e) {
+    console.error('[WA Status] Erro ao processar status:', e.message);
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
 }
 
 async function webhookReceberMensagem(req, res) {
-  // ── 0. Validação de secret opcional ──────────────────────────────────────
-  const secretEsperado = process.env.WHATSAPP_WEBHOOK_SECRET;
-  if (secretEsperado) {
-    const secretRecebido = req.headers['x-webhook-secret'] || req.query.secret;
-    if (secretRecebido !== secretEsperado) {
-      console.warn(`[WA Webhook] Secret inválido de ${req.ip}`);
-      return res.status(401).json({ sucesso: false, erro: 'Não autorizado.' });
-    }
-  }
+  // ── 0. Log de diagnóstico OBRIGATÓRIO (antes de qualquer validação) ───────
+  console.log('WEBHOOK_EVOLUTION_RECEBIDO_REAL', JSON.stringify(req.body, null, 2));
 
   const body = req.body;
   if (!body || typeof body !== 'object') {
     return res.status(400).json({ sucesso: false, erro: 'Payload JSON inválido.' });
   }
 
-  // ── 1. Normalizar payload ─────────────────────────────────────────────────
-  const { tel, nome, conteudo, tipo, messageId, midiaUrl, arquivoNome, mimeType } =
-    normalizarPayloadWA(body);
+  // ── 1. Validação de autenticação — múltiplas estratégias ─────────────────
+  // A Evolution API v1.8.6 NÃO envia x-webhook-secret por padrão.
+  // Ela envia o `apikey` dentro do body do payload.
+  // Estratégia: aceita se QUALQUER uma das condições for verdadeira:
+  //   (a) WHATSAPP_WEBHOOK_SECRET não configurado → aceita tudo
+  //   (b) Header x-webhook-secret bate com WHATSAPP_WEBHOOK_SECRET
+  //   (c) body.apikey bate com EVOLUTION_API_KEY (autenticação Evolution nativa)
+  //   (d) body.instance bate com EVOLUTION_INSTANCE (instância conhecida)
+  const secretEsperado   = process.env.WHATSAPP_WEBHOOK_SECRET  || '';
+  const evoApiKeyEsperado = process.env.EVOLUTION_API_KEY        || '';
+  const evoInstanceEsperada = process.env.EVOLUTION_INSTANCE     || '';
+
+  const secretHeader  = req.headers['x-webhook-secret'] || req.query.secret || '';
+  const apikeyPayload = body.apikey || '';
+  const instancePayload = body.instance || '';
+
+  const autenticadoPorSecret   = secretEsperado   && secretHeader  === secretEsperado;
+  const autenticadoPorApikey   = evoApiKeyEsperado && apikeyPayload === evoApiKeyEsperado;
+  const autenticadoPorInstance = evoInstanceEsperada && instancePayload === evoInstanceEsperada;
+  const semSecretConfigurado   = !secretEsperado;
+
+  const autenticado = semSecretConfigurado || autenticadoPorSecret || autenticadoPorApikey || autenticadoPorInstance;
+
+  console.log('WEBHOOK_AUTH_CHECK:', {
+    ip: req.ip,
+    autenticado,
+    semSecretConfigurado,
+    autenticadoPorSecret,
+    autenticadoPorApikey: !!evoApiKeyEsperado && apikeyPayload === evoApiKeyEsperado,
+    autenticadoPorInstance,
+    instance: instancePayload,
+  });
+
+  if (!autenticado) {
+    console.warn(`[WA Webhook] REJEITADO — autenticação falhou de ${req.ip}`, {
+      secretHeader: secretHeader ? '(presente)' : '(ausente)',
+      apikeyPayload: apikeyPayload ? apikeyPayload.slice(0,8) + '...' : '(ausente)',
+      instancePayload,
+    });
+    return res.status(401).json({ sucesso: false, erro: 'Não autorizado.' });
+  }
+
+  // ── 2. Identifica tipo de evento ─────────────────────────────────────────
+  const evento = String(body.event || body.type || '').toUpperCase().replace(/\./g, '_');
+  const instance = body.instance || '(sem instance)';
+
+  console.log('WEBHOOK_EVENTO_IDENTIFICADO:', evento || '(sem evento)');
+
+  // ── 2a. Evento de STATUS — atualiza check de entrega/leitura ─────────────
+  // NUNCA cria mensagem nova — apenas atualiza status da mensagem existente
+  const ehEventoStatus =
+    evento === 'MESSAGES_UPDATE' ||
+    evento === 'MESSAGE_STATUS'  ||
+    evento === 'MESSAGE-STATUS';
+
+  if (ehEventoStatus) {
+    console.log('WEBHOOK_STATUS_UPDATE: processando atualização de status');
+    await processarStatusMensagem(body, req, res);
+    return;
+  }
+
+  // ── 2b. Filtra eventos não-mensagem ───────────────────────────────────────
+  // Evolution v1.8.6 usa: messages.upsert, send.message, MESSAGES_UPSERT, SEND_MESSAGE
+  // Também pode enviar: chats.upsert, chats.update (ignorar silenciosamente)
+  const EVENTOS_MENSAGEM = [
+    'MESSAGES_UPSERT', 'MESSAGES_SET',
+    'SEND_MESSAGE', 'SEND_MESSAGES',
+    'MESSAGE', 'NEW_MESSAGE',
+  ];
+  const EVENTOS_IGNORADOS_SEM_AVISO = [
+    'CHATS_UPSERT', 'CHATS_UPDATE', 'CHATS_SET',
+    'CONTACTS_UPSERT', 'CONTACTS_UPDATE', 'CONTACTS_SET',
+    'PRESENCE_UPDATE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED',
+    'LABELS_EDIT', 'LABELS_ASSOCIATION',
+    'GROUPS_UPSERT', 'GROUPS_UPDATE', 'GROUP_PARTICIPANTS_UPDATE',
+    'NEW_JWT_TOKEN', 'CALL',
+  ];
+
+  const ehEventoMensagem =
+    !body.event ||  // sem campo event → tenta processar
+    EVENTOS_MENSAGEM.some(ev => evento.includes(ev)) ||
+    (evento.includes('MESSAGE') && !ehEventoStatus);
+
+  if (!ehEventoMensagem) {
+    if (EVENTOS_IGNORADOS_SEM_AVISO.includes(evento)) {
+      return res.json({ sucesso: true, ignorado: true, motivo: `evento_${evento}_ignorado` });
+    }
+    console.warn('WEBHOOK_EVENTO_IGNORADO:', { eventName: evento, eventOriginal: body.event, body: JSON.stringify(body).slice(0, 200) });
+    return res.json({ sucesso: true, ignorado: true, motivo: `evento_${evento}_ignorado` });
+  }
+
+
+  // ── 3. Normalizar payload ─────────────────────────────────────────────────
+  const parsed = normalizarPayloadWA(body);
+  const { tel, nome, conteudo, tipo, messageId, midiaUrl, arquivoNome, mimeType, direcao, rawJid, fromMe } = parsed;
+
+  // Logs obrigatórios pós-parse
+  console.log('WEBHOOK_MENSAGEM_PARSEADA:', {
+    eventName: evento,
+    instance,
+    telefoneNormalizado: tel,
+    fromMe,
+    messageId,
+    nomeContato: nome,
+    texto: conteudo?.slice(0, 100),
+  });
+  console.log('WEBHOOK_MESSAGE_PARSED', {
+    event:    body.event || '(sem evento)',
+    instance,
+    telefoneNormalizado: tel,
+    fromMe,
+    messageId,
+    nomeContato: nome,
+    texto: conteudo?.slice(0, 100),
+  });
+  console.log('MENSAGEM_PARSEADA:', {
+    telefone: tel,
+    nomeContato: nome,
+    texto: conteudo?.slice(0, 100),
+    direcao,
+    messageId,
+    instance: body.instance || '(sem instance)',
+    evento: body.event || '(sem evento)',
+  });
 
   if (!tel) {
+    console.warn('[WA Webhook] Telefone não identificado. Body:', JSON.stringify(body));
     return res.status(400).json({ sucesso: false, erro: 'Telefone não identificado no payload.' });
   }
 
   // Ignora mensagens de grupos (JID com @g.us)
-  const rawFrom = String(body.from || body.remoteJid || body.sender || '');
-  if (rawFrom.includes('@g.us')) {
+  if (rawJid.includes('@g.us')) {
+    console.log('[WA Webhook] Grupo ignorado:', rawJid);
     return res.json({ sucesso: true, ignorado: true, motivo: 'grupo_ignorado' });
+  }
+
+  // Avisa se não houver texto mas não bloqueia (pode ser mídia)
+  if (!conteudo && tipo === 'texto') {
+    console.warn('PAYLOAD_SEM_TEXTO_RECONHECIDO:', JSON.stringify(req.body, null, 2));
+    return res.json({ sucesso: true, ignorado: true, motivo: 'sem_conteudo' });
   }
 
   const { sb, isSupa } = getProvider();
   const agora = new Date().toISOString();
+  const db = !isSupa ? getDb() : null;
 
   try {
-    // ── 2. Idempotência por messageId ─────────────────────────────────────
-    if (messageId && isSupa) {
-      const { data: existing } = await sb.from('whatsapp_mensagens')
-        .select('id,lead_id')
-        .eq('whatsapp_message_id', messageId)
-        .limit(1);
-      if (existing?.[0]) {
-        console.log(`[WA Webhook] Mensagem duplicada ignorada: ${messageId}`);
-        return res.json({ sucesso: true, ignorado: true, motivo: 'mensagem_ja_salva', lead_id: existing[0].lead_id });
-      }
-    }
-
-    // ── 3. Busca lead pelo telefone ───────────────────────────────────────
-    let leadId = null;
-    if (isSupa) {
-      const { data: leads } = await sb.from('leads').select('id,nome,telefone')
-        .eq('telefone', tel).is('deleted_at', null).limit(1);
-      leadId = leads?.[0]?.id || null;
-    }
-
-    // ── 4. Cria lead se não existir ───────────────────────────────────────
-    if (!leadId && isSupa) {
-      let destino;
-      try {
-        destino = await planilhaSvc.resolverDestino();
-      } catch (e) {
-        console.warn('[WA Webhook] Funil Tráfego Pago não encontrado. Mensagem salva sem lead_id:', e.message);
-        destino = null;
-      }
-
-      if (destino) {
-        const novoLeadId = crypto.randomBytes(16).toString('hex');
-        const payloadLead = {
-          id:           novoLeadId,
-          nome:         nome || `WhatsApp ${tel}`,
-          telefone:     tel,
-          status:       'ABERTO',
-          funil_id:     destino.funil.id,
-          pipeline_id:  destino.pipeline.id,
-          etapa_id:     destino.etapa.id,
-          observacoes:  'Lead criado automaticamente via WhatsApp Light (teste).',
-          dados_extras: JSON.stringify({ fonte: 'whatsapp_light_teste', numero_wa: tel }),
-          criado_em:    agora,
-          atualizado_em:agora,
-        };
-        const { data: novoLead, error: errLead } = await sb.from('leads').insert(payloadLead).select('id').single();
-
-        if (!errLead && novoLead) {
-          leadId = novoLead.id;
-          console.log(`[WA Webhook] ✅ Lead criado: ${leadId} (${tel})`);
-        } else {
-          console.error('[WA Webhook] ❌ Erro ao criar lead:', errLead?.message, '| Payload:', JSON.stringify(payloadLead));
+    // ── 4. Idempotência por messageId ─────────────────────────────────────
+    if (messageId) {
+      if (isSupa) {
+        const { data: existing } = await sb.from('mensagens_whatsapp')
+          .select('id').eq('id', messageId).limit(1);
+        if (existing?.[0]) {
+          return res.json({ sucesso: true, ignorado: true, motivo: 'mensagem_ja_salva' });
         }
-      } else {
-        console.warn('[WA Webhook] destino nulo — funil Tráfego Pago não resolvido.');
+      } else if (db) {
+        const ex = db.prepare('SELECT id FROM mensagens_whatsapp WHERE id = ? LIMIT 1').get(messageId);
+        if (ex) return res.json({ sucesso: true, ignorado: true, motivo: 'mensagem_ja_salva' });
       }
     }
 
-    // ── 5. Salva mensagem em whatsapp_mensagens ───────────────────────────
-    const salvo = await waSvc.salvarMensagem({
-      lead_id:             leadId,
-      telefone:            tel,
-      nome_contato:        nome || null,
-      direcao:             'recebida',
-      tipo,
-      conteudo,
-      midia_url:           midiaUrl,
-      arquivo_nome:        arquivoNome,
-      mime_type:           mimeType,
-      whatsapp_message_id: messageId,
-      status_envio:        'recebido',
-      recebido_em:         agora,
-    });
-
-    if (!salvo.sucesso) {
-      // Tabela pode não existir — retorna sucesso parcial sem quebrar o CRM
-      console.error('[WA Webhook] Falha ao salvar mensagem:', salvo.erro);
-      return res.status(200).json({
-        sucesso: false,
-        aviso:   'Lead vinculado mas mensagem não salva (tabela whatsapp_mensagens ausente?)',
-        lead_id: leadId,
-        erro:    salvo.erro,
-      });
+    // ── 4b. Se fromMe=true: mensagem enviada PELO número conectado ───────────
+    // Pode ser: (a) confirmação de msg enviada pelo CRM — verificar idempotência já tratou
+    //           (b) mensagem enviada manualmente no app WhatsApp
+    // Salva como 'enviada', mas não cria lead novo para mensagens próprias
+    if (fromMe) {
+      console.log(`[WA Webhook] fromMe=true — mensagem enviada pelo número conectado para ${tel}`);
     }
 
-    console.log(`[WA Webhook] Mensagem salva — lead: ${leadId || 'sem_lead'}, tel: ${tel}`);
-    return res.status(201).json({
-      sucesso:    true,
-      lead_id:    leadId,
-      mensagem_id:salvo.dados?.id,
-      novo_lead:  !!(leadId && !body._leadJaExistia),
+    // ── 5. Busca lead pelo telefone (normalizado) ────────────────────────────
+    // Busca em múltiplos formatos porque o campo telefone do lead pode ter formatação diferente
+    let leadId = null;
+    const telVariants = [tel]; // começa com formato completo (ex: 5511964634949)
+    // Adiciona variante sem 55 se começar com 55 (ex: 11964634949)
+    if (tel.startsWith('55') && tel.length > 12) telVariants.push(tel.slice(2));
+
+    if (isSupa) {
+      let leadsFound = null;
+      for (const variant of telVariants) {
+        const { data: found } = await sb.from('leads').select('id')
+          .or(`telefone.eq.${variant},telefone.ilike.%${variant}%`)
+          .is('deleted_at', null).limit(1);
+        if (found?.[0]) { leadsFound = found; break; }
+      }
+      leadId = leadsFound?.[0]?.id || null;
+      console.log(`WEBHOOK_CONVERSA_DESTINO: buscou lead por ${tel} → leadId=${leadId}`);
+
+      // Só cria lead se for mensagem recebida (fromMe=false) e não existir
+      if (!leadId && !fromMe) {
+        let destino = null;
+        try { destino = await planilhaSvc.resolverDestino(); } catch(e) {}
+        if (destino) {
+          const novoLeadId = crypto.randomBytes(16).toString('hex');
+          const { data: novoLead, error: errL } = await sb.from('leads').insert({
+            id: novoLeadId, nome: nome || `WhatsApp ${tel}`, telefone: tel,
+            status: 'ABERTO', funil_id: destino.funil.id,
+            pipeline_id: destino.pipeline.id, etapa_id: destino.etapa.id,
+            dados_extras: JSON.stringify({ fonte: 'evolution_webhook', numero_wa: tel }),
+            criado_em: agora, atualizado_em: agora,
+          }).select('id').single();
+          if (!errL && novoLead) { leadId = novoLead.id; console.log(`[WA Webhook] ✅ Lead criado: ${leadId} (${tel})`); }
+          else console.warn('[WA Webhook] Lead não criado:', errL?.message);
+        }
+      }
+    } else if (db) {
+      // SQLite: tenta ambas variantes
+      let l = db.prepare("SELECT id FROM leads WHERE telefone = ? LIMIT 1").get(tel);
+      if (!l && tel.startsWith('55')) l = db.prepare("SELECT id FROM leads WHERE telefone = ? LIMIT 1").get(tel.slice(2));
+      leadId = l?.id || null;
+    }
+    console.log('WEBHOOK_TELEFONE_NORMALIZADO:', tel);
+    console.log('WEBHOOK_BUSCANDO_CONVERSA:', { telefoneNormalizado: tel, leadId });
+
+    // ── 6. Busca ou cria conversa ─────────────────────────────────────────
+    let conversaId = null;
+    if (isSupa) {
+      const { data: convExist } = await sb.from('conversas_whatsapp')
+        .select('id').eq('telefone', tel).neq('status', 'FECHADA')
+        .order('criado_em', { ascending: false }).limit(1);
+      conversaId = convExist?.[0]?.id || null;
+
+      if (!conversaId) {
+        const novoConvId = crypto.randomBytes(16).toString('hex');
+        const { data: novaConv, error: errC } = await sb.from('conversas_whatsapp').insert({
+          id: novoConvId, telefone: tel, nome_contato: nome || null,
+          lead_id: leadId || null, origem: 'WHATSAPP_WEBHOOK',
+          status: 'ABERTA', criado_em: agora, atualizado_em: agora,
+        }).select('id').single();
+        if (!errC && novaConv) conversaId = novaConv.id;
+        else console.error('[WA Webhook] Erro ao criar conversa:', errC?.message);
+      } else {
+        // Atualiza ultima_msg_em e vincula lead se ainda não vinculado
+        const upd = { ultima_msg_em: agora, atualizado_em: agora, status: 'ABERTA' };
+        if (leadId) upd.lead_id = leadId;
+        await sb.from('conversas_whatsapp').update(upd).eq('id', conversaId);
+      }
+    } else if (db) {
+      const conv = db.prepare('SELECT id FROM conversas_whatsapp WHERE telefone = ? AND status != \'FECHADA\' LIMIT 1').get(tel);
+      conversaId = conv?.id || null;
+      if (!conversaId) {
+        const cid = crypto.randomBytes(16).toString('hex');
+        db.prepare('INSERT INTO conversas_whatsapp (id,telefone,nome_contato,lead_id,origem,criado_em,atualizado_em) VALUES (?,?,?,?,?,?,?)').run(cid, tel, nome||null, leadId||null, 'WHATSAPP_WEBHOOK', agora, agora);
+        conversaId = cid;
+      } else {
+        db.prepare('UPDATE conversas_whatsapp SET ultima_msg_em=?,atualizado_em=? WHERE id=?').run(agora, agora, conversaId);
+      }
+    }
+
+    console.log('WEBHOOK_CONVERSATION_TARGET', {
+      conversaId: conversaId,
+      leadId: leadId,
+      telefoneNormalizado: tel,
     });
+
+    // ── 7. Salva mensagem em mensagens_whatsapp ───────────────────────────
+    const msgId = messageId || crypto.randomBytes(16).toString('hex');
+    let msgSalva = false;
+    let erroSalvar = null;
+
+    if (isSupa && conversaId) {
+      // Para mensagens RECEBIDAS: não enviar campo status — usa default do banco
+      // (o check constraint do Supabase aceita apenas: pending, sent, delivered, read, failed)
+      // Para mensagens ENVIADAS: status 'sent'
+      const insertPayload = {
+        id: msgId, conversa_id: conversaId, lead_id: leadId || null,
+        telefone: tel, mensagem: conteudo, tipo,
+        direcao,
+        arquivo_url: midiaUrl || null, arquivo_nome: arquivoNome || null,
+        criado_em: agora,
+      };
+      // Só adiciona status para mensagens enviadas — schema: CHECK(status IN ('enviado','entregue','lido','erro'))
+      if (direcao === 'enviada') insertPayload.status = 'enviado';
+
+      const { error: errM } = await sb.from('mensagens_whatsapp').insert(insertPayload);
+      msgSalva = !errM;
+      if (!errM) {
+        console.log('WEBHOOK_MESSAGE_SAVED', { mensagemId: msgId, conversaId, direcao, telefone: tel });
+        console.log('WEBHOOK_MENSAGEM_SALVA_COM_SUCESSO:', { mensagemId: msgId, conversaId, telefoneNormalizado: tel, direcao });
+        // Atualiza ultima mensagem da conversa
+        await sb.from('conversas_whatsapp').update({
+          ultima_msg_em: agora, atualizado_em: agora,
+          ultima_mensagem: conteudo?.slice(0, 200) || null,
+          ultima_direcao: direcao,
+          status: 'ABERTA',
+        }).eq('id', conversaId);
+      }
+      if (errM) {
+        erroSalvar = errM;
+        console.error('WEBHOOK_ERRO_AO_PROCESSAR_MENSAGEM:', {
+          error: errM.message, code: errM.code, details: errM.details,
+          mensagemId: msgId, conversaId, telefone: tel,
+          body: JSON.stringify(req.body).slice(0, 300),
+        });
+      }
+    } else if (db && conversaId) {
+      try {
+        db.prepare('INSERT INTO mensagens_whatsapp (id,conversa_id,lead_id,telefone,mensagem,tipo,direcao,status,criado_em) VALUES (?,?,?,?,?,?,?,?,?)').run(msgId, conversaId, leadId||null, tel, conteudo, tipo, direcao, 'enviado', agora);
+        db.prepare('UPDATE conversas_whatsapp SET ultima_msg_em=?,atualizado_em=?,status=\'ABERTA\' WHERE id=?').run(agora, agora, conversaId);
+        msgSalva = true;
+      } catch(e) {
+        erroSalvar = e;
+        console.error('ERRO_AO_SALVAR_MENSAGEM_WHATSAPP:', e.message);
+      }
+    } else if (!conversaId) {
+      console.error('ERRO_AO_SALVAR_MENSAGEM_WHATSAPP: conversaId é null — conversa não foi criada.');
+    }
+
+    // ── 8. Também salva em whatsapp_mensagens (tabela Supabase extra) ──────
+    const resultadoWaSvc = await waSvc.salvarMensagem({
+      lead_id: leadId, telefone: tel, nome_contato: nome || null,
+      direcao, tipo, conteudo, midia_url: midiaUrl,
+      arquivo_nome: arquivoNome, mime_type: mimeType,
+      whatsapp_message_id: msgId, status_envio: direcao === 'recebida' ? 'recebido' : 'enviado',
+      recebido_em: direcao === 'recebida' ? agora : null,
+      enviado_em:  direcao === 'enviada'  ? agora : null,
+    }).catch(e => { console.warn('[WA Webhook] waSvc.salvarMensagem falhou (não crítico):', e.message); return { sucesso: false }; });
+
+    const resultado = {
+      lead_id:     leadId,
+      conversa_id: conversaId,
+      mensagem_id: msgId,
+      direcao,
+      msgSalva,
+    };
+
+    if (msgSalva) {
+      console.log('MENSAGEM_SALVA_COM_SUCESSO:', resultado);
+    } else {
+      console.error('ERRO_AO_SALVAR_MENSAGEM_WHATSAPP:', { ...resultado, erro: erroSalvar?.message || 'Sem conversa ou erro no insert' });
+    }
+
+    return res.status(201).json({ sucesso: true, ...resultado });
+
   } catch (e) {
-    console.error('[WA Webhook] Erro interno:', e.message);
-    // Nunca deixa o CRM quebrar por causa do webhook
+    console.error('ERRO_AO_SALVAR_MENSAGEM_WHATSAPP:', e.message, e.stack);
     return res.status(500).json({ sucesso: false, erro: 'Erro interno ao processar mensagem.' });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/whatsapp/integracao/status
+// Status da integração: atividade recente, secret configurado, logs
+// ─────────────────────────────────────────────────────────────────────────────
+function statusIntegracao(req, res) {
+  try {
+    const db   = getDb();
+    const agora = new Date();
+    const h24   = new Date(agora.getTime() - 24 * 60 * 60 * 1000).toISOString();
+    const d7    = new Date(agora.getTime() - 7  * 24 * 60 * 60 * 1000).toISOString();
+
+    // Mensagens últimas 24h
+    const msgs24 = db.prepare(
+      `SELECT COUNT(*) as n FROM mensagens_whatsapp WHERE criado_em >= ?`
+    ).get(h24)?.n ?? 0;
+
+    // Mensagens últimas 7d
+    const msgs7d = db.prepare(
+      `SELECT COUNT(*) as n FROM mensagens_whatsapp WHERE criado_em >= ?`
+    ).get(d7)?.n ?? 0;
+
+    // Conversas abertas
+    const convAtivas = db.prepare(
+      `SELECT COUNT(*) as n FROM conversas_whatsapp WHERE status = 'ABERTA'`
+    ).get()?.n ?? 0;
+
+    // Última mensagem
+    const ultima = db.prepare(
+      `SELECT telefone, direcao, mensagem, criado_em FROM mensagens_whatsapp ORDER BY criado_em DESC LIMIT 1`
+    ).get();
+
+    // Logs recentes (últimas 15 mensagens)
+    const logs = db.prepare(
+      `SELECT telefone, direcao, mensagem, criado_em FROM mensagens_whatsapp ORDER BY criado_em DESC LIMIT 15`
+    ).all();
+
+    // Secret configurado?
+    const secretConf = !!(process.env.WHATSAPP_WEBHOOK_SECRET);
+    const secretPreview = secretConf
+      ? process.env.WHATSAPP_WEBHOOK_SECRET.slice(0, 6) + '••••••••••••••••'
+      : '';
+
+    return res.json({
+      sucesso:           true,
+      msgs_24h:          msgs24,
+      msgs_7d:           msgs7d,
+      conversas_ativas:  convAtivas,
+      ultima_msg_em:     ultima?.criado_em || null,
+      ultima_direcao:    ultima?.direcao   || null,
+      ultimo_telefone:   ultima?.telefone  || null,
+      secret_configurado: secretConf,
+      secret_preview:    secretPreview,
+      logs,
+    });
+  } catch(e) {
+    console.error('[WA] statusIntegracao:', e);
+    return res.status(500).json({ sucesso: false, erro: e.message });
   }
 }
 
@@ -811,4 +1584,164 @@ module.exports = {
   conversasDoLead,
   mensagemManual,
   webhookReceberMensagem,
+  // Integração status
+  statusIntegracao,
+  // Evolution API — gerenciamento de instância
+  evoInstanciaStatus,
+  evoCriarInstancia,
+  evoQrCode,
+  evoDesconectar,
+  evoDeletarInstancia,
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EVOLUTION API — Gerenciamento de Instância
+// Todos os endpoints exigem SUPER_ADMIN
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** GET /api/whatsapp/evolution/status */
+async function evoInstanciaStatus(req, res) {
+  try {
+    if (!evoSvc.isConfigured()) {
+      return res.json({
+        sucesso: true,
+        configurada: false,
+        mensagem: 'Evolution API não configurada. Preencha EVOLUTION_API_URL e EVOLUTION_API_KEY no .env.',
+      });
+    }
+
+    // Busca estado de conexão e dados reais da instância em paralelo
+    const [stateR, infoR] = await Promise.all([
+      evoSvc.getConnectionState(),
+      evoSvc.getInstanceInfo(),
+    ]);
+
+    const estado = stateR.dados?.instance?.state || stateR.dados?.state || 'desconhecido';
+
+    return res.json({
+      sucesso:           true,
+      configurada:       true,
+      instancia:         evoSvc.EVOLUTION_INSTANCE,
+      estado,
+      // Número real conectado (owner do WhatsApp)
+      owner:             infoR.owner             || null,
+      profileName:       infoR.profileName        || null,
+      profilePictureUrl: infoR.profilePictureUrl  || null,
+      dados:             stateR.dados,
+      erro:              stateR.sucesso ? undefined : stateR.erro,
+    });
+  } catch (e) {
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}
+
+
+/** POST /api/whatsapp/evolution/criar */
+async function evoCriarInstancia(req, res) {
+  try {
+    const r = await evoSvc.criarInstancia();
+
+    // Instância-alvo já existia — service detectou antes de tentar criar
+    if (r.sucesso && r.jaExistia) {
+      console.log(`[EVO] Instância "${evoSvc.EVOLUTION_INSTANCE}" já existia — retornando sucesso.`);
+      return res.json({
+        sucesso: true,
+        instancia: evoSvc.EVOLUTION_INSTANCE,
+        aviso: 'Instância já existia. Clique em "Gerar QR Code" para conectar.',
+      });
+    }
+
+    if (!r.sucesso) {
+      // Log completo para diagnóstico
+      console.log('[EVO] criarInstancia falhou — status:', r.status, '| erro:', r.erro, '| dados:', JSON.stringify(r.dados));
+
+      // Fallback: ainda trata token duplicado que escapou da verificação prévia
+      const erroStr = String(
+        r.erro ||
+        r.dados?.message ||
+        r.dados?.error ||
+        r.dados?.raw ||
+        ''
+      ).toLowerCase();
+
+      const jaExiste =
+        erroStr.includes('already') ||
+        erroStr.includes('exists') ||
+        erroStr.includes('token') ||
+        erroStr.includes('duplicate') ||
+        erroStr.includes('já existe') ||
+        erroStr.includes('conflict') ||
+        r.status === 409 ||
+        r.status === 422;
+
+      if (jaExiste) {
+        console.log(`[EVO] Instância "${evoSvc.EVOLUTION_INSTANCE}" — token duplicado detectado via resposta de erro. Tratando como sucesso.`);
+        return res.json({
+          sucesso: true,
+          instancia: evoSvc.EVOLUTION_INSTANCE,
+          aviso: 'Instância já existia. Clique em "Gerar QR Code" para conectar.',
+        });
+      }
+
+      return res.status(400).json({ sucesso: false, erro: r.erro, dados: r.dados });
+    }
+
+    return res.json({ sucesso: true, dados: r.dados, instancia: evoSvc.EVOLUTION_INSTANCE });
+  } catch (e) {
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}
+
+/** GET /api/whatsapp/evolution/qrcode */
+async function evoQrCode(req, res) {
+  try {
+    // Verifica se já está conectado — não gera novo QR sem desconectar antes
+    const estado = await evoSvc.getConnectionState();
+    const estadoAtual = (estado.dados?.instance?.state || estado.dados?.state || '').toLowerCase();
+
+    if (estadoAtual === 'open') {
+      return res.status(409).json({
+        sucesso: false,
+        erro: 'WhatsApp já está conectado. Desconecte a sessão atual antes de gerar um novo QR Code.',
+        estado: 'open',
+        codigo: 'ALREADY_CONNECTED',
+      });
+    }
+
+    const r = await evoSvc.getQrCode();
+    if (!r.sucesso) return res.status(400).json({ sucesso: false, erro: r.erro });
+    // Normaliza: Evolution API pode retornar qrcode em diferentes campos
+    const qr = r.dados?.qrcode?.base64
+      || r.dados?.base64
+      || r.dados?.qrCode
+      || r.dados?.code
+      || null;
+    return res.json({ sucesso: true, qrcode: qr, dados: r.dados });
+  } catch (e) {
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}
+
+
+/** DELETE /api/whatsapp/evolution/desconectar */
+async function evoDesconectar(req, res) {
+  try {
+    const r = await evoSvc.desconectar();
+    if (!r.sucesso) return res.status(400).json({ sucesso: false, erro: r.erro });
+    return res.json({ sucesso: true, mensagem: 'WhatsApp desconectado com sucesso.', dados: r.dados });
+  } catch (e) {
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}
+
+/** DELETE /api/whatsapp/evolution/deletar */
+async function evoDeletarInstancia(req, res) {
+  try {
+    const r = await evoSvc.deletarInstancia();
+    if (!r.sucesso) return res.status(400).json({ sucesso: false, erro: r.erro });
+    return res.json({ sucesso: true, mensagem: 'Instância deletada.', dados: r.dados });
+  } catch (e) {
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}
+

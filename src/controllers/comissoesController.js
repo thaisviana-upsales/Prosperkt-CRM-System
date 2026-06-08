@@ -4,15 +4,132 @@
  */
 const crypto = require('crypto');
 const { getDb } = require('../database/db');
+const { getProvider } = require('../database/dbProvider');
 
 // GET /api/comissoes/painel  — Painel detalhado por vendedor
-function painel(req, res) {
-  const db = getDb();
-  const { mes, funil_id, usuario_id } = req.query;
+async function painel(req, res) {
+  const { isSupa, sb, sqlite: db } = getProvider();
+  const { mes, ano, funil_id, usuario_id } = req.query;
   const hoje = new Date();
-  const anoMes = mes || `${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}`;
-  const mesNum = parseInt(anoMes.split('-')[1]);
-  const anoNum = parseInt(anoMes.split('-')[0]);
+
+  let anoMes;
+  let mesNum;
+  let anoNum;
+
+  if (mes && String(mes).includes('-')) {
+    anoMes = mes;
+    mesNum = parseInt(anoMes.split('-')[1]);
+    anoNum = parseInt(anoMes.split('-')[0]);
+  } else {
+    const mNum = mes ? parseInt(mes) : (hoje.getMonth() + 1);
+    const aNum = ano ? parseInt(ano) : hoje.getFullYear();
+    mesNum = mNum;
+    anoNum = aNum;
+    anoMes = `${aNum}-${String(mNum).padStart(2, '0')}`;
+  }
+
+  try {
+    if (isSupa) {
+      // Filtra leads GANHOS no período pelo campo ganho_em
+      const de  = `${anoMes}-01T00:00:00`;
+      const ate = `${anoMes}-31T23:59:59`;
+      let qLeads = sb.from('leads').select(
+        'id,nome,empresa,valor,valor_venda,responsavel_id,funil_id,ganho_em,status'
+      );
+      if (req.usuario.role === 'VENDEDOR') qLeads = qLeads.eq('responsavel_id', req.usuario.id);
+      else if (usuario_id) qLeads = qLeads.eq('responsavel_id', usuario_id);
+      if (funil_id) qLeads = qLeads.eq('funil_id', funil_id);
+
+      // Leads ganhos: por status OU por ganho_em no período
+      qLeads = qLeads.or(`status.in.(GANHO,VENDIDO,VENDA),ganho_em.gte.${de}`);
+
+      const { data, error } = await qLeads;
+      if (error) {
+        console.error('[comissoes.painel] Erro ao buscar leads no Supabase:', error.message);
+        return res.status(400).json({ sucesso: false, erro: error.message });
+      }
+      const leadsGanhos = data || [];
+      // Filtra pelo período de ganho_em quando disponível
+      const leadsNoMes = leadsGanhos.filter(l => {
+        if (l.ganho_em) {
+          return l.ganho_em >= de.slice(0,10) && l.ganho_em <= ate.slice(0,10);
+        }
+        return true; // sem ganho_em, inclui se status bate
+      });
+
+      // Busca regras de comissão
+      const { data: regrasData, error: errorRegras } = await sb.from('comissao_regras').select('*').eq('ativo', 1);
+      if (errorRegras) {
+        console.error('[comissoes.painel] Erro ao buscar regras no Supabase:', errorRegras.message);
+        return res.status(400).json({ sucesso: false, erro: errorRegras.message });
+      }
+      const regras = regrasData || [];
+
+      // Agrupa por vendedor
+      const porVendedor = {};
+      for (const l of leadsNoMes) {
+        const rid = l.responsavel_id;
+        if (!rid) continue;
+        if (!porVendedor[rid]) {
+          const { data: usr } = await sb.from('usuarios').select('nome,salario_fixo').eq('id', rid).single();
+          porVendedor[rid] = {
+            usuario_id: rid, vendedor_nome: usr?.nome || rid,
+            salario_fixo: usr?.salario_fixo || 0,
+            total_vendido:0, total_comissao:0, qtd_vendas:0,
+            comissao_pendente:0, comissao_aprovada:0, comissao_paga:0,
+            items: [], bonus_a_receber:0, meta_atingida:false,
+          };
+        }
+        const v = porVendedor[rid];
+        const valorVenda = Number(l.valor_venda || l.valor || 0);
+        v.total_vendido  += valorVenda;
+        v.qtd_vendas++;
+        const regrasVend = regras.filter(r => (!r.usuario_id || r.usuario_id===rid) && (!r.funil_id || r.funil_id===l.funil_id));
+        const comissao = calcularComissaoFaixas(valorVenda, regrasVend);
+        v.total_comissao += comissao;
+        v.items.push({ lead_nome:l.nome, empresa:l.empresa, valor_venda:valorVenda, valor_comissao:comissao, status:'PENDENTE', id: l.id });
+      }
+
+      // Bonus por meta
+      for (const v of Object.values(porVendedor)) {
+        const { data: metaFat } = await sb.from('metas').select('*').eq('ativo', 1).eq('tipo','FATURAMENTO')
+          .or(`usuario_id.eq.${v.usuario_id},usuario_id.is.null`).eq('mes', mesNum).eq('ano', anoNum)
+          .order('usuario_id', { ascending: false }).limit(1);
+        const meta = metaFat?.[0];
+        v.meta_atingida = meta ? v.total_vendido >= meta.valor_alvo : false;
+        const regrasBonus = regras.filter(r => (r.bonus_meta_pct||0) > 0 && (!r.usuario_id || r.usuario_id===v.usuario_id));
+        v.bonus_a_receber = (v.meta_atingida && regrasBonus.length) ? regrasBonus[0].bonus_meta_pct : 0;
+        v.total_a_receber = v.total_comissao + v.bonus_a_receber + v.salario_fixo;
+      }
+
+      const ranking = Object.values(porVendedor).sort((a,b) => b.total_comissao - a.total_comissao);
+      const totais = {
+        total_vendido:  ranking.reduce((s,v)=>s+v.total_vendido,0),
+        total_comissao: ranking.reduce((s,v)=>s+v.total_comissao,0),
+        qtd_vendas:     ranking.reduce((s,v)=>s+v.qtd_vendas,0),
+        bonus_total:    ranking.reduce((s,v)=>s+v.bonus_a_receber,0),
+        salario_total:  ranking.reduce((s,v)=>s+v.salario_fixo,0),
+        total_a_receber:ranking.reduce((s,v)=>s+v.total_a_receber,0),
+      };
+
+      // Por funil
+      const funilMap = {};
+      for (const l of leadsNoMes) {
+        if (!l.funil_id) continue;
+        if (!funilMap[l.funil_id]) {
+          const { data: fn } = await sb.from('funis').select('nome').eq('id', l.funil_id).single();
+          funilMap[l.funil_id] = { funil_nome: fn?.nome || l.funil_id, qtd:0, total_vendido:0, total_comissao:0 };
+        }
+        const vv = Number(l.valor_venda || l.valor || 0);
+        const regrasVend = regras.filter(r => (!r.usuario_id) && (!r.funil_id || r.funil_id===l.funil_id));
+        funilMap[l.funil_id].qtd++;
+        funilMap[l.funil_id].total_vendido  += vv;
+        funilMap[l.funil_id].total_comissao += calcularComissaoFaixas(vv, regrasVend);
+      }
+      const por_funil = Object.values(funilMap).sort((a,b) => b.total_comissao - a.total_comissao);
+
+      return res.json({ sucesso:true, dados:{ ranking, totais, por_funil, mes:anoMes } });
+    }
 
   const params = [anoMes];
   let filtroUser = '';
@@ -108,20 +225,36 @@ function painel(req, res) {
   `).all(anoMes, ...(funil_id ? [funil_id] : []));
 
   return res.json({ sucesso:true, dados:{ ranking, totais, por_funil:porFunil, mes:anoMes } });
+  } catch(e) {
+    console.error('[comissoes.painel]', e.message);
+    return res.status(500).json({ sucesso:false, erro:e.message });
+  }
 }
 
 // PATCH /api/comissoes/salario/:id  — Atualiza salário fixo do vendedor
-function atualizarSalario(req, res) {
-  const db = getDb();
+async function atualizarSalario(req, res) {
+  const { isSupa, sb, sqlite: db } = getProvider();
   const { salario_fixo } = req.body;
   if (salario_fixo === undefined || isNaN(Number(salario_fixo)))
     return res.status(400).json({ sucesso:false, erro:'salario_fixo inválido.' });
-  const usuario = db.prepare('SELECT id, nome FROM usuarios WHERE id=?').get(req.params.id);
-  if (!usuario) return res.status(404).json({ sucesso:false, erro:'Usuário não encontrado.' });
-  db.prepare('UPDATE usuarios SET salario_fixo=?, atualizado_em=? WHERE id=?')
-    .run(Number(salario_fixo), new Date().toISOString(), req.params.id);
-  req.log({ acao:'UPDATE', entidade:'usuarios', entidade_id:req.params.id, depois:{ salario_fixo } });
-  return res.json({ sucesso:true, dados:{ salario_fixo: Number(salario_fixo) } });
+  try {
+    if (isSupa) {
+      const { data, error } = await sb.from('usuarios').update({ salario_fixo: Number(salario_fixo), atualizado_em: new Date().toISOString() }).eq('id', req.params.id).select('id,nome').single();
+      if (error) throw error;
+      if (!data) return res.status(404).json({ sucesso:false, erro:'Usuário não encontrado.' });
+      req.log({ acao:'UPDATE', entidade:'usuarios', entidade_id:req.params.id, depois:{ salario_fixo } });
+      return res.json({ sucesso:true, dados:{ salario_fixo: Number(salario_fixo) } });
+    }
+    const usuario = db.prepare('SELECT id, nome FROM usuarios WHERE id=?').get(req.params.id);
+    if (!usuario) return res.status(404).json({ sucesso:false, erro:'Usuário não encontrado.' });
+    db.prepare('UPDATE usuarios SET salario_fixo=?, atualizado_em=? WHERE id=?')
+      .run(Number(salario_fixo), new Date().toISOString(), req.params.id);
+    req.log({ acao:'UPDATE', entidade:'usuarios', entidade_id:req.params.id, depois:{ salario_fixo } });
+    return res.json({ sucesso:true, dados:{ salario_fixo: Number(salario_fixo) } });
+  } catch(e) {
+    console.error('[comissoes.atualizarSalario]', e.message);
+    return res.status(500).json({ sucesso:false, erro:e.message });
+  }
 }
 
 

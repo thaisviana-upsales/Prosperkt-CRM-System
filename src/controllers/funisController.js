@@ -66,21 +66,26 @@ async function seedFunis() {
   } catch(e) { console.error('[seedFunis]', e.message); }
 }
 
-// GET /api/funis
+// GET /api/funis  (?somente_ativos=true para áreas operacionais)
 async function listar(req, res) {
   const { sb, isSupa, sqlite } = getProvider();
+  const somenteAtivos = req.query.somente_ativos === 'true';
   try {
     if (isSupa) {
-      const { data, error } = await sb.from('funis').select('*').order('criado_em');
+      let q = sb.from('funis').select('*').order('criado_em');
+      if (somenteAtivos) q = q.eq('ativo', 1);
+      const { data, error } = await q;
       if (error) throw error;
       return res.json({ sucesso:true, dados:data||[], total:(data||[]).length });
     }
     const { getDb } = require('../database/db');
     const db = getDb();
-    const funis = db.prepare(`SELECT f.*, p.id as pipeline_id FROM funis f LEFT JOIN pipelines p ON p.funil_id=f.id ORDER BY f.criado_em`).all();
+    const filtroAtivo = somenteAtivos ? ' WHERE f.ativo=1' : '';
+    const funis = db.prepare(`SELECT f.*, p.id as pipeline_id FROM funis f LEFT JOIN pipelines p ON p.funil_id=f.id${filtroAtivo} ORDER BY f.criado_em`).all();
     return res.json({ sucesso:true, dados:funis, total:funis.length });
   } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
 }
+
 
 // GET /api/funis/:id  — retorna funil + pipeline_id + etapas (usado pela pipeline)
 async function buscarPorId(req, res) {
