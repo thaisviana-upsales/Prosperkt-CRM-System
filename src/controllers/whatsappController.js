@@ -27,8 +27,11 @@ const evoSvc  = require('../services/evolutionApiService');
  */
 function normalizePhone(tel) {
   if (!tel) return '';
-  // Remove sufixo WhatsApp JID
+  // Remove sufixo WhatsApp JID (ex: 5511964634949:13@s.whatsapp.net)
   let t = String(tel).split('@')[0];
+  // Remove sufixo de dispositivo WA (ex: :13, :2, :0) ANTES de extrair dígitos
+  // Sem isso: replace(/\D/g,'') transforma '5511964634949:13' em '551196463494913'
+  t = t.split(':')[0];
   // Remove tudo que não é dígito
   t = t.replace(/\D/g, '');
   // Se 10 ou 11 dígitos (sem código de país), adiciona 55 (Brasil)
@@ -251,10 +254,25 @@ async function enviarMensagem(req, res) {
       evoRes = await evoSvc.enviarTexto(telNormalizado, textoParaCliente);
 
       console.log('EVOLUTION_SEND_RESPONSE_STATUS', evoRes.status || (evoRes.sucesso ? 200 : 500));
-      console.log('EVOLUTION_SEND_RESPONSE_DATA', JSON.stringify(evoRes.dados || evoRes.erro, null, 2));
+      console.log('EVOLUTION_SEND_RESPONSE_DATA_RAW', JSON.stringify(evoRes.dados || evoRes.erro, null, 2));
 
-      if (evoRes.sucesso) {
+      // ── Detecta sucesso real da Evolution API ─────────────────────────────
+      // A Evolution v1.8.6 retorna sucesso quando:
+      //   (a) evoRes.sucesso = true  (HTTP 2xx)
+      //   (b) OU: body contém key.id ou messageId → mensagem foi aceita e enfileirada
+      //       mesmo que o HTTP status seja 201/400 em alguns casos de versão
+      const evoKeyId = evoRes.dados?.key?.id || evoRes.dados?.messageId || null;
+      const evoSucessoReal = evoRes.sucesso || !!evoKeyId;
+
+      console.log('EVOLUTION_SEND_SUCESSO_REAL:', { evoRes_sucesso: evoRes.sucesso, evoKeyId, evoSucessoReal });
+
+      if (evoSucessoReal) {
         evoOk = true;
+        if (!evoRes.sucesso && evoKeyId) {
+          // Corrige o objeto para que evoMsgId seja extraído corretamente abaixo
+          evoRes = { ...evoRes, sucesso: true };
+          console.log('EVOLUTION_SEND_SUCESSO_VIA_KEY_ID:', evoKeyId);
+        }
       } else {
         evoErr = evoRes.erro || 'Erro desconhecido na Evolution API';
         console.error('EVOLUTION_SEND_ERROR', {
@@ -295,55 +313,66 @@ async function enviarMensagem(req, res) {
     const evoMsgId = evoRes?.dados?.key?.id || null;
 
     if (isSupa) {
+      // ── Payload Supabase: SOMENTE colunas que existem na tabela ─────────────
+      // Colunas reais: id, conversa_id, lead_id, telefone, mensagem, tipo,
+      //                direcao, status, vendedor_id, arquivo_url, arquivo_nome, criado_em
+      // NÃO EXISTEM: atualizado_em, evolution_message_id
       const dbPayload = {
-        id: msgId, conversa_id: id,
+        id: msgId,
+        conversa_id: id,
         lead_id: conversa.lead_id || null,
         telefone: telNormalizado,
-        mensagem: mensagem || null, tipo,
+        mensagem: mensagem || null,
+        tipo,
         direcao: 'enviada',
-        // Schema Supabase: CHECK(status IN ('enviado','entregue','lido','erro'))
+        // CHECK(status IN ('enviado','entregue','lido','erro'))
         status: evoOk ? 'enviado' : 'erro',
         vendedor_id: req.usuario.id,
         arquivo_url: arquivo_url || null,
         arquivo_nome: arquivo_nome || null,
         criado_em: agora,
-        atualizado_em: agora,
+        // atualizado_em: NÃO EXISTE NA TABELA — removido
       };
 
-      // evolution_message_id: só inclui se a coluna existir (requer migração SQL)
-      if (evoMsgId) {
-        try {
-          dbPayload.evolution_message_id = evoMsgId;
-        } catch(e) { /* coluna ainda não existe */ }
-      }
+      console.log('SUPA_INSERT_PAYLOAD_KEYS', Object.keys(dbPayload));
 
+      // Insert sem nome de FK fixo no select (evita erro se FK tiver outro nome)
       const { data: nova, error: errI } = await sb.from('mensagens_whatsapp')
         .insert(dbPayload)
-        .select('*, usuarios!mensagens_whatsapp_vendedor_id_fkey(nome)')
+        .select('*')
         .single();
 
       if (errI) {
-        // Se der erro por causa da coluna evolution_message_id não existir, tenta sem ela
-        if (errI.message?.includes('evolution_message_id')) {
-          delete dbPayload.evolution_message_id;
-          const { data: nova2, error: errI2 } = await sb.from('mensagens_whatsapp')
-            .insert(dbPayload)
-            .select('*, usuarios!mensagens_whatsapp_vendedor_id_fkey(nome)')
-            .single();
-          if (errI2) throw errI2;
-          const msg2 = { ...nova2, vendedor_nome: nova2?.usuarios?.nome || req.usuario.nome };
-          return res.status(201).json({ sucesso: true, dados: msg2 });
+        console.error('SUPA_INSERT_ERROR', { message: errI.message, code: errI.code, details: errI.details });
+        // Mesmo com erro no insert, a mensagem JÁ FOI ENVIADA pela Evolution.
+        // Retorna 201 com dados mínimos para não mostrar erro falso ao usuário.
+        if (evoOk) {
+          console.warn('SUPA_INSERT_FAILED_BUT_EVO_OK — retornando sucesso parcial para evitar erro falso no frontend');
+          const msgMinima = {
+            id: msgId, conversa_id: id, mensagem: mensagem || null,
+            tipo, direcao: 'enviada', status: 'enviado',
+            vendedor_id: req.usuario.id, vendedor_nome: req.usuario.nome,
+            criado_em: agora,
+          };
+          return res.status(201).json({ sucesso: true, dados: msgMinima });
         }
         throw errI;
       }
 
+      // UPDATE conversas_whatsapp — SOMENTE colunas existentes
+      // Colunas reais: ultima_msg_em, atualizado_em, status
+      // NÃO EXISTEM: ultima_mensagem, ultima_direcao
       await sb.from('conversas_whatsapp')
-        .update({ ultima_msg_em: agora, atualizado_em: agora, status: 'ABERTA', ultima_mensagem: mensagem?.slice(0, 200) || null, ultima_direcao: 'enviada' })
-        .eq('id', id);
-      if (conversa.lead_id)
-        await sb.from('leads').update({ atualizado_em: agora }).eq('id', conversa.lead_id);
+        .update({ ultima_msg_em: agora, atualizado_em: agora, status: 'ABERTA' })
+        .eq('id', id)
+        .catch(e => console.warn('SUPA_UPDATE_CONVERSA_WARN:', e.message));
 
-      const msg = { ...nova, vendedor_nome: nova?.usuarios?.nome || req.usuario.nome };
+      if (conversa.lead_id)
+        await sb.from('leads').update({ atualizado_em: agora }).eq('id', conversa.lead_id)
+          .catch(e => console.warn('SUPA_UPDATE_LEAD_WARN:', e.message));
+
+      const msg = { ...nova, vendedor_nome: req.usuario.nome };
+      console.log('SUPA_INSERT_OK', { msgId, status: msg.status, evoMsgId });
       req.log({ acao: 'WHATSAPP_SEND', entidade: 'conversas_whatsapp', entidade_id: id, depois: { mensagem: mensagem?.slice(0, 100), tipo, evo_ok: evoOk, evoMsgId } });
       return res.status(201).json({ sucesso: true, dados: msg });
     }
@@ -369,7 +398,18 @@ async function enviarMensagem(req, res) {
     return res.status(201).json({ sucesso: true, dados: msg });
 
   } catch (e) {
-    console.error('EVOLUTION_SEND_ERROR:', { message: e.message, stack: e.stack?.split('\n')[0] });
+    // ── LOG DETALHADO: identifica exatamente onde a excecao ocorreu ─────────
+    console.error('WHATSAPP_SEND_CATCH — excecao inesperada no enviarMensagem:', {
+      message:    e.message,
+      name:       e.name,
+      code:       e.code,
+      stack:      e.stack?.split('\n').slice(0, 5).join(' | '),
+      // Estado das variaveis no momento do erro:
+      evoOk_snapshot:    typeof evoOk    !== 'undefined' ? evoOk    : 'NAO_DEFINIDO',
+      evoRes_snapshot:   typeof evoRes   !== 'undefined' ? JSON.stringify(evoRes?.dados)?.slice(0,200) : 'NAO_DEFINIDO',
+      isSupa_snapshot:   typeof isSupa   !== 'undefined' ? isSupa   : 'NAO_DEFINIDO',
+      conversa_snapshot: typeof conversa !== 'undefined' ? conversa?.id : 'NAO_DEFINIDO',
+    });
     return res.status(500).json({ sucesso: false, erro: 'Erro ao enviar mensagem.', detalhe: e.message });
   }
 }
@@ -1338,22 +1378,26 @@ async function webhookReceberMensagem(req, res) {
     }
 
     // ── 5. Busca lead pelo telefone (normalizado) ────────────────────────────
-    // Busca em múltiplos formatos porque o campo telefone do lead pode ter formatação diferente
+    // Determina variantes de telefone: com 55 (5511964634949) e sem 55 (11964634949)
     let leadId = null;
-    const telVariants = [tel]; // começa com formato completo (ex: 5511964634949)
-    // Adiciona variante sem 55 se começar com 55 (ex: 11964634949)
-    if (tel.startsWith('55') && tel.length > 12) telVariants.push(tel.slice(2));
+    const telSem55 = (tel.startsWith('55') && tel.length >= 12) ? tel.slice(2) : null;
+    const telVariants = telSem55 ? [tel, telSem55] : [tel];
+
+    console.log('[WA Webhook] INSTANCIA_CONECTADA:', process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE || '?');
+    console.log('[WA Webhook] REMOTE_JID_RECEBIDO:', body.data?.[0]?.key?.remoteJid || body.data?.key?.remoteJid || '(ver payload)');
+    console.log('[WA Webhook] FROM_ME:', fromMe);
+    console.log('[WA Webhook] TELEFONE_EXTRAIDO:', { rawTelUsado: tel, variantesSem55: telSem55, fromMe });
 
     if (isSupa) {
       let leadsFound = null;
       for (const variant of telVariants) {
-        const { data: found } = await sb.from('leads').select('id')
+        const { data: found } = await sb.from('leads').select('id,telefone')
           .or(`telefone.eq.${variant},telefone.ilike.%${variant}%`)
           .is('deleted_at', null).limit(1);
         if (found?.[0]) { leadsFound = found; break; }
       }
       leadId = leadsFound?.[0]?.id || null;
-      console.log(`WEBHOOK_CONVERSA_DESTINO: buscou lead por ${tel} → leadId=${leadId}`);
+      console.log(`WEBHOOK_LEAD_ENCONTRADO: tel=${tel} variantesSem55=${telSem55} → leadId=${leadId} telefoneLead=${leadsFound?.[0]?.telefone || '(não encontrado)'}`);
 
       // Só cria lead se for mensagem recebida (fromMe=false) e não existir
       if (!leadId && !fromMe) {
@@ -1375,37 +1419,65 @@ async function webhookReceberMensagem(req, res) {
     } else if (db) {
       // SQLite: tenta ambas variantes
       let l = db.prepare("SELECT id FROM leads WHERE telefone = ? LIMIT 1").get(tel);
-      if (!l && tel.startsWith('55')) l = db.prepare("SELECT id FROM leads WHERE telefone = ? LIMIT 1").get(tel.slice(2));
+      if (!l && telSem55) l = db.prepare("SELECT id FROM leads WHERE telefone = ? LIMIT 1").get(telSem55);
       leadId = l?.id || null;
     }
-    console.log('WEBHOOK_TELEFONE_NORMALIZADO:', tel);
-    console.log('WEBHOOK_BUSCANDO_CONVERSA:', { telefoneNormalizado: tel, leadId });
+    console.log('[WA Webhook] RESULTADO_BUSCA_LEAD:', { telefoneNormalizado: tel, variantesSem55: telSem55, leadId });
 
     // ── 6. Busca ou cria conversa ─────────────────────────────────────────
+    // CRÍTICO: busca em múltiplos formatos de telefone para evitar criar conversa duplicada
+    // Lead pode estar salvo com 11964634949 (sem 55) mas webhook entrega 5511964634949
     let conversaId = null;
     if (isSupa) {
-      const { data: convExist } = await sb.from('conversas_whatsapp')
-        .select('id').eq('telefone', tel).neq('status', 'FECHADA')
-        .order('criado_em', { ascending: false }).limit(1);
-      conversaId = convExist?.[0]?.id || null;
+      // Busca 1: por lead_id (mais confiável — já linkado)
+      if (leadId) {
+        const { data: convByLead } = await sb.from('conversas_whatsapp')
+          .select('id').eq('lead_id', leadId).neq('status', 'FECHADA')
+          .order('criado_em', { ascending: false }).limit(1);
+        conversaId = convByLead?.[0]?.id || null;
+        if (conversaId) console.log(`[WA Webhook] Conversa encontrada por lead_id=${leadId} → conv=${conversaId}`);
+      }
+
+      // Busca 2: por telefone em todas variantes (com e sem 55)
+      if (!conversaId) {
+        for (const variant of telVariants) {
+          const { data: convExist } = await sb.from('conversas_whatsapp')
+            .select('id').eq('telefone', variant).neq('status', 'FECHADA')
+            .order('criado_em', { ascending: false }).limit(1);
+          if (convExist?.[0]) {
+            conversaId = convExist[0].id;
+            console.log(`[WA Webhook] Conversa encontrada por telefone variante ${variant} → conv=${conversaId}`);
+            break;
+          }
+        }
+      }
+
+      console.log('[WA Webhook] CONVERSA_ANTES_DE_CRIAR:', { conversaId, leadId, tel, telSem55 });
 
       if (!conversaId) {
+        // Cria nova conversa — só chega aqui se realmente não existe
         const novoConvId = crypto.randomBytes(16).toString('hex');
         const { data: novaConv, error: errC } = await sb.from('conversas_whatsapp').insert({
           id: novoConvId, telefone: tel, nome_contato: nome || null,
           lead_id: leadId || null, origem: 'WHATSAPP_WEBHOOK',
           status: 'ABERTA', criado_em: agora, atualizado_em: agora,
         }).select('id').single();
-        if (!errC && novaConv) conversaId = novaConv.id;
-        else console.error('[WA Webhook] Erro ao criar conversa:', errC?.message);
+        if (!errC && novaConv) {
+          conversaId = novaConv.id;
+          console.log(`[WA Webhook] ✅ Nova conversa criada: ${conversaId} tel=${tel} leadId=${leadId}`);
+        } else {
+          console.error('[WA Webhook] Erro ao criar conversa:', errC?.message);
+        }
       } else {
         // Atualiza ultima_msg_em e vincula lead se ainda não vinculado
         const upd = { ultima_msg_em: agora, atualizado_em: agora, status: 'ABERTA' };
         if (leadId) upd.lead_id = leadId;
         await sb.from('conversas_whatsapp').update(upd).eq('id', conversaId);
+        console.log(`[WA Webhook] ✅ Conversa existente atualizada: ${conversaId} leadId=${leadId}`);
       }
     } else if (db) {
-      const conv = db.prepare('SELECT id FROM conversas_whatsapp WHERE telefone = ? AND status != \'FECHADA\' LIMIT 1').get(tel);
+      let conv = db.prepare('SELECT id FROM conversas_whatsapp WHERE telefone = ? AND status != \'FECHADA\' LIMIT 1').get(tel);
+      if (!conv && telSem55) conv = db.prepare('SELECT id FROM conversas_whatsapp WHERE telefone = ? AND status != \'FECHADA\' LIMIT 1').get(telSem55);
       conversaId = conv?.id || null;
       if (!conversaId) {
         const cid = crypto.randomBytes(16).toString('hex');

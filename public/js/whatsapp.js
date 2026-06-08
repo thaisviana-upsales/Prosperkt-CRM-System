@@ -7,6 +7,7 @@
 function normalizePhone(tel) {
   if (!tel) return '';
   let t = String(tel).split('@')[0];
+  t = t.split(':')[0]; // remove sufixo de dispositivo WA (ex: :13 em 5511964634949:13@s.whatsapp.net)
   t = t.replace(/\D/g, '');
   // 10-11 dígitos sem código de país → adiciona 55 (Brasil)
   if (t.length === 10 || t.length === 11) t = '55' + t;
@@ -605,42 +606,68 @@ async function enviarMensagem() {
 
   const btn = document.getElementById('btn-send');
 
-  // ── Estado de loading (não mostra nada antes da confirmação) ──────────────
-  btn.disabled = true;
+  // ── Estado de loading ──────────────────────────────────────────────────────
+  btn.disabled  = true;
   btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="animation:spin 1s linear infinite"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4" stroke-dashoffset="10"/></svg>`;
   input.disabled = true;
 
-  const telEnvio = normalizePhone(_convAtiva.telefone);
-
-  // Log obrigatório no frontend
-  console.log('CRM_SEND_WHATSAPP_START', {
-    conversaId:          _convAtiva.id,
-    leadId:              _convAtiva.lead_id || null,
-    telefoneOriginal:    _convAtiva.telefone,
-    telefoneNormalizado: telEnvio,
-    textoDigitado:       txt.slice(0, 80),
-    textoFinal:          txt.slice(0, 80), // cabeçalho é adicionado no backend
+  // Log diagnóstico: payload enviado
+  console.log('FRONTEND_SEND_START', {
+    conversaId:   _convAtiva.id,
+    telefone:     _convAtiva.telefone,
+    textoSlice:   txt.slice(0, 80),
+    endpoint:     `/whatsapp/conversas/${_convAtiva.id}/mensagens`,
+    payload:      { mensagem: txt, tipo: 'texto' },
   });
 
-  // ── Chama backend — backend chama Evolution PRIMEIRO, só salva se OK ──────
-  // NÃO limpa o input antes — só limpa após confirmação de sucesso
-  const r = await Auth.api('POST', `/whatsapp/conversas/${_convAtiva.id}/mensagens`, {
-    mensagem: txt, tipo: 'texto'
-  });
+  let r = null;
+  try {
+    r = await Auth.api('POST', `/whatsapp/conversas/${_convAtiva.id}/mensagens`, {
+      mensagem: txt, tipo: 'texto'
+    });
+  } catch (netErr) {
+    // Erro de rede (fetch falhou, JSON malformado, etc.)
+    console.error('FRONTEND_SEND_NETWORK_ERROR', netErr);
+    r = null;
+  }
 
-  // ── Restaura controles sempre ──────────────────────────────────────────────
-  btn.disabled = false;
+  // ── Restaura controles SEMPRE (independente de sucesso ou erro) ────────────
   btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`;
   input.disabled = false;
   input.focus();
 
-  if (r?.ok) {
-    // ✅ Evolution confirmou envio → limpa input e mostra mensagem real vinda do banco
+  // Log diagnóstico: resposta completa
+  console.log('FRONTEND_SEND_RESPONSE', {
+    r_ok:     r?.ok,
+    r_status: r?.status,
+    r_data:   r?.data,
+    r_null:   r === null,
+  });
+
+  // ── Determina sucesso ──────────────────────────────────────────────────────
+  // Sucesso primário: HTTP 2xx (r.ok === true)
+  // Sucesso fallback: r.data.sucesso === true (para casos onde HTTP errou mas backend confirmou)
+  const httpOk    = r?.ok === true;
+  const bodyOk    = r?.data?.sucesso === true;
+  const isSuccess = httpOk || bodyOk;
+
+  console.log('FRONTEND_SEND_SUCCESS_CHECK', { httpOk, bodyOk, isSuccess });
+
+  if (isSuccess) {
+    // ✅ Sucesso confirmado → limpa input, mostra mensagem, atualiza lista
     input.value = '';
     input.style.height = '';
     btn.disabled = true; // desabilita até novo texto ser digitado
 
-    const msgReal = r.data.dados;
+    const msgReal = r?.data?.dados || {
+      id: Date.now().toString(),
+      conversa_id: _convAtiva.id,
+      mensagem: txt,
+      tipo: 'texto',
+      direcao: 'enviada',
+      status: 'enviado',
+      criado_em: new Date().toISOString(),
+    };
     _mensagens.push(msgReal);
     renderMensagens();
 
@@ -653,15 +680,18 @@ async function enviarMensagem() {
     renderListaConversas();
     document.getElementById('conv-item-' + _convAtiva.id)?.classList.add('active');
 
-  } else {
-    // ❌ Evolution falhou ou erro de rede → NÃO mostra mensagem, texto permanece no input
-    const erroMsg = r?.data?.erro
-      || 'Mensagem não enviada pelo WhatsApp. Verifique a conexão e tente novamente.';
+    console.log('FRONTEND_SEND_OK — input limpo, mensagem renderizada');
 
-    console.error('EVOLUTION_SEND_ERROR', {
-      status:  r?.status,
-      data:    r?.data,
-      message: erroMsg,
+  } else {
+    // ❌ Falha real → mantém texto no input, exibe erro
+    btn.disabled = false; // reabilita para nova tentativa
+    const erroMsg = r?.data?.erro
+      || (r === null ? 'Sem resposta do servidor. Verifique a conexão.' : 'Mensagem não enviada. Tente novamente.');
+
+    console.error('FRONTEND_SEND_FAIL', {
+      r_status: r?.status,
+      r_data:   r?.data,
+      erroMsg,
     });
 
     Toast.show(erroMsg, 'error');

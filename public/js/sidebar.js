@@ -26,8 +26,8 @@ const Sidebar = (() => {
       icon:`<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>` },
     { id:'automacoes', href:'/automacoes.html', label:'Automações', roles:['SUPER_ADMIN'],
       icon:`<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="12" y1="8" x2="12" y2="16"/>` },
-    { id:'logs', href:'/logs.html', label:'Logs de Auditoria', roles:['SUPER_ADMIN','GESTOR'],
-      icon:`<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>` },
+    // { id:'logs', href:'/logs.html', label:'Logs de Auditoria', roles:['SUPER_ADMIN','GESTOR'],
+    //   icon:`<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>` },
     { id:'integracao-whatsapp', href:'/integracao-whatsapp.html', label:'Integração WhatsApp', roles:['SUPER_ADMIN'],
       icon:`<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/><circle cx="12" cy="11" r="1"/><line x1="12" y1="7" x2="12" y2="7"/><line x1="12" y1="15" x2="12" y2="15"/>` },
   ];
@@ -57,7 +57,7 @@ const Sidebar = (() => {
       <aside class="sidebar" role="navigation" aria-label="Menu principal">
         <div class="sidebar-logo">
           <div style="display:flex;align-items:center;gap:10px">
-            <img src="/img/logo.png" alt="PROSPERKT Logo" style="width:36px;height:36px;object-fit:contain;flex-shrink:0;">
+            <img src="/img/logo.png" alt="PROSPERKT Logo" style="width:36px;height:36px;object-fit:contain;flex-shrink:0;mix-blend-mode:screen;">
             <div><div class="logo-text">PROSPERKT</div><div class="logo-sub">CRM Enterprise</div></div>
           </div>
         </div>
