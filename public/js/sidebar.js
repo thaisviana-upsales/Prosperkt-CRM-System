@@ -74,6 +74,9 @@ const Sidebar = (() => {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
             Sair
           </button>
+          <div style="margin-top:10px;text-align:center;font-size:0.6rem;color:var(--text-muted);opacity:0.45;letter-spacing:0.03em;line-height:1.4;padding:0 8px;">
+            Powered by <span style="opacity:0.8;font-weight:500;">UP SALES System™</span>
+          </div>
         </div>
       </aside>`;
   }
