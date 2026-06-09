@@ -362,14 +362,15 @@ async function enviarMensagem(req, res) {
       // UPDATE conversas_whatsapp — SOMENTE colunas existentes
       // Colunas reais: ultima_msg_em, atualizado_em, status
       // NÃO EXISTEM: ultima_mensagem, ultima_direcao
-      await sb.from('conversas_whatsapp')
+      const { error: errUpdConv } = await sb.from('conversas_whatsapp')
         .update({ ultima_msg_em: agora, atualizado_em: agora, status: 'ABERTA' })
-        .eq('id', id)
-        .catch(e => console.warn('SUPA_UPDATE_CONVERSA_WARN:', e.message));
+        .eq('id', id);
+      if (errUpdConv) console.warn('SUPA_UPDATE_CONVERSA_WARN:', errUpdConv.message);
 
-      if (conversa.lead_id)
-        await sb.from('leads').update({ atualizado_em: agora }).eq('id', conversa.lead_id)
-          .catch(e => console.warn('SUPA_UPDATE_LEAD_WARN:', e.message));
+      if (conversa.lead_id) {
+        const { error: errUpdLead } = await sb.from('leads').update({ atualizado_em: agora }).eq('id', conversa.lead_id);
+        if (errUpdLead) console.warn('SUPA_UPDATE_LEAD_WARN:', errUpdLead.message);
+      }
 
       const msg = { ...nova, vendedor_nome: req.usuario.nome };
       console.log('SUPA_INSERT_OK', { msgId, status: msg.status, evoMsgId });
@@ -1369,12 +1370,43 @@ async function webhookReceberMensagem(req, res) {
       }
     }
 
-    // ── 4b. Se fromMe=true: mensagem enviada PELO número conectado ───────────
-    // Pode ser: (a) confirmação de msg enviada pelo CRM — verificar idempotência já tratou
-    //           (b) mensagem enviada manualmente no app WhatsApp
-    // Salva como 'enviada', mas não cria lead novo para mensagens próprias
+    // ── 4b. Se fromMe=true: deduplicação extra por conteúdo+telefone+janela 30s ─
+    // O CRM salva a mensagem ao enviar (com ID gerado localmente).
+    // O webhook chega logo depois com fromMe=true e um key.id diferente.
+    // Para evitar duplicação: verifica se existe msg enviada com mesmo texto/tel nos últimos 30s.
     if (fromMe) {
       console.log(`[WA Webhook] fromMe=true — mensagem enviada pelo número conectado para ${tel}`);
+      if (conteudo) {
+        // O CRM salva o texto SEM cabeçalho (apenas o que o usuário digitou).
+        // A Evolution entrega com cabeçalho: "Nome | PROSPEKT\n\ntexto_usuario"
+        // Extrai o texto limpo (após cabeçalho) para comparar com o que está no banco.
+        const CABECALHO_RE = /^.+\| PROSPEKT\n\n/;
+        const textoLimpo = conteudo.replace(CABECALHO_RE, '').trim();
+        const trintaSeg = new Date(Date.now() - 30_000).toISOString();
+
+        if (isSupa) {
+          // Busca por texto exato (sem cabeçalho) OU pelo texto completo (mensagem enviada manualmente no app)
+          const { data: msgDup } = await sb.from('mensagens_whatsapp')
+            .select('id')
+            .eq('telefone', tel)
+            .eq('direcao', 'enviada')
+            .gte('criado_em', trintaSeg)
+            .or(`mensagem.eq.${textoLimpo},mensagem.eq.${conteudo}`)
+            .limit(1);
+          if (msgDup?.[0]) {
+            console.log(`[WA Webhook] fromMe=true DUPLICATA DETECTADA — msg já salva pelo CRM (${msgDup[0].id}), ignorando.`);
+            return res.json({ sucesso: true, ignorado: true, motivo: 'fromMe_duplicata_crm' });
+          }
+        } else if (db) {
+          const msgDup = db.prepare(
+            "SELECT id FROM mensagens_whatsapp WHERE telefone=? AND direcao='enviada' AND (mensagem=? OR mensagem=?) AND criado_em>=? LIMIT 1"
+          ).get(tel, textoLimpo, conteudo, trintaSeg);
+          if (msgDup) {
+            console.log(`[WA Webhook] fromMe=true DUPLICATA DETECTADA (SQLite) — ignorando.`);
+            return res.json({ sucesso: true, ignorado: true, motivo: 'fromMe_duplicata_crm' });
+          }
+        }
+      }
     }
 
     // ── 5. Busca lead pelo telefone (normalizado) ────────────────────────────
@@ -1518,13 +1550,14 @@ async function webhookReceberMensagem(req, res) {
       if (!errM) {
         console.log('WEBHOOK_MESSAGE_SAVED', { mensagemId: msgId, conversaId, direcao, telefone: tel });
         console.log('WEBHOOK_MENSAGEM_SALVA_COM_SUCESSO:', { mensagemId: msgId, conversaId, telefoneNormalizado: tel, direcao });
-        // Atualiza ultima mensagem da conversa
-        await sb.from('conversas_whatsapp').update({
-          ultima_msg_em: agora, atualizado_em: agora,
-          ultima_mensagem: conteudo?.slice(0, 200) || null,
-          ultima_direcao: direcao,
+        // Atualiza conversa — SOMENTE colunas que existem na tabela Supabase:
+        // ultima_msg_em, atualizado_em, status (ultima_mensagem e ultima_direcao NÃO EXISTEM)
+        const { error: errConvUpd } = await sb.from('conversas_whatsapp').update({
+          ultima_msg_em: agora,
+          atualizado_em: agora,
           status: 'ABERTA',
         }).eq('id', conversaId);
+        if (errConvUpd) console.warn('[WA Webhook] update conversa warn:', errConvUpd.message);
       }
       if (errM) {
         erroSalvar = errM;
