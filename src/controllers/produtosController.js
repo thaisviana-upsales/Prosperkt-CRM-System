@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Produtos Controller
+ * PROSPEKT CRM — Produtos Controller
  * CRUD de produtos (vinculados a vendas/leads)
  * Supabase quando DATABASE_PROVIDER=supabase, SQLite caso contrário.
  */

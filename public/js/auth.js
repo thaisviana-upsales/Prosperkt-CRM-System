@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Auth Client
+ * PROSPEKT CRM — Auth Client
  * Gerencia tokens, sessão e proteção de rotas no browser
  */
 

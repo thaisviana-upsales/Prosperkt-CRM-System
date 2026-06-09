@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Motivos de Perda Controller
+ * PROSPEKT CRM — Motivos de Perda Controller
  * CRUD de motivos de perda configuráveis
  */
 const crypto = require('crypto');

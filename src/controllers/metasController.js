@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Metas Controller v2
+ * PROSPEKT CRM — Metas Controller v2
  * Planejamento comercial por vendedor / mês / funil
  */
 const crypto = require('crypto');

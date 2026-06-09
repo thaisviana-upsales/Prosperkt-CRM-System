@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — supabaseService.js
+ * PROSPEKT CRM — supabaseService.js
  * Cliente Supabase singleton para uso server-side.
  * Usa service_role key → bypassa RLS completamente.
  *

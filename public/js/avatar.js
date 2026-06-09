@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Avatar Utility
+ * PROSPEKT CRM — Avatar Utility
  * Funções compartilhadas para exibição e upload de avatars de usuários.
  * Inclua: <script src="/js/avatar.js"></script>
  */

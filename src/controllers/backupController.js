@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Backup Controller
+ * PROSPEKT CRM — Backup Controller
  * Endpoints: listar, executar, download
  * Acesso restrito a SUPER_ADMIN
  */

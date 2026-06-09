@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Evolution API Service
+ * PROSPEKT CRM — Evolution API Service
  * Wrapper para chamadas à Evolution API (self-hosted)
  *
  * Variáveis necessárias no .env:

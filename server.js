@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Server Entry Point
+ * PROSPEKT CRM — Server Entry Point
  */
 
 require('dotenv').config();
@@ -86,7 +86,7 @@ app.use((err, req, res, _next) => {
 initProvider().then(() => {
   app.listen(PORT, () => {
     console.log('\n╔══════════════════════════════════════╗');
-    console.log('║      PROSPERKT CRM — INICIADO        ║');
+    console.log('║      PROSPEKT CRM — INICIADO        ║');
     console.log('╠══════════════════════════════════════╣');
     console.log(`║  URL: http://localhost:${PORT}          ║`);
     console.log(`║  ENV: ${(process.env.NODE_ENV || 'development').padEnd(29)}║`);

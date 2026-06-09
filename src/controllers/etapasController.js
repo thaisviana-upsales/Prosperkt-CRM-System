@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Etapas Controller
+ * PROSPEKT CRM — Etapas Controller
  * Supabase JS nativo ou SQLite conforme DATABASE_PROVIDER.
  * ARQUITETURA Supabase: etapas.pipeline_id → pipelines.id → pipelines.funil_id → funis.id
  */

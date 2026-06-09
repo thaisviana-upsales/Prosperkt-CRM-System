@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Biblioteca de Mensagens v4
+ * PROSPEKT CRM — Biblioteca de Mensagens v4
  * Categorias dinâmicas carregadas do DB
  * categoria = "CatPai|Subcategoria", titulo = cadência "D+2"
  */

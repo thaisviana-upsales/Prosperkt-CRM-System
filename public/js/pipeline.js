@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Pipeline JS
+ * PROSPEKT CRM — Pipeline JS
  * Kanban, filtros, modal de lead
  * ARQUITETURA: funis → pipelines (funil_id) → etapas (pipeline_id)
  */

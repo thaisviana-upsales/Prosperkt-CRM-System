@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — migrate-usuarios-supabase.js
+ * PROSPEKT CRM — migrate-usuarios-supabase.js
  * Migra todos os usuários do SQLite para o Supabase usando UPSERT.
  * Mantém os IDs originais e os hashes de senha para que os logins continuem funcionando.
  *

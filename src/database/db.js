@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Database Schema & Initialization
+ * PROSPEKT CRM — Database Schema & Initialization
  * Banco de dados SQLite com melhor-sqlite3 (síncrono, persistente)
  */
 

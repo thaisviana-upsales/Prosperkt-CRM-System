@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Audit Logger Service
+ * PROSPEKT CRM — Audit Logger Service
  * Registra ações no banco: SQLite ou Supabase conforme DATABASE_PROVIDER
  */
 

@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Comissões Controller
+ * PROSPEKT CRM — Comissões Controller
  * Calcula comissões em tempo real baseado nas vendas do CRM
  */
 const crypto = require('crypto');

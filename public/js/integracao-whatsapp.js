@@ -1,5 +1,5 @@
 /**
- * PROSPERKT — integracao-whatsapp.js v2
+ * PROSPEKT — integracao-whatsapp.js v2
  * Integração WhatsApp com Evolution API
  */
 

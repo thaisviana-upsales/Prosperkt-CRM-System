@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Audit Controller
+ * PROSPEKT CRM — Audit Controller
  * Consulta audit_logs (imutável) + lixeira (soft delete) + restore
  * Acesso restrito a GESTOR e SUPER_ADMIN
  */

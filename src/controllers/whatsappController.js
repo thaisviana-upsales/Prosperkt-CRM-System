@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — WhatsApp Controller
+ * PROSPEKT CRM — WhatsApp Controller
  * Módulo de conversas, histórico e automação tráfego pago
  *
  * LEGADO: funções originais usam SQLite (getDb)
@@ -221,11 +221,11 @@ async function enviarMensagem(req, res) {
       return res.status(400).json({ sucesso: false, erro: 'Conversa sem telefone válido.' });
 
     // ── 3. Monta texto com identificação do remetente ─────────────────────────
-    // Formato: "Nome | PROSPERKT\n\nMensagem"
-    // Guard: não duplica o cabeçalho se a mensagem já começar com "| PROSPERKT"
+    // Formato: "Nome | PROSPEKT\n\nMensagem"
+    // Guard: não duplica o cabeçalho se a mensagem já começar com "| PROSPEKT"
     const nomeRemetente  = req.usuario.nome || 'CRM';
-    const cabecalho      = `${nomeRemetente} | PROSPERKT`;
-    const jaTemCabecalho = tipo === 'texto' && (mensagem || '').trimStart().includes('| PROSPERKT');
+    const cabecalho      = `${nomeRemetente} | PROSPEKT`;
+    const jaTemCabecalho = tipo === 'texto' && (mensagem || '').trimStart().includes('| PROSPEKT');
     const textoParaCliente = tipo === 'texto'
       ? (jaTemCabecalho ? mensagem : `${cabecalho}\n\n${mensagem}`)
       : (mensagem || '');

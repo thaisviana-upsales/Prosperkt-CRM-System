@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Logs Controller
+ * PROSPEKT CRM — Logs Controller
  * Consulta de auditoria — somente GESTOR e SUPER_ADMIN
  */
 

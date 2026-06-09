@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — whatsapp.js
+ * PROSPEKT CRM — whatsapp.js
  * Central de conversas: lista, chat estilo WA, envio de mensagens
  */
 

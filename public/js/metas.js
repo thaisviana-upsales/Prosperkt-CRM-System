@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — metas.js v2
+ * PROSPEKT CRM — metas.js v2
  * Planejamento comercial por vendedor / mês / funil
  * Conectado ao CRM em tempo real, sem mocks.
  */

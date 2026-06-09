@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — importacaoLeadsController.js
+ * PROSPEKT CRM — importacaoLeadsController.js
  * Endpoints para importação de leads via planilha / webhook externo.
  *
  * Endpoints:

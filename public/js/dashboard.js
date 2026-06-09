@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Dashboard JS
+ * PROSPEKT CRM — Dashboard JS
  * Dados reais do banco via API. Sem mocks.
  */
 let _usuario = null;

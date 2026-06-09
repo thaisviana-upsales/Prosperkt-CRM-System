@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Funis.js
+ * PROSPEKT CRM — Funis.js
  * Grid de funis + modal criar/editar + drawer editor de pipeline
  */
 

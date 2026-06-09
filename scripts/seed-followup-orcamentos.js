@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Seed: Follow Up Orçamentos Sem Resposta (v2)
+ * PROSPEKT CRM — Seed: Follow Up Orçamentos Sem Resposta (v2)
  * Usa dbProvider.js do projeto (já inicializado corretamente com .env)
  * Executa: node scripts/seed-followup-orcamentos.js
  */

@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Leads Controller
+ * PROSPEKT CRM — Leads Controller
  * Supabase JS nativo quando DATABASE_PROVIDER=supabase, SQLite caso contrário.
  */
 const crypto = require('crypto');

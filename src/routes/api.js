@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — API Routes
+ * PROSPEKT CRM — API Routes
  */
 
 const express = require('express');
@@ -227,7 +227,7 @@ router.get ('/admin/backups/:arquivo',autenticar, exigirSuperAdmin, backupCtrl.d
 router.get('/health', (req, res) => {
   res.json({
     sucesso: true,
-    sistema: 'PROSPERKT CRM',
+    sistema: 'PROSPEKT CRM',
     versao: '1.0.0',
     timestamp: new Date().toISOString(),
     status: 'online',

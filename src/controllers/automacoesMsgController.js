@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Automações de Mensagem Controller
+ * PROSPEKT CRM — Automações de Mensagem Controller
  * Gerencia automações de primeira mensagem WhatsApp ao criar lead
  */
 const crypto = require('crypto');

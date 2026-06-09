@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Biblioteca de Mensagens (ex-Mensagens Padrão)
+ * PROSPEKT CRM — Biblioteca de Mensagens (ex-Mensagens Padrão)
  * Scripts reutilizáveis dentro das conversas WhatsApp
  *
  * Categoria salva no campo `categoria` como "CatPai|Subcategoria"

@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — dbProvider.js
+ * PROSPEKT CRM — dbProvider.js
  * Abstração real: SQLite (better-sqlite3 síncrono) ou Supabase JS (assíncrono).
  *
  * Uso nos controllers:

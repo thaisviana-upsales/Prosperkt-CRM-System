@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Sidebar Component (shared)
+ * PROSPEKT CRM — Sidebar Component (shared)
  * Inclua com: <script src="/js/sidebar.js"></script>
  * E chame: Sidebar.render('pipeline') // id da nav-item ativa
  */
@@ -57,8 +57,8 @@ const Sidebar = (() => {
       <aside class="sidebar" role="navigation" aria-label="Menu principal">
         <div class="sidebar-logo">
           <div style="display:flex;align-items:center;gap:10px">
-            <img src="/img/logo_original_backup.png" alt="PROSPERKT Logo" style="width:36px;height:36px;object-fit:contain;flex-shrink:0;">
-            <div><div class="logo-text">PROSPERKT</div><div class="logo-sub">CRM Enterprise</div></div>
+            <img src="/img/logo_original_backup.png" alt="PROSPEKT Logo" style="width:36px;height:36px;object-fit:contain;flex-shrink:0;">
+            <div><div class="logo-text">PROSPEKT</div><div class="logo-sub">CRM Enterprise</div></div>
           </div>
         </div>
         <nav class="sidebar-nav">${navHTML}</nav>

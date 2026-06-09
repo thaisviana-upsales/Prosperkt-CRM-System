@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Backup Service
+ * PROSPEKT CRM — Backup Service
  * Backup diário/semanal/mensal via exportação JSON do Supabase.
  * Mantém: 7 diários, 4 semanais, 12 mensais.
  */

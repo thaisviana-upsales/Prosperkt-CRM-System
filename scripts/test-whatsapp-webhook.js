@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PROSPERKT CRM — scripts/test-whatsapp-webhook.js
+ * PROSPEKT CRM — scripts/test-whatsapp-webhook.js
  * Testa o endpoint POST /api/whatsapp/webhook (recebimento de mensagens WA Light)
  *
  * Uso:

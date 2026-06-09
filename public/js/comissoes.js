@@ -1,4 +1,4 @@
-/** PROSPERKT CRM — comissoes.js (v2) */
+/** PROSPEKT CRM — comissoes.js (v2) */
 let _usuario=null, _canEdit=false, _funis=[], _usuarios=[], _regras=[];
 
 const fmtR = v => 'R$ '+Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});

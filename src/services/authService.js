@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Auth Service
+ * PROSPEKT CRM — Auth Service
  * JWT access token + refresh token com rotação automática.
  * Suporta Supabase e SQLite via getProvider().
  */

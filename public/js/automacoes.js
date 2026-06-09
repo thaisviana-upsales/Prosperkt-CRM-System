@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — automacoes.js
+ * PROSPEKT CRM — automacoes.js
  * Interface de configuração de automações de primeira mensagem WA
  */
 
@@ -10,7 +10,7 @@ let _editId     = null;
 let _delId      = null;
 
 // Mensagem padrão para Tráfego Pago
-const MSG_PADRAO = `Olá! 😊 Aqui é o(a) [nome_vendedor] da Prosperkt.
+const MSG_PADRAO = `Olá! 😊 Aqui é o(a) [nome_vendedor] da Prospekt.
 
 Recebi seu contato e vou assumir seu atendimento por aqui. Antes de começarmos, me conta:
 

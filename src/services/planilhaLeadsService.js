@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — planilhaLeadsService.js
+ * PROSPEKT CRM — planilhaLeadsService.js
  * Importação de leads via Google Sheets CSV (polling ou endpoint manual).
  *
  * REGRAS FIXAS:

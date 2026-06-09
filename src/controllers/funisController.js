@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Funis Controller
+ * PROSPEKT CRM — Funis Controller
  * Supabase JS nativo ou SQLite conforme DATABASE_PROVIDER.
  * ARQUITETURA: funis → pipelines (funil_id) → etapas (pipeline_id)
  * No Supabase a tabela pipelines existe e etapas usam pipeline_id.

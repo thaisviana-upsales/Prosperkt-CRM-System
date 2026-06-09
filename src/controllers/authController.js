@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Auth Controller
+ * PROSPEKT CRM — Auth Controller
  * Login, logout, refresh, me
  */
 

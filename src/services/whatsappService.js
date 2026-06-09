@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — WhatsApp Service (Supabase)
+ * PROSPEKT CRM — WhatsApp Service (Supabase)
  * Camada de acesso à tabela whatsapp_mensagens no Supabase.
  * Independente do controller legado SQLite (whatsappController.js).
  *

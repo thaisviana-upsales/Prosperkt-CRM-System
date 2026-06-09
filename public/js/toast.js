@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Toast Notification System
+ * PROSPEKT CRM — Toast Notification System
  */
 
 const Toast = (() => {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PROSPERKT CRM — scripts/test-import-planilha.js
+ * PROSPEKT CRM — scripts/test-import-planilha.js
  * Teste local de importação de leads via endpoint /api/leads/importar-planilha
  *
  * Uso:

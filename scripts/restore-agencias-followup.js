@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Restore: Categorias de Agências (Follow Up)
+ * PROSPEKT CRM — Restore: Categorias de Agências (Follow Up)
  * Restaura APENAS as categorias apagadas hoje:
  *   - 🏢 Agências|Follow Up - Carteira
  *   - 🏢 Agências|Follow Up - Lead Novo
@@ -117,7 +117,7 @@ Tem algo entrando nas próximas semanas?`,
 ];
 
 async function restore() {
-  console.log('\n🔄 PROSPERKT — Restaurando categorias de Agências...\n');
+  console.log('\n🔄 PROSPEKT — Restaurando categorias de Agências...\n');
 
   // Busca o que já existe para não duplicar
   const { data: existentes, error: errBusca } = await sb

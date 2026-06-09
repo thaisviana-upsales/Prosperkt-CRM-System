@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Users Controller
+ * PROSPEKT CRM — Users Controller
  * CRUD de usuários com permissões RBAC reais.
  * Supabase JS nativo ou SQLite conforme DATABASE_PROVIDER.
  */

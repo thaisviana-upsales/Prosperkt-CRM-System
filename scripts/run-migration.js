@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PROSPERKT CRM — Script de Migration para Supabase
+ * PROSPEKT CRM — Script de Migration para Supabase
  * Executa o schema SQL completo no Supabase via API direta.
  * 
  * Usage: node scripts/run-migration.js
@@ -48,7 +48,7 @@ async function runQuery(sql) {
 }
 
 async function main() {
-  console.log('🚀 PROSPERKT CRM — Supabase Migration');
+  console.log('🚀 PROSPEKT CRM — Supabase Migration');
   console.log('📡 URL:', SUPABASE_URL);
   console.log('📁 Project:', PROJECT_REF);
 

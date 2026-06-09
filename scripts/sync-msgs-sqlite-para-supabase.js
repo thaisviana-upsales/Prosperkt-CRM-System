@@ -1,5 +1,5 @@
 /**
- * PROSPERKT — Sincroniza mensagens_padrao do SQLite → Supabase
+ * PROSPEKT — Sincroniza mensagens_padrao do SQLite → Supabase
  * Modo ADITIVO: nunca apaga registros existentes no Supabase.
  * Apenas insere mensagens que ainda não existem (baseado no par categoria+titulo+texto).
  * Executa: node scripts/sync-msgs-sqlite-para-supabase.js

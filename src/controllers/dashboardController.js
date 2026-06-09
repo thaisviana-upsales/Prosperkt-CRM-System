@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Dashboard Controller v2
+ * PROSPEKT CRM — Dashboard Controller v2
  * Corrige: filtros de data, status case-insensitive, valor_venda, ganho real.
  */
 const { getProvider } = require('../database/dbProvider');

@@ -1,5 +1,5 @@
 /**
- * PROSPERKT — whatsapp-picker.js v3
+ * PROSPEKT — whatsapp-picker.js v3
  * Painel lateral de scripts dentro do WhatsApp
  */
 (function(){

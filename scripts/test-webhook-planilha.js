@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PROSPERKT CRM — scripts/test-webhook-planilha.js
+ * PROSPEKT CRM — scripts/test-webhook-planilha.js
  * Teste do endpoint POST /api/leads/webhook-planilha
  *
  * Uso:

@@ -1,6 +1,6 @@
 /**
- * PROSPERKT CRM — Seed: Scripts Comerciais Oficiais
- * Insere as mensagens reais da PROSPERKT na tabela mensagens_padrao.
+ * PROSPEKT CRM — Seed: Scripts Comerciais Oficiais
+ * Insere as mensagens reais da PROSPEKT na tabela mensagens_padrao.
  * Idempotente: verifica por (categoria + titulo) antes de inserir.
  *
  * Uso: node src/seeds/seed-scripts-comerciais.js
@@ -14,7 +14,7 @@ require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 
 const { getDb } = require('../database/db');
 
-// ── Mensagens oficiais PROSPERKT ─────────────────────────────────────────────
+// ── Mensagens oficiais PROSPEKT ─────────────────────────────────────────────
 const SCRIPTS = [
 
   /* ═══════════════════════════════════════════════════════════════
@@ -259,7 +259,7 @@ function run() {
     }
   });
 
-  console.log('\n🚀 PROSPERKT — Seed: Scripts Comerciais\n');
+  console.log('\n🚀 PROSPEKT — Seed: Scripts Comerciais\n');
   seedMany();
   console.log(`\n✔ Concluído: ${inseridos} inserido(s), ${pulados} já existia(m).\n`);
 }

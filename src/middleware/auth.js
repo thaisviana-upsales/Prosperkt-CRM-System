@@ -1,5 +1,5 @@
 /**
- * PROSPERKT CRM — Auth Middleware
+ * PROSPEKT CRM — Auth Middleware
  * Verifica JWT e injeta req.usuario; implementa RBAC hierárquico
  */
 
