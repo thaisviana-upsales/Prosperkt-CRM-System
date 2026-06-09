@@ -100,13 +100,17 @@ async function enriquecerMetaSupa(sb, m) {
     const mesStr = String(m.mes).padStart(2, '0');
     const anoStr = String(m.ano);
     const de  = `${anoStr}-${mesStr}-01T00:00:00`;
-    const ate = `${anoStr}-${mesStr}-31T23:59:59`;
+    // Calcula o último dia real do mês (evita erro para meses com < 31 dias)
+    const ultimoDia = new Date(Number(m.ano), Number(m.mes), 0).getDate();
+    const ate = `${anoStr}-${mesStr}-${String(ultimoDia).padStart(2,'0')}T23:59:59`;
 
     let qLeads = sb.from('leads').select('id,status,valor,valor_venda,responsavel_id,etapa_id,funil_id,criado_em');
     if (m.usuario_id) qLeads = qLeads.eq('responsavel_id', m.usuario_id);
     if (m.funil_id && m.funil_tipo !== 'TODOS') qLeads = qLeads.eq('funil_id', m.funil_id);
     qLeads = qLeads.gte('criado_em', de).lte('criado_em', ate);
-    const { data: leads = [] } = await qLeads;
+    const { data: leadsRaw, error: leadsErr } = await qLeads;
+    if (leadsErr) console.error('[Metas] enriquecerMetaSupa leads error:', leadsErr.message);
+    const leads = leadsRaw || [];
 
     const ganhos = leads.filter(l => {
       const s = (l.status || '').toUpperCase();
@@ -159,9 +163,16 @@ async function enriquecerMetaSupa(sb, m) {
 async function listar(req, res) {
   try {
     const { isSupa, sb, sqlite: db } = getProvider();
+    const filtros = { ...req.query, role: req.usuario?.role };
+    console.log('METAS_LIST_REQUEST', { filtros });
+
     if (isSupa) {
       // Supabase: busca metas + enriquece via leads do Supabase
-      let q = sb.from('metas').select('*, usuarios(nome), funis(nome)').eq('ativo', 1);
+      // NOTA: especificar FK explicitamente evita ambiguidade PGRST201
+      // (metas tem dois FK para usuarios: usuario_id e criado_por)
+      let q = sb.from('metas')
+        .select('*, usuarios!metas_usuario_id_fkey(nome), funis!metas_funil_id_fkey(nome)')
+        .eq('ativo', 1);
       const { funil_id, usuario_id, mes, ano, tipo } = req.query;
       if (funil_id)   q = q.eq('funil_id', funil_id);
       if (usuario_id) q = q.eq('usuario_id', usuario_id);
@@ -171,13 +182,17 @@ async function listar(req, res) {
       if (req.usuario.role === 'VENDEDOR') q = q.eq('usuario_id', req.usuario.id);
       q = q.order('ano', { ascending: false }).order('mes', { ascending: false });
       const { data, error } = await q;
-      if (error) throw error;
+      if (error) {
+        console.error('METAS_LIST_ERROR', error);
+        throw error;
+      }
       const metas = (data || []).map(m => ({
         ...m,
         usuario_nome: m.usuarios?.nome || null,
         funil_nome:   m.funis?.nome   || null,
       }));
       const comRealizado = await Promise.all(metas.map(m => enriquecerMetaSupa(sb, m)));
+      console.log('METAS_LIST_RESPONSE', { total: comRealizado.length });
       return res.json({ sucesso: true, dados: comRealizado, total: comRealizado.length });
     }
     const { funil_id, usuario_id, mes, ano, tipo } = req.query;
@@ -229,6 +244,7 @@ async function criar(req, res) {
     const { isSupa, sb, sqlite: db } = getProvider();
     if (isSupa) {
       const { usuario_id, funil_id, funil_tipo, mes, ano, tipo, valor_alvo, observacoes } = req.body;
+      console.log('METAS_CREATE_PAYLOAD', { usuario_id, funil_id, funil_tipo, mes, ano, tipo, valor_alvo });
       if (!tipo || !TIPOS_VALIDOS.includes(tipo)) return res.status(400).json({ sucesso:false, erro:'Tipo inválido.' });
       if (!mes || mes < 1 || mes > 12) return res.status(400).json({ sucesso:false, erro:'Mês inválido.' });
       if (!ano) return res.status(400).json({ sucesso:false, erro:'Ano inválido.' });
@@ -243,9 +259,12 @@ async function criar(req, res) {
         tipo, valor_alvo: Number(valor_alvo),
         observacoes: observacoes || null,
         criado_por: req.usuario.id,
-        ativo: true,
-      }).select('*, usuarios(nome), funis(nome)').single();
-      if (error) throw error;
+        ativo: 1,
+      }).select('*, usuarios!metas_usuario_id_fkey(nome), funis!metas_funil_id_fkey(nome)').single();
+      if (error) {
+        console.error('METAS_CREATE_ERROR', error);
+        throw error;
+      }
       const m = { ...data, usuario_nome: data.usuarios?.nome || null, funil_nome: data.funis?.nome || null };
       req.log({ acao:'CREATE', entidade:'metas', entidade_id: data.id, depois: req.body });
       return res.status(201).json({ sucesso: true, dados: await enriquecerMetaSupa(sb, m) });
@@ -312,7 +331,7 @@ async function atualizar(req, res) {
       if (campos.tipo && !TIPOS_VALIDOS.includes(campos.tipo)) return res.status(400).json({ sucesso:false, erro:'Tipo inválido.' });
       campos.atualizado_em = new Date().toISOString();
       const { data, error } = await sb.from('metas').update(campos).eq('id', req.params.id)
-        .select('*, usuarios(nome), funis(nome)').single();
+        .select('*, usuarios!metas_usuario_id_fkey(nome), funis!metas_funil_id_fkey(nome)').single();
       if (error) throw error;
       if (!data) return res.status(404).json({ sucesso:false, erro:'Meta não encontrada.' });
       const m = { ...data, usuario_nome: data.usuarios?.nome || null, funil_nome: data.funis?.nome || null };
@@ -401,7 +420,7 @@ async function duplicar(req, res) {
         titulo: `${src.tipo} — ${MESES[novoMes-1]}/${novoAno}`,
         tipo: src.tipo, valor_alvo: src.valor_alvo,
         observacoes: src.observacoes, criado_por: req.usuario.id, ativo: 1,
-      }).select('*, usuarios(nome), funis(nome)').single();
+      }).select('*, usuarios!metas_usuario_id_fkey(nome), funis!metas_funil_id_fkey(nome)').single();
       if (error) throw error;
       const m = { ...data, usuario_nome: data.usuarios?.nome || null, funil_nome: data.funis?.nome || null };
       req.log({ acao:'DUPLICATE', entidade:'metas', entidade_id: data.id, depois:{ src_id: src.id } });
