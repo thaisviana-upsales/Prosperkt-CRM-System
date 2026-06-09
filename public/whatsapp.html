@@ -7,158 +7,137 @@
 <meta name="description" content="Central de conversas WhatsApp integrada ao CRM PROSPERKT.">
 <link rel="stylesheet" href="/css/design-system.css">
 <style>
+/* ═══════════════════════════════════════════════════════════════════
+   PROSPERKT CRM — Módulo Conversas / WhatsApp
+   Estratégia: Dark CRM + Área operacional clara (central de atendimento)
+   ═══════════════════════════════════════════════════════════════════ */
+
 /* ─── LAYOUT PRINCIPAL ─── */
 .wa-layout{display:flex;height:calc(100vh - 0px);overflow:hidden;gap:0}
 
-/* ─── PAINEL ESQUERDO — LISTA DE CONVERSAS ─── */
-.wa-sidebar{width:340px;min-width:280px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
-.wa-sidebar-header{padding:16px;border-bottom:1px solid var(--border);background:var(--surface)}
-.wa-sidebar-title{font-size:.9rem;font-weight:800;color:var(--text-primary);margin-bottom:10px;display:flex;align-items:center;gap:8px}
-.wa-badge-online{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);display:inline-block}
-.wa-search{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;color:var(--text-primary);font-family:inherit;font-size:.82rem;padding:8px 12px 8px 34px;outline:none;width:100%;transition:border-color .2s}
+/* PAINEL ESQUERDO — LISTA DE CONVERSAS */
+.wa-sidebar{width:340px;min-width:270px;flex-shrink:0;background:#1C1F26;border-right:1px solid #2A2D35;display:flex;flex-direction:column}
+.wa-sidebar-header{padding:16px;border-bottom:1px solid #2A2D35;background:#1C1F26}
+.wa-sidebar-title{font-size:.88rem;font-weight:800;color:#F0F2F5;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.wa-badge-online{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);display:inline-block;flex-shrink:0}
+.wa-search{background:#252830;border:1px solid #2E3240;border-radius:10px;color:#E8EAF0;font-family:inherit;font-size:.82rem;padding:8px 12px 8px 34px;outline:none;width:100%;transition:border-color .2s}
+.wa-search::placeholder{color:#636880}
 .wa-search:focus{border-color:var(--green)}
 .wa-search-wrap{position:relative}
-.wa-search-icon{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-muted);pointer-events:none}
+.wa-search-icon{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:#636880;pointer-events:none}
 .wa-filters{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
-.wa-filter-btn{padding:3px 10px;border-radius:20px;border:1px solid var(--border);background:none;color:var(--text-muted);font-size:.7rem;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s}
-.wa-filter-btn.active,.wa-filter-btn:hover{background:var(--green);border-color:var(--green);color:#0D0D0D}
+.wa-filter-btn{padding:3px 10px;border-radius:20px;border:1px solid #2E3240;background:none;color:#9DA3B4;font-size:.7rem;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s}
+.wa-filter-btn.active,.wa-filter-btn:hover{background:rgba(108,255,78,.12);border-color:rgba(108,255,78,.45);color:var(--green)}
 .wa-conv-list{flex:1;overflow-y:auto;padding:6px}
-.wa-conv-item{display:flex;align-items:center;gap:12px;padding:12px;border-radius:12px;cursor:pointer;transition:all .2s;position:relative;margin-bottom:2px}
-.wa-conv-item:hover{background:var(--surface-2)}
-.wa-conv-item.active{background:rgba(108,255,78,.08);border-left:3px solid var(--green)}
-.wa-conv-avatar{width:44px;height:44px;border-radius:50%;background:var(--grad-brand);display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;color:#0D0D0D;flex-shrink:0;position:relative}
-.wa-conv-status-dot{position:absolute;bottom:1px;right:1px;width:10px;height:10px;border-radius:50%;background:var(--green);border:2px solid var(--surface)}
+.wa-conv-item{display:flex;align-items:center;gap:12px;padding:11px 10px;border-radius:10px;cursor:pointer;transition:all .18s;position:relative;margin-bottom:2px;border-left:3px solid transparent}
+.wa-conv-item:hover{background:rgba(255,255,255,.05)}
+.wa-conv-item.active{background:rgba(108,255,78,.07);border-left:3px solid var(--green)}
+.wa-conv-avatar{width:42px;height:42px;border-radius:50%;background:var(--grad-brand);display:flex;align-items:center;justify-content:center;font-size:.78rem;font-weight:700;color:#0D0D0D;flex-shrink:0;position:relative}
+.wa-conv-status-dot{position:absolute;bottom:1px;right:1px;width:10px;height:10px;border-radius:50%;background:var(--green);border:2px solid #1C1F26}
 .wa-conv-info{flex:1;min-width:0}
-.wa-conv-name{font-size:.84rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px}
-.wa-conv-preview{font-size:.73rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wa-conv-preview.enviada::before{content:'✓ ';color:var(--green)}
+.wa-conv-name{font-size:.83rem;font-weight:700;color:#E8EAF0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px}
+.wa-conv-item.active .wa-conv-name{color:#FFFFFF}
+.wa-conv-preview{font-size:.72rem;color:#7A8098;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wa-conv-preview.enviada::before{content:"✓ ";color:var(--green);opacity:.7}
+.wa-conv-item.active .wa-conv-preview{color:#9DA3B4}
 .wa-conv-meta{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0}
-.wa-conv-time{font-size:.67rem;color:var(--text-muted)}
+.wa-conv-time{font-size:.66rem;color:#6B7280}
 .wa-unread-badge{background:var(--green);color:#0D0D0D;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:.62rem;font-weight:800}
-.wa-empty-list{text-align:center;padding:40px 20px;color:var(--text-muted);font-size:.85rem}
+.wa-empty-list{text-align:center;padding:40px 20px;color:#636880;font-size:.85rem}
+.wa-conv-list::-webkit-scrollbar{width:3px}
+.wa-conv-list::-webkit-scrollbar-thumb{background:#2E3240;border-radius:2px}
 
-/* ─── ÁREA CENTRAL — CHAT ─── */
-.wa-chat{flex:1;display:flex;flex-direction:column;background:#0D0D0D;position:relative;min-width:0}
-.wa-chat-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text-muted);gap:14px;text-align:center}
-.wa-chat-empty-icon{font-size:4rem;opacity:.3}
+/* ÁREA CENTRAL — CHAT (claro) */
+.wa-chat{flex:1;display:flex;flex-direction:column;background:#F0F2F5;position:relative;min-width:0}
+.wa-chat-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;background:#F0F2F5}
+.wa-chat-empty-icon{font-size:4rem;opacity:.25}
+.wa-chat-empty > div:nth-child(2){color:#374151;font-size:1rem;font-weight:700}
+.wa-chat-empty > div:nth-child(3){color:#9CA3AF;font-size:.82rem}
 
-/* ─── HEADER DO CHAT ─── */
-.wa-chat-header{background:var(--surface);border-bottom:1px solid var(--border);padding:12px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+/* HEADER DO CHAT */
+.wa-chat-header{background:#FFFFFF;border-bottom:1px solid #E5E7EB;padding:12px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.06)}
 .wa-chat-avatar{width:40px;height:40px;border-radius:50%;background:var(--grad-brand);display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:700;color:#0D0D0D;flex-shrink:0}
 .wa-chat-info{flex:1}
-.wa-chat-name{font-size:.9rem;font-weight:700}
-.wa-chat-sub{font-size:.72rem;color:var(--text-muted);margin-top:1px}
+.wa-chat-name{font-size:.9rem;font-weight:700;color:#111827}
+.wa-chat-sub{font-size:.72rem;color:#6B7280;margin-top:1px}
 .wa-chat-sub .online{color:var(--green)}
 .wa-chat-actions{display:flex;gap:8px}
-.wa-icon-btn{background:none;border:none;color:var(--text-muted);cursor:pointer;padding:6px;border-radius:8px;transition:all .15s;display:flex;align-items:center;justify-content:center}
-.wa-icon-btn:hover{background:var(--surface-2);color:var(--text-primary)}
+.wa-icon-btn{background:none;border:none;color:#6B7280;cursor:pointer;padding:6px;border-radius:8px;transition:all .15s;display:flex;align-items:center;justify-content:center}
+.wa-icon-btn:hover{background:#F3F4F6;color:#374151}
 
-/* ─── MENSAGENS — FUNDO PREMIUM PROSPERKT ─── */
-.wa-messages{
-  flex:1;overflow-y:auto;overflow-x:hidden;padding:16px;
-  display:flex;flex-direction:column;gap:4px;
-  position:relative;
-  background:
-    radial-gradient(ellipse 70% 55% at 30% 20%, rgba(108,255,78,.016) 0%, transparent 65%),
-    radial-gradient(ellipse 55% 45% at 75% 85%, rgba(225,0,152,.011) 0%, transparent 60%),
-    repeating-linear-gradient(
-      135deg,
-      rgba(108,255,78,.0035) 0px, rgba(108,255,78,.0035) 1px,
-      transparent 1px, transparent 18px
-    ),
-    #0D0D0D;
-}
-
-/* ── Marca d'água Prosperkt — extremamente discreta ── */
-.wa-messages::before{
-  content:'';
-  position:absolute; /* confinado à área de mensagens */
-  inset:0;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 240'%3E%3Crect x='10' y='10' width='170' height='170' rx='38' fill='none' stroke='%236CFF4E' stroke-width='7'/%3E%3Cpath d='M55 42 L55 148 M55 42 L112 42 Q142 42 142 80 Q142 118 112 118 L55 118' fill='none' stroke='%236CFF4E' stroke-width='12' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ctext x='95' y='218' font-family='Arial%2Csans-serif' font-weight='800' font-size='19' text-anchor='middle' letter-spacing='5' fill='%236CFF4E'%3EPROSPERKT%3C/text%3E%3C/svg%3E");
-  background-repeat:no-repeat;
-  background-position:center 45%;
-  background-size:220px 264px;
-  opacity:.045;
-  pointer-events:none;
-  z-index:0;
-  animation:waBreath 12s ease-in-out infinite;
-  will-change:opacity;
-}
-
-/* ── Garante que mensagens sempre ficam acima do fundo ── */
+/* MENSAGENS */
+.wa-messages{flex:1;overflow-y:auto;overflow-x:hidden;padding:20px 16px;display:flex;flex-direction:column;gap:4px;position:relative;background:#EEF1F5}
+.wa-messages::before{content:"";position:absolute;inset:0;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 240'%3E%3Crect x='10' y='10' width='170' height='170' rx='38' fill='none' stroke='%23374151' stroke-width='7'/%3E%3Cpath d='M55 42 L55 148 M55 42 L112 42 Q142 42 142 80 Q142 118 112 118 L55 118' fill='none' stroke='%23374151' stroke-width='12' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ctext x='95' y='218' font-family='Arial%2Csans-serif' font-weight='800' font-size='19' text-anchor='middle' letter-spacing='5' fill='%23374151'%3EPROSPERKT%3C/text%3E%3C/svg%3E");background-repeat:no-repeat;background-position:center 42%;background-size:200px 240px;opacity:.04;pointer-events:none;z-index:0;animation:waBreath 14s ease-in-out infinite;will-change:opacity}
+@keyframes waBreath{0%,100%{opacity:.04}50%{opacity:.055}}
 .wa-msg,.wa-date-sep,.wa-typing{position:relative;z-index:1}
+.wa-date-sep{text-align:center;margin:14px 0}
+.wa-date-sep span{background:rgba(0,0,0,.06);border:1px solid rgba(0,0,0,.08);border-radius:20px;padding:3px 14px;font-size:.69rem;color:#6B7280;font-weight:600}
+.wa-messages::-webkit-scrollbar{width:4px}
+.wa-messages::-webkit-scrollbar-thumb{background:#D1D5DB;border-radius:2px}
 
-/* ── Animação de respiração — apenas opacidade, zero movimento ── */
-@keyframes waBreath{
-  0%,100%{opacity:.045}
-  50%     {opacity:.062}
-}
-
-.wa-date-sep{text-align:center;margin:12px 0;position:relative}
-.wa-date-sep span{background:rgba(255,255,255,.07);backdrop-filter:blur(8px);border:1px solid var(--border);border-radius:20px;padding:3px 14px;font-size:.7rem;color:var(--text-muted);font-weight:600}
-.wa-msg{display:flex;margin-bottom:2px;max-width:100%}
+/* BALÕES */
+.wa-msg{display:flex;margin-bottom:3px;max-width:100%}
 .wa-msg.recebida{justify-content:flex-start}
 .wa-msg.enviada{justify-content:flex-end}
-.wa-bubble{max-width:70%;min-width:80px;padding:8px 12px;border-radius:16px;position:relative;word-break:break-word}
-.wa-msg.recebida .wa-bubble{background:var(--surface);border:1px solid var(--border);border-top-left-radius:4px}
-.wa-msg.enviada .wa-bubble{background:linear-gradient(135deg,#1a5c12,#22740e);border:1px solid rgba(108,255,78,.2);border-bottom-right-radius:4px}
-.wa-bubble-text{font-size:.84rem;line-height:1.45;color:var(--text-primary)}
+.wa-bubble{max-width:68%;min-width:80px;padding:8px 12px;border-radius:18px;position:relative;word-break:break-word}
+.wa-msg.recebida .wa-bubble{background:#FFFFFF;border:1px solid #E5E7EB;border-top-left-radius:4px;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.wa-msg.enviada .wa-bubble{background:#DCF8E8;border:1px solid #B8EDD0;border-bottom-right-radius:4px;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.wa-bubble-text{font-size:.85rem;line-height:1.5;color:#1A1A1A}
 .wa-bubble-footer{display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:4px}
-.wa-bubble-time{font-size:.62rem;color:rgba(255,255,255,.45)}
+.wa-bubble-time{font-size:.62rem;color:#9CA3AF}
 .wa-bubble-status{display:inline-flex;align-items:center;line-height:1;margin-left:2px}
-.wa-bubble-status.pending svg{stroke:rgba(255,255,255,.35)}
-.wa-bubble-status.sent svg,.wa-bubble-status.enviado svg{stroke:rgba(255,255,255,.45)}
-.wa-bubble-status.delivered svg,.wa-bubble-status.entregue svg{stroke:rgba(255,255,255,.55)}
-.wa-bubble-status.read svg,.wa-bubble-status.lido svg{stroke:#4FC3F7}
-.wa-bubble-status.failed svg,.wa-bubble-status.erro svg{stroke:#FF4C4C}
+.wa-bubble-status.pending svg{stroke:rgba(0,0,0,.25)}
+.wa-bubble-status.sent svg,.wa-bubble-status.enviado svg{stroke:rgba(0,0,0,.3)}
+.wa-bubble-status.delivered svg,.wa-bubble-status.entregue svg{stroke:rgba(0,0,0,.4)}
+.wa-bubble-status.read svg,.wa-bubble-status.lido svg{stroke:#2196F3}
+.wa-bubble-status.failed svg,.wa-bubble-status.erro svg{stroke:#EF4444}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 /* Áudio */
 .wa-audio{display:flex;align-items:center;gap:10px;padding:4px 0}
-.wa-audio-play{width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.1);border:none;color:var(--text-primary);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s}
-.wa-audio-play:hover{background:rgba(255,255,255,.2)}
-.wa-audio-bar{flex:1;height:3px;background:rgba(255,255,255,.2);border-radius:2px;position:relative}
+.wa-audio-play{width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,.08);border:none;color:#374151;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s}
+.wa-audio-play:hover{background:rgba(0,0,0,.14)}
+.wa-audio-bar{flex:1;height:3px;background:rgba(0,0,0,.12);border-radius:2px;position:relative}
 .wa-audio-bar-fill{height:100%;background:var(--green);border-radius:2px;width:0%}
-/* Imagem */
 .wa-img{max-width:240px;border-radius:10px;cursor:pointer;transition:opacity .2s}
-.wa-img:hover{opacity:.85}
-/* Sistema */
+.wa-img:hover{opacity:.88}
 .wa-msg.sistema{justify-content:center}
-.wa-msg.sistema .wa-bubble{background:rgba(255,255,255,.05);border:none;font-size:.72rem;color:var(--text-muted);text-align:center}
+.wa-msg.sistema .wa-bubble{background:rgba(0,0,0,.05);border:none;font-size:.72rem;color:#6B7280;text-align:center}
+
 /* Digitando */
-.wa-typing{display:flex;align-items:center;gap:4px;padding:10px 14px;background:var(--surface);border-radius:16px;border-top-left-radius:4px;width:fit-content;margin-bottom:4px;display:none}
+.wa-typing{display:none;align-items:center;gap:4px;padding:10px 14px;background:#FFFFFF;border:1px solid #E5E7EB;border-radius:18px;border-top-left-radius:4px;width:fit-content;margin-bottom:4px;box-shadow:0 1px 2px rgba(0,0,0,.06)}
 .wa-typing.visible{display:flex}
-.wa-typing span{width:6px;height:6px;border-radius:50%;background:var(--text-muted);animation:waTyping 1.4s infinite ease-in-out}
+.wa-typing span{width:6px;height:6px;border-radius:50%;background:#9CA3AF;animation:waTyping 1.4s infinite ease-in-out}
 .wa-typing span:nth-child(1){animation-delay:0s}
 .wa-typing span:nth-child(2){animation-delay:.2s}
 .wa-typing span:nth-child(3){animation-delay:.4s}
 @keyframes waTyping{0%,60%,100%{transform:scale(.8);opacity:.4}30%{transform:scale(1);opacity:1}}
 
-/* ─── INPUT ─── */
-.wa-input-bar{background:var(--surface);border-top:1px solid var(--border);padding:12px 16px;display:flex;align-items:flex-end;gap:10px;flex-shrink:0}
-.wa-input-wrap{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:24px;padding:10px 16px;display:flex;align-items:flex-end;gap:8px;transition:border-color .2s}
-.wa-input-wrap:focus-within{border-color:var(--green)}
-.wa-textarea{flex:1;background:none;border:none;outline:none;color:var(--text-primary);font-family:inherit;font-size:.875rem;resize:none;max-height:100px;overflow-y:auto;line-height:1.4;min-height:20px}
-.wa-textarea::placeholder{color:var(--text-muted)}
-.wa-send-btn{width:44px;height:44px;border-radius:50%;background:var(--grad-brand);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .2s;box-shadow:0 0 0 rgba(108,255,78,0)}
-.wa-send-btn:hover{box-shadow:0 0 16px rgba(108,255,78,.4);transform:scale(1.06)}
-.wa-send-btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none}
-.wa-attach-btn{background:none;border:none;color:var(--text-muted);cursor:pointer;padding:6px;border-radius:50%;transition:all .15s}
-.wa-attach-btn:hover{color:var(--green);background:rgba(108,255,78,.1)}
-.wa-script-btn{background:none;border:1px solid var(--border);color:var(--text-muted);cursor:pointer;padding:6px 10px;border-radius:20px;transition:all .15s;font-size:.7rem;font-weight:700;display:flex;align-items:center;gap:5px;white-space:nowrap;flex-shrink:0;font-family:inherit}
-.wa-script-btn:hover{color:var(--green);border-color:var(--green);background:rgba(108,255,78,.06)}
+/* AUTORIA */
+.wa-msg-autor{font-size:.61rem;font-weight:700;color:#3B82F6;margin-bottom:2px;opacity:.8;letter-spacing:.02em}
+.wa-msg.enviada .wa-msg-autor{text-align:right;padding-right:4px}
+.wa-msg.recebida .wa-msg-autor{text-align:left;padding-left:4px}
 
-/* ─── AUTORIA ─── */
-/* Rótulo [Nome] acima da bolha enviada pelo vendedor — apenas no CRM, nunca enviado ao cliente */
-.wa-msg-autor{font-size:.62rem;font-weight:700;color:#3B8BFF;margin-bottom:3px;text-align:right;padding-right:4px;opacity:.85;letter-spacing:.02em}
-.wa-msg.enviada .wa-msg-autor{text-align:right}
+/* INPUT */
+.wa-input-bar{background:#FFFFFF;border-top:1px solid #E5E7EB;padding:12px 14px;display:flex;align-items:flex-end;gap:8px;flex-shrink:0;box-shadow:0 -1px 4px rgba(0,0,0,.05)}
+.wa-input-wrap{flex:1;background:#F9FAFB;border:1px solid #D0D5DD;border-radius:24px;padding:9px 14px;display:flex;align-items:flex-end;gap:8px;transition:border-color .2s,box-shadow .2s}
+.wa-input-wrap:focus-within{border-color:var(--green);box-shadow:0 0 0 3px rgba(108,255,78,.08)}
+.wa-textarea{flex:1;background:none;border:none;outline:none;color:#1A1A1A;font-family:inherit;font-size:.875rem;resize:none;max-height:100px;overflow-y:auto;line-height:1.45;min-height:20px}
+.wa-textarea::placeholder{color:#9CA3AF}
+.wa-send-btn{width:44px;height:44px;border-radius:50%;background:var(--grad-brand);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .2s;box-shadow:0 2px 8px rgba(108,255,78,.25)}
+.wa-send-btn:hover{box-shadow:0 4px 16px rgba(108,255,78,.4);transform:scale(1.06)}
+.wa-send-btn:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+.wa-attach-btn{background:none;border:none;color:#9CA3AF;cursor:pointer;padding:6px;border-radius:50%;transition:all .15s}
+.wa-attach-btn:hover{color:#374151;background:#F3F4F6}
+.wa-script-btn{background:none;border:1px solid #D0D5DD;color:#6B7280;cursor:pointer;padding:6px 10px;border-radius:20px;transition:all .15s;font-size:.7rem;font-weight:700;display:flex;align-items:center;gap:5px;white-space:nowrap;flex-shrink:0;font-family:inherit}
+.wa-script-btn:hover{color:#1A1A1A;border-color:#374151;background:#F3F4F6}
 
-/* ─── BANNER STATUS CONEXÃO ─── */
-.wa-status-banner{background:rgba(255,182,39,.08);border-bottom:1px solid rgba(255,182,39,.25);padding:7px 18px;font-size:.74rem;color:#FFB627;display:flex;align-items:center;gap:8px;flex-shrink:0}
-.wa-status-banner a{color:#FFB627}
+/* BANNER STATUS */
+.wa-status-banner{background:#FFFBEB;border-bottom:1px solid #FCD34D;padding:7px 18px;font-size:.74rem;color:#92400E;display:flex;align-items:center;gap:8px;flex-shrink:0}
+.wa-status-banner a{color:#92400E;font-weight:700}
 
-/* ─── PICKER MODAL ─── */
-.picker-ov{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(8px);z-index:910;display:flex;align-items:flex-end;justify-content:center;opacity:0;pointer-events:none;transition:.25s}
+/* PICKER MODAL */
+.picker-ov{position:fixed;inset:0;background:rgba(0,0,0,.65);backdrop-filter:blur(8px);z-index:910;display:flex;align-items:flex-end;justify-content:center;opacity:0;pointer-events:none;transition:.25s}
 .picker-ov.open{opacity:1;pointer-events:all}
 .picker-box{background:var(--surface);border:1px solid var(--border);border-radius:20px 20px 0 0;width:min(680px,100vw);max-height:82vh;display:flex;flex-direction:column;transform:translateY(40px);transition:.3s cubic-bezier(.16,1,.3,1)}
 .picker-ov.open .picker-box{transform:translateY(0)}
@@ -176,23 +155,19 @@
 .picker-usar-btn{background:var(--grad-brand);border:none;border-radius:8px;color:#0D0D0D;font-size:.75rem;font-weight:800;padding:7px 14px;cursor:pointer;flex-shrink:0;transition:all .15s;white-space:nowrap;align-self:center;font-family:inherit}
 .picker-usar-btn:hover{box-shadow:0 0 12px rgba(108,255,78,.35)}
 
-/* ─── PAINEL DIREITO — DETALHES DO LEAD ─── */
-.wa-info-panel{width:280px;min-width:240px;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0;display:none}
+/* PAINEL DIREITO */
+.wa-info-panel{width:280px;min-width:240px;background:#FFFFFF;border-left:1px solid #E5E7EB;display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0;display:none}
 .wa-info-panel.open{display:flex}
-.wa-info-header{padding:16px;border-bottom:1px solid var(--border)}
-.wa-info-section{padding:14px 16px;border-bottom:1px solid var(--border)}
-.wa-info-label{font-size:.62rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
-.wa-info-value{font-size:.84rem;color:var(--text-primary);font-weight:500}
+.wa-info-header{padding:16px;border-bottom:1px solid #E5E7EB}
+.wa-info-section{padding:14px 16px;border-bottom:1px solid #F3F4F6}
+.wa-info-label{font-size:.62rem;font-weight:700;color:#9CA3AF;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
+.wa-info-value{font-size:.84rem;color:#1A1A1A;font-weight:500}
 
-/* ─── MODAL NOVA CONVERSA ─── */
-.modal-ov{position:fixed;inset:0;background:rgba(0,0,0,.8);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:900;padding:16px;opacity:0;pointer-events:none;transition:opacity .2s}
+/* MODAL NOVA CONVERSA */
+.modal-ov{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:900;padding:16px;opacity:0;pointer-events:none;transition:opacity .2s}
 .modal-ov.open{opacity:1;pointer-events:all}
 .modal-box{background:var(--surface);border:1px solid var(--border-hover);border-radius:20px;padding:28px;width:100%;max-width:440px;box-shadow:var(--shadow-lg);transform:translateY(20px);transition:transform .3s cubic-bezier(.16,1,.3,1)}
 .modal-ov.open .modal-box{transform:translateY(0)}
-
-/* Scrollbar estilo WA */
-.wa-messages::-webkit-scrollbar,.wa-conv-list::-webkit-scrollbar{width:4px}
-.wa-messages::-webkit-scrollbar-thumb,.wa-conv-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 </style>
 </head>
 <body>
