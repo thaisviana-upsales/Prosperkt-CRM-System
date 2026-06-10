@@ -397,6 +397,11 @@ async function abrirLead(id) {
   popularSelProdutos(l.produto_id||''); // legado oculto — mantém compatibilidade
   _parcelas = l.parcelas_json ? (typeof l.parcelas_json==='string' ? JSON.parse(l.parcelas_json) : l.parcelas_json) : [];
   renderParcelas();
+  // Campos novos: data de fechamento, próxima compra, detalhes do pedido
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v||''; };
+  setVal('fl-data-fechamento', l.data_fechamento);
+  setVal('fl-proxima-compra',  l.proxima_compra);
+  setVal('fl-obs-pedido', l.dados_extras?.obs_pedido || '');
   // Multi-produto: carrega do banco
   _leadIdAberto = id;
   await carregarProdutosLead(id, l);
@@ -657,6 +662,14 @@ async function salvarLead() {
     produto_id:           document.getElementById('fl-produto').value||undefined,
     produto_nome:         document.getElementById('fl-produto').selectedOptions[0]?.text||undefined,
     produto_cor:          document.getElementById('fl-produto').selectedOptions[0]?.dataset?.cor||undefined,
+    // Campos novos
+    data_fechamento:  document.getElementById('fl-data-fechamento')?.value||undefined,
+    proxima_compra:   document.getElementById('fl-proxima-compra')?.value||undefined,
+    dados_extras: {
+      obs_pedido:   document.getElementById('fl-obs-pedido')?.value||undefined,
+      num_produtos: document.getElementById('fl-num-produtos')?.value||undefined,
+      qtd_pecas:    document.getElementById('fl-qtd-pecas')?.value||undefined,
+    },
   };
 
   const btn=document.getElementById('ml-salvar');
@@ -816,25 +829,40 @@ async function carregarProdutosLead(leadId, lead) {
   renderProdutosLead();
 }
 
-// Recalcula o total e atualiza o campo valor_venda
+// Recalcula o total e atualiza fl-valor-venda + detalhes do pedido
 function recalcularTotalVenda() {
-  const total = _leadProdutos
-    .filter(p => !p._removido)
-    .reduce((s, p) => s + Number(p.valor_total || (p.quantidade * p.valor_unitario) || 0), 0);
-  document.getElementById('fl-valor-venda').value = total > 0 ? total.toFixed(2) : '';
+  const ativos = _leadProdutos.filter(p => !p._removido);
+  const total  = ativos.reduce((s, p) => s + Number(p.valor_total || (p.quantidade * p.valor_unitario) || 0), 0);
+  const totalQtd = ativos.reduce((s, p) => s + (Number(p.quantidade) || 0), 0);
+
+  const vv = document.getElementById('fl-valor-venda');
   const totalEl = document.getElementById('lp-total-valor');
   const wrapEl  = document.getElementById('lp-total-wrap');
-  const ativos  = _leadProdutos.filter(p => !p._removido);
-  if (totalEl) totalEl.textContent = `R$ ${total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
-  if (wrapEl)  wrapEl.style.display = ativos.length ? 'flex' : 'none';
+  const numProd = document.getElementById('fl-num-produtos');
+  const qtdPec  = document.getElementById('fl-qtd-pecas');
+
+  if (vv)       vv.value = total > 0 ? total.toFixed(2) : '';
+  if (totalEl)  totalEl.textContent = `R$ ${total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+  if (wrapEl)   wrapEl.style.display = ativos.length ? 'flex' : 'none';
+  if (numProd)  numProd.value = ativos.length || '';
+  if (qtdPec)   qtdPec.value  = totalQtd > 0 ? totalQtd : '';
 }
 
-// Renderiza a lista de produtos da venda
+// Renderiza a lista de produtos da venda (com input+datalist para busca)
 function renderProdutosLead() {
   const lista   = document.getElementById('lp-lista');
   const empty   = document.getElementById('lp-empty');
   const header  = document.getElementById('lp-header');
   if (!lista) return;
+
+  // Monta datalist uma vez no DOM (para reusar em todas as linhas)
+  let dl = document.getElementById('dl-produtos-crm');
+  if (!dl) {
+    dl = document.createElement('datalist');
+    dl.id = 'dl-produtos-crm';
+    document.body.appendChild(dl);
+  }
+  dl.innerHTML = _produtos.map(p => `<option value="${p.nome}" data-id="${p.id}" data-cor="${p.cor||'#6CFF4E'}"></option>`).join('');
 
   const ativos = _leadProdutos.filter(p => !p._removido);
   empty.style.display  = ativos.length ? 'none' : '';
@@ -843,30 +871,30 @@ function renderProdutosLead() {
 
   ativos.forEach((p, i) => {
     const idx = _leadProdutos.indexOf(p);
-    const prodOpts = _produtos.map(pr =>
-      `<option value="${pr.id}" data-cor="${pr.cor||'#6CFF4E'}" ${pr.id === p.produto_id ? 'selected' : ''}>${pr.nome}</option>`
-    ).join('');
     const row = document.createElement('div');
-    row.style.cssText = 'display:grid;grid-template-columns:1fr 70px 100px 90px 28px;gap:4px;align-items:center';
+    row.style.cssText = 'display:grid;grid-template-columns:1fr 70px 100px 90px 28px;gap:4px;align-items:center;margin-bottom:2px';
     row.dataset.lpIdx = idx;
     row.innerHTML = `
-      <select class="input lp-produto-sel" style="font-size:.78rem;padding:4px 6px" data-idx="${idx}">
-        <option value="">— Produto —</option>${prodOpts}
-      </select>
+      <input list="dl-produtos-crm" class="input lp-produto-input" style="font-size:.78rem;padding:4px 6px" placeholder="Buscar produto..." value="${p.produto_nome||''}" data-idx="${idx}" autocomplete="off">
       <input type="number" class="input lp-qty" style="font-size:.78rem;padding:4px 6px" min="0.001" step="any" placeholder="Qtd" value="${p.quantidade||1}" data-idx="${idx}">
       <input type="number" class="input lp-vunit" style="font-size:.78rem;padding:4px 6px" min="0" step="0.01" placeholder="R$ unit" value="${p.valor_unitario||''}" data-idx="${idx}">
       <input type="number" class="input lp-vtot" style="font-size:.78rem;padding:4px 6px;background:var(--surface-2)" readonly placeholder="Total" value="${Number(p.valor_total||(p.quantidade*p.valor_unitario)||0).toFixed(2)}" data-idx="${idx}">
       <button type="button" class="lp-rm" data-idx="${idx}" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:1rem;line-height:1" title="Remover">✕</button>`;
 
-    // Evento: selecionar produto do catálogo
-    row.querySelector('.lp-produto-sel').addEventListener('change', async e => {
-      const pidx = +e.target.dataset.idx;
-      const prodId = e.target.value;
-      const opt    = e.target.selectedOptions[0];
-      _leadProdutos[pidx].produto_id   = prodId;
-      _leadProdutos[pidx].produto_nome = opt?.text || _leadProdutos[pidx].produto_nome;
-      _leadProdutos[pidx].produto_cor  = opt?.dataset.cor || '#6CFF4E';
+    // Evento: selecionar/digitar produto (detecta match no datalist)
+    const inputProd = row.querySelector('.lp-produto-input');
+    inputProd.addEventListener('change', async e => {
+      const pidx     = +e.target.dataset.idx;
+      const nomeDigitado = e.target.value.trim();
+      // Tenta encontrar produto exato no catálogo
+      const opt = [...dl.querySelectorAll('option')].find(
+        o => o.value.trim().toLowerCase() === nomeDigitado.toLowerCase()
+      );
+      _leadProdutos[pidx].produto_nome = nomeDigitado;
+      _leadProdutos[pidx].produto_id   = opt ? opt.dataset.id  : '';
+      _leadProdutos[pidx].produto_cor  = opt ? opt.dataset.cor : '#6CFF4E';
       await salvarLinhaProduto(pidx);
+      recalcularTotalVenda();
     });
 
     // Evento: editar quantidade
@@ -963,9 +991,9 @@ function adicionarLinhaProduto() {
   });
   renderProdutosLead();
   abrirSecaoComercial();
-  // Foca o select da última linha adicionada
+  // Foca o input de busca da última linha adicionada
   const rows = document.querySelectorAll('#lp-lista [data-lp-idx]');
-  if (rows.length) rows[rows.length-1].querySelector('.lp-produto-sel')?.focus();
+  if (rows.length) rows[rows.length-1].querySelector('.lp-produto-input')?.focus();
 }
 
 function renderParcelas() {

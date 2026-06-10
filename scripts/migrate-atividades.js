@@ -1,9 +1,11 @@
 /**
- * Executa migração: cria tabelas atividades, lead_producao, lead_arquivos
+ * Verifica se as tabelas de atividades, lead_producao e lead_arquivos existem no Supabase.
+ * Não executa DDL (o DDL fica no arquivo SQL consolidado).
+ * Serve apenas para validar se a migration foi aplicada.
+ *
+ * Uso: SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... node scripts/migrate-atividades.js
  */
 const { createClient } = require('@supabase/supabase-js');
-const fs = require('fs');
-const path = require('path');
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -16,47 +18,29 @@ if (!supabaseUrl || !supabaseKey) {
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 async function main() {
-  const agora = new Date().toISOString();
+  console.log('\n=== Verificando tabelas no Supabase ===\n');
 
-  // 1. Atividades
-  console.log('Criando tabela atividades...');
-  const { error: e1 } = await sb.rpc('exec_sql', {
-    sql: `CREATE TABLE IF NOT EXISTS public.atividades (
-      id TEXT PRIMARY KEY,
-      lead_id TEXT NOT NULL,
-      usuario_id TEXT,
-      tipo TEXT NOT NULL DEFAULT 'Outra',
-      observacao TEXT,
-      data_limite DATE,
-      hora_limite TIME,
-      status TEXT NOT NULL DEFAULT 'pendente',
-      concluida_em TIMESTAMPTZ,
-      criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );`
-  }).catch(() => null);
+  const tabelas = ['atividades', 'lead_producao', 'lead_arquivos'];
+  let todasOk = true;
 
-  // Tenta via insert para verificar se já existe
-  const { error: testAt } = await sb.from('atividades').select('id').limit(1);
-  if (testAt && testAt.code === 'PGRST116') {
-    console.log('Tabela atividades não pôde ser criada via RPC — use o painel SQL do Supabase');
-  } else {
-    console.log('✅ Tabela atividades OK');
+  for (const tabela of tabelas) {
+    const { error } = await supabase.from(tabela).select('id').limit(1);
+    if (error) {
+      console.log(`❌ NÃO EXISTE: ${tabela}`);
+      todasOk = false;
+    } else {
+      console.log(`✅ EXISTE: ${tabela}`);
+    }
   }
 
-  // 2. lead_producao
-  const { error: testProd } = await sb.from('lead_producao').select('id').limit(1);
-  if (testProd) console.log('Tabela lead_producao não existe — crie via SQL');
-  else console.log('✅ Tabela lead_producao OK');
-
-  // 3. lead_arquivos
-  const { error: testArq } = await sb.from('lead_arquivos').select('id').limit(1);
-  if (testArq) console.log('Tabela lead_arquivos não existe — crie via SQL');
-  else console.log('✅ Tabela lead_arquivos OK');
-
-  console.log('\n⚠️  Se alguma tabela não existir, execute o SQL abaixo no painel do Supabase:');
-  const sql = fs.readFileSync(path.join(__dirname, '../src/database/migration_atividades_producao.sql'), 'utf8');
-  console.log('\n' + sql);
+  console.log('');
+  if (todasOk) {
+    console.log('✅ Todas as tabelas existem. CRM pronto para usar.');
+  } else {
+    console.log('⚠️  Execute a migration consolidada no Supabase SQL Editor antes de usar o CRM.');
+    console.log('   Arquivo: src/database/migration_consolidada_supabase_pendente_2026_06_10.sql');
+    console.log('   Link: https://supabase.com/dashboard/project/wtuhaoyqojzelaqteclx/sql/new');
+  }
 }
 
-main().catch(console.error);
+main().catch(e => { console.error(e.message); process.exit(1); });

@@ -230,7 +230,7 @@
 
       <div class="fr-compact" style="margin-top:4px">
         <div class="input-group-sm"><label class="lbl-sm">Data de fechamento</label><input id="fl-data-fechamento" class="input input-sm date-input" type="date"></div>
-        <div class="input-group-sm"><label class="lbl-sm">Próxima compra prevista</label><input id="fl-proxima-compra" class="input input-sm date-input" type="date" disabled title="Em breve"></div>
+        <div class="input-group-sm"><label class="lbl-sm">Próxima compra prevista</label><input id="fl-proxima-compra" class="input input-sm date-input" type="date"></div>
       </div>
 
       <!-- Produtos -->
@@ -275,14 +275,25 @@
       <select id="fl-produto" style="display:none"><option value="">—</option></select>
     </div>
 
-    <!-- Estrutura futura: campos quantidade/peças -->
-    <div class="info-section info-section-future">
+    <!-- Detalhes do Pedido (auto-calculado a partir dos produtos) -->
+    <div class="info-section" style="margin-top:8px">
       <div class="info-section-title">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
-        Detalhes do Pedido <span class="badge-future">Em breve</span>
+        Detalhes do Pedido
       </div>
-      <div class="future-placeholder">
-        Campos: Nº de produtos, quantidade de peças, observações de pedido.
+      <div class="fr-compact" style="margin-top:6px">
+        <div class="input-group-sm">
+          <label class="lbl-sm">Nº de Produtos <span style="font-size:.6rem;color:var(--text-muted)">(auto)</span></label>
+          <input id="fl-num-produtos" class="input input-sm" type="number" min="0" readonly placeholder="0" style="background:var(--surface-2);cursor:default">
+        </div>
+        <div class="input-group-sm">
+          <label class="lbl-sm">Qtd Total de Peças <span style="font-size:.6rem;color:var(--text-muted)">(auto)</span></label>
+          <input id="fl-qtd-pecas" class="input input-sm" type="number" min="0" readonly placeholder="0" style="background:var(--surface-2);cursor:default">
+        </div>
+      </div>
+      <div class="input-group-sm" style="margin-top:6px">
+        <label class="lbl-sm">Observações do Pedido</label>
+        <textarea id="fl-obs-pedido" class="input input-sm" rows="2" placeholder="Detalhes, especificações, particulares do pedido..."></textarea>
       </div>
     </div>
   </div>
@@ -293,16 +304,6 @@
     <p style="font-size:.75rem;color:var(--text-muted);padding:12px 0">Selecione um lead para ver a produção.</p>
   </div>
 
-    <div class="info-section">
-      <div class="info-section-title">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-        Anotações &amp; Layout <span class="badge-future">Em breve</span>
-      </div>
-      <div class="future-placeholder">
-        Área para anotações de produção, upload de layout e arquivos aprovados.
-      </div>
-    </div>
-  </div>
 
   <!-- Footer -->
   <div class="mf">
