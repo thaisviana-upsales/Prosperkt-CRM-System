@@ -116,45 +116,33 @@ function renderFunilVisual(etapas) {
   const el = document.getElementById('funil-visual');
   if (!etapas?.length) { el.innerHTML = '<div class="empty">Nenhum dado disponível</div>'; return; }
 
-  const MAX_W = 100;  // % da largura do container para o primeiro item
-  const MIN_W = 28;   // % mínima para o item mais estreito
+  // Mínimo 72% para garantir que o nome sempre cabe na camada
+  const MAX_W = 100;
+  const MIN_W = 72;
   const maxQtd = Math.max(...etapas.map(e => e.quantidade), 1);
-
-  // clip-path trapezoidal: cada camada afunila em relação à próxima
-  const clip = (w, wNext) => {
-    const indent = (MAX_W - w) / 2;      // margem lateral desta camada
-    const indentN = (MAX_W - wNext) / 2; // margem lateral da próxima
-    const dIn = Math.max(0, (indentN - indent));  // quanto afunila embaixo
-    const pct = (dIn / MAX_W) * 100;
-    return `polygon(${pct}% 0%, ${100-pct}% 0%, 100% 100%, 0% 100%)`;
-  };
-
-  const total = etapas.length;
+  const total  = etapas.length;
   const widths = etapas.map(e => Math.max(MIN_W, Math.round((e.quantidade / maxQtd) * MAX_W)));
 
   el.innerHTML = '<div class="fv-premium">' + etapas.map((e, i) => {
-    const w     = widths[i];
-    const wNext = i < total - 1 ? widths[i + 1] : w;
-    const cor   = etapaCor(e, i, total);
-    const isNeg = e.is_perdido || /desqualif|perdid/i.test(e.nome || '');
+    const w      = widths[i];
+    const cor    = etapaCor(e, i, total);
+    const isNeg  = e.is_perdido || /desqualif|perdid/i.test(e.nome || '');
     const isGanho = e.is_ganho || /venda|ganho|fechad/i.test(e.nome || '');
 
-    // Borda luminosa sutil para ganho
-    const borderStyle = isGanho
-      ? 'box-shadow:0 0 0 1.5px rgba(91,222,62,.45),0 3px 12px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.12)'
+    const shadow = isGanho
+      ? '0 0 0 1.5px rgba(91,222,62,.5),0 3px 14px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.14)'
       : isNeg
-      ? 'box-shadow:0 0 0 1px rgba(180,20,40,.3),0 2px 8px rgba(0,0,0,.4)'
-      : 'box-shadow:0 2px 8px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.06)';
+      ? '0 0 0 1px rgba(160,10,30,.35),0 2px 8px rgba(0,0,0,.45)'
+      : '0 2px 8px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.07)';
 
     const convTxt = e.taxa_entrada != null
       ? (isNeg ? `↘ ${e.taxa_entrada}%` : `${e.taxa_entrada}%`) : '';
 
     const arrow = i > 0
-      ? `<div class="fv-arrow"><span style="opacity:.35;font-size:.55rem">▼</span><span class="fv-arrow-rate">${convTxt}</span></div>`
+      ? `<div class="fv-arrow"><span style="opacity:.3;font-size:.5rem">▼</span><span class="fv-arrow-rate">${convTxt}</span></div>`
       : '';
 
-    return `${arrow}
-    <div class="fv-layer" style="width:${w}%;background:${cor};${borderStyle}">
+    return `${arrow}<div class="fv-layer" style="width:${w}%;background:${cor};box-shadow:${shadow}">
       <div class="fv-layer-inner">
         <span class="fv-layer-name">${e.nome}</span>
         <span class="fv-layer-count">${e.quantidade}</span>
@@ -162,16 +150,15 @@ function renderFunilVisual(etapas) {
     </div>`;
   }).join('') + '</div>';
 
-  // Animação staggered
   requestAnimationFrame(() => {
     el.querySelectorAll('.fv-layer').forEach((layer, i) => {
       layer.style.opacity = '0';
-      layer.style.transform = 'scaleX(.88)';
+      layer.style.transform = 'scaleX(.9)';
       setTimeout(() => {
-        layer.style.transition = 'opacity .45s ease, transform .45s ease';
+        layer.style.transition = 'opacity .4s ease, transform .4s ease';
         layer.style.opacity = '1';
         layer.style.transform = 'scaleX(1)';
-      }, i * 55);
+      }, i * 50);
     });
   });
 }
