@@ -62,17 +62,18 @@
 /* ── KPI Grid ───────────────────────── */
 .kpi-grid {
   display:grid;
-  grid-template-columns:repeat(auto-fill,minmax(140px,1fr));
+  grid-template-columns:repeat(auto-fill,minmax(120px,1fr));
   gap:10px;
 }
-/* Cards monetários maiores */
+/* Cards monetários: span 2 colunas — mais largos, sempre separados */
 .kpi-card.wide {
-  min-width:180px;
+  grid-column: span 2;
 }
 .kpi-card.wide .kpi-value {
-  white-space:nowrap;
-  font-size:clamp(.9rem,1.5vw,1.3rem);
+  white-space: nowrap;
+  font-size: clamp(.85rem,1.4vw,1.15rem);
 }
+@media(max-width:900px) { .kpi-card.wide { grid-column: span 1; } }
 .kpi-card {
   background:var(--surface); border:1px solid var(--border);
   border-radius:var(--radius-card); padding:11px 14px;
