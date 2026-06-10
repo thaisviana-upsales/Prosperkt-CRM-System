@@ -394,12 +394,19 @@ textarea.input { resize: vertical; min-height: 80px; }
 .page-header { margin-bottom: var(--space-6); }
 
 .page-title {
-  font-size: clamp(1.25rem, 2.5vw, 1.6rem);
+  font-size: clamp(1.1rem, 2.2vw, 1.4rem);
   font-weight: 800;
   letter-spacing: -0.03em;
   margin-bottom: 2px;
+  background: linear-gradient(90deg, rgba(245,245,245,.96) 60%, rgba(91,222,62,.70) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  padding-left: 10px;
+  border-left: 3px solid var(--green);
+  box-decoration-break: clone;
 }
-.page-subtitle { color: var(--text-secondary); font-size: 0.8125rem; }
+.page-subtitle { color: var(--text-secondary); font-size: 0.75rem; padding-left: 13px; }
 
 /* ── Divider ─────────────────────────────────────────────────── */
 .divider { height: 1px; background: var(--border); margin: var(--space-5) 0; }
