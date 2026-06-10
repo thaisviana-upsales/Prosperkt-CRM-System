@@ -30,7 +30,6 @@ function normalizePhone(tel) {
   // Remove sufixo WhatsApp JID (ex: 5511964634949:13@s.whatsapp.net)
   let t = String(tel).split('@')[0];
   // Remove sufixo de dispositivo WA (ex: :13, :2, :0) ANTES de extrair dígitos
-  // Sem isso: replace(/\D/g,'') transforma '5511964634949:13' em '551196463494913'
   t = t.split(':')[0];
   // Remove tudo que não é dígito
   t = t.replace(/\D/g, '');
@@ -39,6 +38,53 @@ function normalizePhone(tel) {
     t = '55' + t;
   }
   return t;
+}
+
+/**
+ * Gera TODAS as variantes possíveis de um telefone para busca robusta.
+ * Cobre: com 55 / sem 55 / com 9º dígito / sem 9º dígito
+ * Elimina duplicatas e strings vazias.
+ */
+function phoneVariants(tel) {
+  const base = normalizePhone(tel);
+  if (!base) return [];
+  const variants = new Set();
+
+  // base sempre inclusa
+  variants.add(base);
+
+  // sem DDI 55
+  const sem55 = base.startsWith('55') && base.length >= 12 ? base.slice(2) : null;
+  if (sem55) variants.add(sem55);
+
+  // Adiciona/remove 9º dígito (Brasil: DDD 2 dígitos + número)
+  // Com 55: 55 + DDD(2) + digitos -> total 12 (sem 9) ou 13 (com 9)
+  // Sem 55: DDD(2) + digitos -> total 10 (sem 9) ou 11 (com 9)
+  const adicionarRemoverNono = (num) => {
+    const results = new Set();
+    results.add(num);
+    const hasPref = num.startsWith('55') && num.length >= 12;
+    const ddd   = hasPref ? num.slice(2, 4) : num.slice(0, 2);
+    const resto = hasPref ? num.slice(4) : num.slice(2);
+    const pref  = hasPref ? '55' : '';
+    if (resto.length === 9 && resto[0] === '9') {
+      // remove 9º dígito
+      results.add(pref + ddd + resto.slice(1));
+    } else if (resto.length === 8) {
+      // adiciona 9º dígito
+      results.add(pref + ddd + '9' + resto);
+    }
+    return results;
+  };
+
+  adicionarRemoverNono(base).forEach(v => variants.add(v));
+  if (sem55) adicionarRemoverNono(sem55).forEach(v => variants.add(v));
+  // Garante variantes com 55 para cada variante sem 55
+  [...variants].forEach(v => {
+    if (!v.startsWith('55') && v.length >= 10) variants.add('55' + v);
+  });
+
+  return [...variants].filter(Boolean);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1437,14 +1483,15 @@ async function webhookReceberMensagem(req, res) {
 
     if (isSupa) {
       let leadsFound = null;
-      for (const variant of telVariants) {
+      const variantesCompletas = phoneVariants(tel);
+      for (const variant of variantesCompletas) {
         const { data: found } = await sb.from('leads').select('id,telefone')
           .or(`telefone.eq.${variant},telefone.ilike.%${variant}%`)
           .is('deleted_at', null).limit(1);
         if (found?.[0]) { leadsFound = found; break; }
       }
       leadId = leadsFound?.[0]?.id || null;
-      console.log(`WEBHOOK_LEAD_ENCONTRADO: tel=${tel} variantesSem55=${telSem55} → leadId=${leadId} telefoneLead=${leadsFound?.[0]?.telefone || '(não encontrado)'}`);
+      console.log(`WEBHOOK_LEAD_ENCONTRADO: tel=${tel} variantes=${variantesCompletas.join('|')} → leadId=${leadId}`);
 
       // Só cria lead se for mensagem recebida (fromMe=false) e não existir
       if (!leadId && !fromMe) {
@@ -1485,9 +1532,11 @@ async function webhookReceberMensagem(req, res) {
         if (conversaId) console.log(`[WA Webhook] Conversa encontrada por lead_id=${leadId} → conv=${conversaId}`);
       }
 
-      // Busca 2: por telefone em todas variantes (com e sem 55)
+      // Busca 2: por telefone em TODAS as variantes (com/sem 55, com/sem 9º dígito)
       if (!conversaId) {
-        for (const variant of telVariants) {
+        const variantesCompletas = phoneVariants(tel);
+        console.log('[WA Webhook] VARIANTES_TELEFONE:', variantesCompletas);
+        for (const variant of variantesCompletas) {
           const { data: convExist } = await sb.from('conversas_whatsapp')
             .select('id').eq('telefone', variant).neq('status', 'FECHADA')
             .order('criado_em', { ascending: false }).limit(1);
@@ -1530,8 +1579,12 @@ async function webhookReceberMensagem(req, res) {
         console.log(`[WA Webhook] ✅ Conversa existente atualizada: ${conversaId} leadId=${leadId}`);
       }
     } else if (db) {
-      let conv = db.prepare('SELECT id FROM conversas_whatsapp WHERE telefone = ? AND status != \'FECHADA\' LIMIT 1').get(tel);
-      if (!conv && telSem55) conv = db.prepare('SELECT id FROM conversas_whatsapp WHERE telefone = ? AND status != \'FECHADA\' LIMIT 1').get(telSem55);
+      const variantesLocais = phoneVariants(tel);
+      let conv = null;
+      for (const v of variantesLocais) {
+        conv = db.prepare("SELECT id FROM conversas_whatsapp WHERE telefone = ? AND status != 'FECHADA' LIMIT 1").get(v);
+        if (conv) break;
+      }
       conversaId = conv?.id || null;
       if (!conversaId) {
         const cid = crypto.randomBytes(16).toString('hex');

@@ -65,6 +65,14 @@
   grid-template-columns:repeat(auto-fill,minmax(140px,1fr));
   gap:10px;
 }
+/* Cards monetários maiores */
+.kpi-card.wide {
+  min-width:180px;
+}
+.kpi-card.wide .kpi-value {
+  white-space:nowrap;
+  font-size:clamp(.9rem,1.5vw,1.3rem);
+}
 .kpi-card {
   background:var(--surface); border:1px solid var(--border);
   border-radius:var(--radius-card); padding:11px 14px;
@@ -290,8 +298,8 @@
 <div class="kpi-grid" id="kpi-grid">
   <div class="kpi-card green"><div class="kpi-label">Leads Recebidos</div><div class="kpi-value" id="kpi-leads">—</div><div class="kpi-sub" id="kpi-leads-sub"></div><div class="kpi-icon">📥</div></div>
   <div class="kpi-card green"><div class="kpi-label">Vendas Fechadas</div><div class="kpi-value" id="kpi-ganhos">—</div><div class="kpi-sub" id="kpi-ganhos-sub"></div><div class="kpi-icon">🏆</div></div>
-  <div class="kpi-card blue"><div class="kpi-label">Faturamento</div><div class="kpi-value monetary" id="kpi-fat">—</div><div class="kpi-sub" id="kpi-fat-sub"></div><div class="kpi-icon">💰</div></div>
-  <div class="kpi-card yellow"><div class="kpi-label">Ticket Médio</div><div class="kpi-value monetary" id="kpi-ticket">—</div><div class="kpi-sub"></div><div class="kpi-icon">🎯</div></div>
+  <div class="kpi-card blue wide"><div class="kpi-label">Faturamento</div><div class="kpi-value monetary" id="kpi-fat">—</div><div class="kpi-sub" id="kpi-fat-sub"></div><div class="kpi-icon">💰</div></div>
+  <div class="kpi-card yellow wide"><div class="kpi-label">Ticket Médio</div><div class="kpi-value monetary" id="kpi-ticket">—</div><div class="kpi-sub"></div><div class="kpi-icon">🎯</div></div>
   <div class="kpi-card green"><div class="kpi-label">Taxa de Conversão</div><div class="kpi-value" id="kpi-conv">—</div><div class="kpi-sub"></div><div class="kpi-icon">📈</div></div>
   <div class="kpi-card green"><div class="kpi-label">Leads Perdidos</div><div class="kpi-value" id="kpi-perdidos">—</div><div class="kpi-sub" id="kpi-perdidos-sub"></div><div class="kpi-icon">📉</div></div>
   <!-- Card Mensagens Pendentes: visivel apenas para GESTOR+ (ocultado via JS) -->
