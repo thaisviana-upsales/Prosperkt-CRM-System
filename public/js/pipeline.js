@@ -132,7 +132,10 @@ async function aplicarFiltros() {
   }
 
   await carregarLeads();
+  // Inicia lembretes de atividades no footer
+  if (window.Atividades) window.Atividades.iniciarLembretes();
 }
+
 
 async function carregarLeads() {
   const url = construirURL();
@@ -328,11 +331,16 @@ async function _executarMover(leadId, etapaId, pid, etapaDest, motivo) {
     const isPerd = etapaDest?.is_perdido || etapaDest?.nome?.toLowerCase().includes('perdid') || etapaDest?.nome?.toLowerCase().includes('desqualif');
     const isGan  = etapaDest?.is_ganho  || etapaDest?.probabilidade >= 100;
     Toast.show(isGan?'🎉 Lead ganho!':isPerd?'Lead marcado como perdido.':'Lead movido!', isGan?'success':isPerd?'error':'success');
+    // Atualiza datas automáticas de produção se a etapa destino corresponder
+    if (window.Producao && etapaDest?.nome) {
+      window.Producao.atualizarDatasEtapa(leadId, etapaDest.nome).catch(() => {});
+    }
     await carregarLeads();
   } else {
     Toast.show(r?.data?.erro||'Erro ao mover.','error');
   }
 }
+
 
 function abrirModalMotivo(callback) {
   const sel = document.getElementById('motivo-perda-sel');
@@ -392,70 +400,132 @@ async function abrirLead(id) {
   // Multi-produto: carrega do banco
   _leadIdAberto = id;
   await carregarProdutosLead(id, l);
-  // Abre seção comercial se tiver dados preenchidos
-  if (l.valor_venda || l.forma_pagamento || l.produto_id || _leadProdutos.length) abrirSecaoComercial();
+  // Abre aba Venda automaticamente se tiver dados preenchidos
+  if (l.valor_venda || l.forma_pagamento || l.produto_id || _leadProdutos.length) showTab('venda');
+  // Subtítulo no header do modal
+  const sub = document.getElementById('ml-subtitle');
+  if (sub) sub.textContent = [l.empresa, l.etapa_nome].filter(Boolean).join(' · ');
   // Guarda lead original para fallback de etapa/funil/pipeline no salvar
   _leadEmEdicao = l;
   // Histórico via endpoint dedicado
   carregarHistorico(id);
-  // Botão excluir só para GESTOR+
-  document.getElementById('ml-excluir').style.display = _usuario.role!=='VENDEDOR' ? '' : 'none';
+  // Atividades — renderiza container na aba Informações
+  if (window.Atividades) window.Atividades.renderTab(id);
+  // Produção — renderiza aba completa
+  if (window.Producao) window.Producao.renderTab(id, l);
+  // Tags na aba Informações
+  _renderTagsDisplay(l.tags);
+  // Botão excluir só para SUPER_ADMIN
+  document.getElementById('ml-excluir').style.display = _usuario.role === 'SUPER_ADMIN' ? '' : 'none';
+  // Botão clonar visível apenas quando editando lead existente
+  document.getElementById('ml-clonar').style.display = '';
   document.getElementById('ov-lead').classList.add('open');
 }
 
 async function carregarHistorico(leadId) {
-  const hist=document.getElementById('hist-list');
-  hist.innerHTML='<p style="color:var(--text-muted);font-size:.875rem">Carregando...</p>';
-  const r=await Auth.api('GET',`/leads/${leadId}/historico`);
-  const itens=r?.data?.dados||[];
-  if (!itens.length) { hist.innerHTML='<p style="color:var(--text-muted);font-size:.875rem">Sem histórico ainda.</p>'; return; }
-  hist.innerHTML=itens.map(m=>{
-    const data=new Date(m.criado_em||m.enviado_em).toLocaleString('pt-BR');
-    const icone=m.tipo==='LOG'?'📋':'💬';
-    return `<div class="hist-item"><div>${icone} ${m.conteudo||''}</div><div class="hist-meta">${m.autor_nome||'Sistema'} · ${data}</div></div>`;
+  const hist = document.getElementById('hist-list');
+  hist.innerHTML = '<p style="color:var(--text-muted);font-size:.8rem">Carregando...</p>';
+  const r = await Auth.api('GET', `/leads/${leadId}/historico`);
+  const itens = r?.data?.dados || [];
+  if (!itens.length) {
+    hist.innerHTML = '<p style="color:var(--text-muted);font-size:.8rem">Sem notas ainda.</p>';
+  } else {
+    hist.innerHTML = itens.map(m => {
+      const data = new Date(m.criado_em || m.enviado_em).toLocaleString('pt-BR');
+      const icone = m.tipo === 'LOG' ? '📋' : '💬';
+      return `<div class="hist-item"><div>${icone} ${m.conteudo||''}</div><div class="hist-meta">${m.autor_nome||'Sistema'} · ${data}</div></div>`;
+    }).join('');
+  }
+  // Renderiza timeline a partir do histórico de LOG
+  _renderTimeline(itens, leadId);
+}
+
+function _renderTimeline(itens, leadId) {
+  const tl = document.getElementById('lead-timeline');
+  if (!tl) return;
+  // Filtra apenas entradas de log que indicam mudança de etapa
+  const etapaLogs = itens.filter(m => m.tipo === 'LOG' && m.conteudo && /etapa|movido|venda|perdid|ganho/i.test(m.conteudo));
+  if (!etapaLogs.length) {
+    tl.innerHTML = '<p style="font-size:.72rem;color:var(--text-muted)">Nenhuma movimentação registrada ainda.</p>';
+    return;
+  }
+  tl.innerHTML = etapaLogs.map((m, i) => {
+    const data = new Date(m.criado_em || m.enviado_em);
+    const dataStr = data.toLocaleDateString('pt-BR') + ' ' + data.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const isCurrent = i === etapaLogs.length - 1;
+    // Calcula tempo desde o item anterior
+    let duracao = '';
+    if (i > 0) {
+      const prev = new Date(etapaLogs[i-1].criado_em || etapaLogs[i-1].enviado_em);
+      const diffMs = data - prev;
+      const diffH = Math.round(diffMs / 3600000);
+      duracao = diffH < 24 ? `${diffH}h` : `${Math.round(diffH/24)}d`;
+    }
+    return `<div class="timeline-item">
+      <div class="timeline-dot${isCurrent?' current':''}">${isCurrent?'●':'○'}</div>
+      <div class="timeline-body">
+        <div class="timeline-stage">${m.conteudo}</div>
+        <div class="timeline-meta">${dataStr} · ${m.autor_nome||'Sistema'}</div>
+      </div>
+      ${duracao ? `<div class="timeline-duration">${duracao}</div>` : ''}
+    </div>`;
   }).join('');
 }
 
 function resetModal() {
-  document.getElementById('ml-title').textContent='Novo Lead';
-  ['fl-id','fl-nome','fl-empresa','fl-tel','fl-email','fl-tags','fl-obs'].forEach(id=>document.getElementById(id).value='');
-  const mpSel=document.getElementById('fl-motivo-perda');
-  if (mpSel) { mpSel.innerHTML='<option value="">— Selecione (se aplicável) —</option>'+_motivosPerda.map(m=>{const v=m.nome||m;return`<option value="${v}">${v}</option>`;}).join(''); }
-  document.getElementById('fl-valor').value='';
-  document.getElementById('fl-data-fechamento').value='';
-  document.getElementById('fl-data-entrada').value='';
-  document.getElementById('fl-status').value='ABERTO';
+  document.getElementById('ml-title').textContent = 'Novo Lead';
+  const sub = document.getElementById('ml-subtitle');
+  if (sub) sub.textContent = '';
+  ['fl-id','fl-nome','fl-empresa','fl-tel','fl-email','fl-tags','fl-obs'].forEach(id => document.getElementById(id).value = '');
+  const mpSel = document.getElementById('fl-motivo-perda');
+  if (mpSel) { mpSel.innerHTML = '<option value="">— Selecione (se aplicável) —</option>' + _motivosPerda.map(m => { const v = m.nome||m; return `<option value="${v}">${v}</option>`; }).join(''); }
+  document.getElementById('fl-valor').value = '';
+  document.getElementById('fl-data-fechamento').value = '';
+  document.getElementById('fl-data-entrada').value = '';
+  document.getElementById('fl-status').value = 'ABERTO';
   atualizarStatusBadge('ABERTO');
-  document.getElementById('ml-alert').style.display='none';
-  document.getElementById('nova-nota').value='';
-  document.getElementById('ml-excluir').style.display='none';
+  document.getElementById('ml-alert').style.display = 'none';
+  document.getElementById('nova-nota').value = '';
+  // Botão excluir e clonar: oculta no novo lead
+  document.getElementById('ml-excluir').style.display = 'none';
+  document.getElementById('ml-clonar').style.display  = 'none';
+  // Timeline/tags reset
+  const tl = document.getElementById('lead-timeline');
+  if (tl) tl.innerHTML = '<p style="font-size:.72rem;color:var(--text-muted)">Selecione um lead para ver a timeline.</p>';
+  const tagsDisp = document.getElementById('lead-tags-display');
+  if (tagsDisp) tagsDisp.innerHTML = '<span style="font-size:.72rem;color:var(--text-muted)">Sem tags registradas.</span>';
   showTab('dados');
-  const fSel=document.getElementById('fl-funil');
-  fSel.innerHTML=_funis.map(f=>`<option value="${f.id}">${f.nome}</option>`).join('');
-  fSel.value=_filtros.funil||(_funis[0]?.id||'');
-  // onFlFunilChange() NÃO é chamado aqui para evitar race condition.
-  // abrirLead() faz await onFlFunilChange() depois; abrirNovoLead() chama explicitamente.
-  const rSel=document.getElementById('fl-resp');
-  rSel.innerHTML=_usuarios.map(u=>`<option value="${u.id}">${u.nome}</option>`).join('');
-  if (_usuario.role==='VENDEDOR') { rSel.value=_usuario.id; rSel.disabled=true; }
-  else { rSel.disabled=false; rSel.value=_usuario.id; }
-  // Limpa lead em edição
+  const fSel = document.getElementById('fl-funil');
+  fSel.innerHTML = _funis.map(f => `<option value="${f.id}">${f.nome}</option>`).join('');
+  fSel.value = _filtros.funil || (_funis[0]?.id || '');
+  const rSel = document.getElementById('fl-resp');
+  rSel.innerHTML = _usuarios.map(u => `<option value="${u.id}">${u.nome}</option>`).join('');
+  if (_usuario.role === 'VENDEDOR') { rSel.value = _usuario.id; rSel.disabled = true; }
+  else { rSel.disabled = false; rSel.value = _usuario.id; }
   _leadEmEdicao = null;
   _leadIdAberto = null;
-  // Comercial reset
-  document.getElementById('fl-valor-venda').value='';
-  document.getElementById('fl-forma-pgto').value='';
+  document.getElementById('fl-valor-venda').value = '';
+  document.getElementById('fl-forma-pgto').value = '';
   popularSelProdutos('');
-  _parcelas=[];
+  _parcelas = [];
   renderParcelas();
-  // Multi-produto reset
   _leadProdutos = [];
   _leadProdutosNovas = [];
   renderProdutosLead();
-  fecharSecaoComercial();
 }
 
-// Atualiza o badge de status no modal (somente leitura)
+function _renderTagsDisplay(tagsRaw) {
+  const el = document.getElementById('lead-tags-display');
+  if (!el) return;
+  let tags = [];
+  try { tags = tagsRaw ? JSON.parse(tagsRaw) : []; } catch(e) { tags = tagsRaw ? String(tagsRaw).split(',').map(t=>t.trim()) : []; }
+  if (!tags.length) {
+    el.innerHTML = '<span style="font-size:.72rem;color:var(--text-muted)">Sem tags registradas.</span>';
+  } else {
+    el.innerHTML = tags.map(t => `<span class="lead-tag" style="font-size:.72rem">${t}</span>`).join('');
+  }
+}
+
 function atualizarStatusBadge(status) {
   const dot   = document.getElementById('fl-status-dot');
   const label = document.getElementById('fl-status-label');
@@ -481,12 +551,14 @@ async function onFlFunilChange(overrideFunilId) {
 }
 
 function showTab(tab) {
-  document.getElementById('tab-dados').style.display=tab==='dados'?'':'none';
-  document.getElementById('tab-hist').style.display=tab==='hist'?'':'none';
-  ['dados','hist'].forEach(t=>{
-    const btn=document.getElementById(`tab-btn-${t}`);
-    btn.style.color=t===tab?'var(--green)':'var(--text-muted)';
-    btn.style.borderBottomColor=t===tab?'var(--green)':'transparent';
+  const ABAS = ['dados', 'hist', 'venda', 'producao'];
+  ABAS.forEach(t => {
+    const el  = document.getElementById(`tab-${t}`);
+    const btn = document.getElementById(`tab-btn-${t}`);
+    if (el)  el.style.display  = t === tab ? '' : 'none';
+    if (btn) {
+      btn.classList.toggle('active', t === tab);
+    }
   });
 }
 
@@ -665,6 +737,30 @@ async function adicionarNota() {
 }
 
 function fecharModal() { document.getElementById('ov-lead').classList.remove('open'); }
+
+async function clonarLead() {
+  const id = document.getElementById('fl-id').value;
+  if (!id) return;
+  const btn = document.getElementById('ml-clonar');
+  const origText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = 'Clonando...';
+  try {
+    const r = await Auth.api('POST', `/leads/${id}/clonar`);
+    if (r?.ok) {
+      Toast.show(`Lead clonado: ${r.data.dados?.nome || ''} — somente Dados Principais copiados.`, 'success');
+      fecharModal();
+      await carregarLeads();
+      // Abre o lead clonado automaticamente
+      if (r.data.dados?.id) setTimeout(() => abrirLead(r.data.dados.id), 400);
+    } else {
+      Toast.show(r?.data?.erro || 'Erro ao clonar.', 'error');
+    }
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = origText;
+  }
+}
 
 function fecharModalMotivo() {
   document.getElementById('ov-motivo').classList.remove('open');
@@ -984,33 +1080,34 @@ function bindEvents() {
   });
 
   // Modal
-  document.getElementById('btn-novo-lead').addEventListener('click', ()=>abrirNovoLead(_etapas[0]?.id||''));
+  document.getElementById('btn-novo-lead').addEventListener('click', () => abrirNovoLead(_etapas[0]?.id||''));
   document.getElementById('ml-close').addEventListener('click', fecharModal);
   document.getElementById('ml-cancelar').addEventListener('click', fecharModal);
   document.getElementById('ml-salvar').addEventListener('click', salvarLead);
   document.getElementById('ml-excluir').addEventListener('click', excluirLead);
+  document.getElementById('ml-clonar').addEventListener('click', clonarLead);
   document.getElementById('btn-add-nota').addEventListener('click', adicionarNota);
-  document.getElementById('ov-lead').addEventListener('click', e=>{ if(e.target===document.getElementById('ov-lead')) fecharModal(); });
-  document.getElementById('tab-btn-dados').addEventListener('click',()=>showTab('dados'));
-  document.getElementById('tab-btn-hist').addEventListener('click',()=>{ showTab('hist'); const id=document.getElementById('fl-id').value; if(id) carregarHistorico(id); });
-  document.getElementById('fl-funil').addEventListener('change',()=>onFlFunilChange());
+  document.getElementById('ov-lead').addEventListener('click', e => { if(e.target===document.getElementById('ov-lead')) fecharModal(); });
+  // 4 abas
+  document.getElementById('tab-btn-dados').addEventListener('click', () => showTab('dados'));
+  document.getElementById('tab-btn-hist').addEventListener('click', () => {
+    showTab('hist');
+    const id = document.getElementById('fl-id').value;
+    if (id) carregarHistorico(id);
+  });
+  document.getElementById('tab-btn-venda').addEventListener('click', () => showTab('venda'));
+  document.getElementById('tab-btn-producao').addEventListener('click', () => showTab('producao'));
+  document.getElementById('fl-funil').addEventListener('change', () => onFlFunilChange());
   // Modal motivo de perda
   document.getElementById('btn-motivo-confirmar').addEventListener('click', confirmarMotivo);
   document.getElementById('btn-motivo-cancelar').addEventListener('click', fecharModalMotivo);
-  document.getElementById('ov-motivo').addEventListener('click', e=>{ if(e.target===document.getElementById('ov-motivo')) fecharModalMotivo(); });
-  // Comercial
-  document.getElementById('toggle-comercial').addEventListener('click', () => {
-    const body = document.getElementById('comercial-body');
-    if (body.style.display==='none'||!body.style.display) abrirSecaoComercial();
-    else fecharSecaoComercial();
-  });
+  document.getElementById('ov-motivo').addEventListener('click', e => { if(e.target===document.getElementById('ov-motivo')) fecharModalMotivo(); });
+  // Produtos
   document.getElementById('btn-add-parcela').addEventListener('click', adicionarParcela);
-  // Multi-produto: botão adicionar linha
   document.getElementById('btn-add-linha-produto').addEventListener('click', adicionarLinhaProduto);
-  // Botão + Novo produto (cadastrar no catálogo)
   document.getElementById('btn-salvar-produto').addEventListener('click', salvarNovoProduto);
   document.getElementById('btn-cancelar-produto').addEventListener('click', () => {
-    document.getElementById('form-novo-produto').style.display='none';
+    document.getElementById('form-novo-produto').style.display = 'none';
   });
 }
 

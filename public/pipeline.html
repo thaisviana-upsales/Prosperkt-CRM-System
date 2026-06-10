@@ -3,8 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0D0D0D">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="PROSPEKT CRM">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
 <title>Pipeline — PROSPEKT CRM</title>
 <link rel="stylesheet" href="/css/design-system.css">
+<link rel="stylesheet" href="/css/mobile.css">
 <link rel="stylesheet" href="/css/pipeline.css">
 </head>
 <body>
@@ -12,7 +19,6 @@
 <div id="sidebar-container"></div>
 <main class="main-content animate-fade" style="padding:24px 28px">
 
-<!-- Título -->
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
   <div>
     <h1 class="page-title" style="font-size:1.4rem;margin-bottom:2px" id="page-title">Pipeline</h1>
@@ -24,23 +30,15 @@
   </button>
 </div>
 
-<!-- Filter Bar -->
 <div class="filter-bar">
-
   <div class="filter-group">
     <span class="filter-label">Funil</span>
-    <select id="sel-funil" class="filter-select">
-      <option value="">Todos</option>
-    </select>
+    <select id="sel-funil" class="filter-select"><option value="">Todos</option></select>
   </div>
-
   <div class="filter-group">
     <span class="filter-label">Vendedor</span>
-    <select id="sel-resp" class="filter-select">
-      <option value="">Todos</option>
-    </select>
+    <select id="sel-resp" class="filter-select"><option value="">Todos</option></select>
   </div>
-
   <div class="filter-group">
     <span class="filter-label">Data</span>
     <div class="date-group">
@@ -66,7 +64,6 @@
       </div>
     </div>
   </div>
-
   <div class="filter-group" style="flex:1;min-width:240px">
     <span class="filter-label">Buscar lead</span>
     <div class="search-wrap">
@@ -74,7 +71,6 @@
       <input id="busca" class="search-premium" placeholder="Buscar por nome, telefone, e-mail ou empresa">
     </div>
   </div>
-
   <button class="btn-clear-filters" id="btn-clear">Limpar filtros</button>
 </div>
 
@@ -84,172 +80,244 @@
 
 <!-- MODAL LEAD -->
 <div class="modal-ov" id="ov-lead">
-<div class="modal-box">
+<div class="modal-box modal-lead-wide">
+
+  <!-- Header compacto -->
   <div class="mh">
-    <h3 id="ml-title">Novo Lead</h3>
-    <button class="xl" id="ml-close"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-  </div>
-  <div id="ml-alert" class="alert" style="display:none;margin-bottom:16px"></div>
-  <div style="display:flex;gap:0;margin-bottom:20px;border-bottom:1px solid var(--border)">
-    <button class="tab-btn" id="tab-btn-dados" style="color:var(--green);border-bottom-color:var(--green)">Dados</button>
-    <button class="tab-btn" id="tab-btn-hist" style="color:var(--text-muted)">Histórico</button>
+    <div style="display:flex;flex-direction:column;gap:2px">
+      <h3 id="ml-title" style="font-size:.9rem">Novo Lead</h3>
+      <span id="ml-subtitle" style="font-size:.7rem;color:var(--text-muted)"></span>
+    </div>
+    <button class="xl" id="ml-close"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
   </div>
 
-  <div id="tab-dados">
-  <div class="fg">
+  <div id="ml-alert" class="alert" style="display:none;margin-bottom:12px"></div>
+
+  <!-- 4 abas -->
+  <div class="lead-tabs">
+    <button class="lead-tab-btn active" id="tab-btn-dados" data-tab="dados">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="7" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>
+      Dados
+    </button>
+    <button class="lead-tab-btn" id="tab-btn-hist" data-tab="hist">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Informações
+    </button>
+    <button class="lead-tab-btn" id="tab-btn-venda" data-tab="venda">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+      Venda
+    </button>
+    <button class="lead-tab-btn" id="tab-btn-producao" data-tab="producao">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      Produção
+    </button>
+  </div>
+
+  <!-- ABA 1: DADOS PRINCIPAIS -->
+  <div id="tab-dados" class="lead-tab-content">
     <input type="hidden" id="fl-id">
-    <div class="fr">
-      <div class="input-group"><label class="input-label">Nome *</label><input id="fl-nome" class="input" placeholder="Nome do lead"></div>
-      <div class="input-group"><label class="input-label">Empresa</label><input id="fl-empresa" class="input" placeholder="Empresa Ltda"></div>
-    </div>
-    <div class="fr">
-      <div class="input-group"><label class="input-label">Telefone</label><input id="fl-tel" class="input" placeholder="(11) 99999-9999"></div>
-      <div class="input-group"><label class="input-label">Email</label><input id="fl-email" class="input" type="email" placeholder="lead@email.com"></div>
-    </div>
-    <div class="fr">
-      <div class="input-group"><label class="input-label">Funil (origem)</label><select id="fl-funil" class="input"></select></div>
-      <div class="input-group"><label class="input-label">Etapa</label><select id="fl-etapa" class="input"></select></div>
-    </div>
-    <div class="fr">
-      <div class="input-group"><label class="input-label">Responsável</label><select id="fl-resp" class="input"></select></div>
-      <div class="input-group"><label class="input-label">Valor Potencial (R$)</label><input id="fl-valor" class="input" type="number" placeholder="0" min="0"></div>
-    </div>
-    <div class="fr">
-      <div class="input-group">
-        <label class="input-label">Status</label>
-        <!-- Status é readonly: controlado automaticamente ao mover lead entre etapas -->
-        <div id="fl-status-badge" style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;min-height:38px">
-          <span id="fl-status-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#6CFF4E;flex-shrink:0"></span>
-          <span id="fl-status-label" style="font-size:.85rem;font-weight:600;letter-spacing:.05em">ABERTO</span>
-          <span style="margin-left:auto;font-size:.7rem;color:var(--text-muted)">Auto</span>
+    <div class="fg-compact">
+      <div class="fr-compact">
+        <div class="input-group-sm"><label class="lbl-sm">Nome *</label><input id="fl-nome" class="input input-sm" placeholder="Nome do lead"></div>
+        <div class="input-group-sm"><label class="lbl-sm">Empresa</label><input id="fl-empresa" class="input input-sm" placeholder="Empresa Ltda"></div>
+      </div>
+      <div class="fr-compact">
+        <div class="input-group-sm"><label class="lbl-sm">Telefone</label><input id="fl-tel" class="input input-sm" placeholder="(11) 99999-9999"></div>
+        <div class="input-group-sm"><label class="lbl-sm">Email</label><input id="fl-email" class="input input-sm" type="email" placeholder="lead@email.com"></div>
+      </div>
+      <div class="fr-compact">
+        <div class="input-group-sm"><label class="lbl-sm">Funil (origem)</label><select id="fl-funil" class="input input-sm"></select></div>
+        <div class="input-group-sm"><label class="lbl-sm">Etapa</label><select id="fl-etapa" class="input input-sm"></select></div>
+      </div>
+      <div class="fr-compact">
+        <div class="input-group-sm"><label class="lbl-sm">Responsável</label><select id="fl-resp" class="input input-sm"></select></div>
+        <div class="input-group-sm"><label class="lbl-sm">Valor Potencial (R$)</label><input id="fl-valor" class="input input-sm" type="number" placeholder="0" min="0"></div>
+      </div>
+      <div class="fr-compact">
+        <div class="input-group-sm">
+          <label class="lbl-sm">Status</label>
+          <div id="fl-status-badge" style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:7px;min-height:32px">
+            <span id="fl-status-dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#6CFF4E;flex-shrink:0"></span>
+            <span id="fl-status-label" style="font-size:.78rem;font-weight:600;letter-spacing:.05em">ABERTO</span>
+            <span style="margin-left:auto;font-size:.65rem;color:var(--text-muted)">Auto</span>
+          </div>
+          <input type="hidden" id="fl-status" value="ABERTO">
         </div>
-        <input type="hidden" id="fl-status" value="ABERTO">
+        <div class="input-group-sm"><label class="lbl-sm">Data de entrada</label><input id="fl-data-entrada" class="input input-sm date-input" type="date"></div>
+      </div>
+      <div class="fr-compact">
+        <div class="input-group-sm">
+          <label class="lbl-sm">Motivo de Perda</label>
+          <select id="fl-motivo-perda" class="input input-sm"><option value="">— Selecione (se aplicável) —</option></select>
+        </div>
+        <div class="input-group-sm"><label class="lbl-sm">Tags (vírgula)</label><input id="fl-tags" class="input input-sm" placeholder="quente, b2b, retorno"></div>
+      </div>
+      <div class="input-group-sm">
+        <label class="lbl-sm">Observações</label>
+        <textarea id="fl-obs" class="input input-sm" rows="2" placeholder="Observações sobre o lead..." style="resize:vertical"></textarea>
       </div>
     </div>
-    <div class="fr">
-      <div class="input-group"><label class="input-label">Data de fechamento</label><input id="fl-data-fechamento" class="input date-input" type="date"></div>
-      <div class="input-group"><label class="input-label">Data de entrada</label><input id="fl-data-entrada" class="input date-input" type="date"></div>
-    </div>
-    <div class="fr">
-      <div class="input-group" style="flex:1">
-        <label class="input-label">Motivo de Perda</label>
-        <select id="fl-motivo-perda" class="input">
-          <option value="">— Selecione (se aplicável) —</option>
-        </select>
-      </div>
-    </div>
-    <div class="input-group"><label class="input-label">Tags (separadas por vírgula)</label><input id="fl-tags" class="input" placeholder="quente, b2b, retorno"></div>
-    <div class="input-group"><label class="input-label">Observações</label>
-      <textarea id="fl-obs" class="input" rows="3" placeholder="Observações sobre o lead..." style="resize:vertical"></textarea>
-    </div>
-
-    <!-- ── DADOS COMERCIAIS DA VENDA ─────────────────────────── -->
-    <div id="secao-comercial" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;cursor:pointer" id="toggle-comercial">
-        <svg id="toggle-comercial-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="transition:transform .2s"><polyline points="9 18 15 12 9 6"/></svg>
-        <span style="font-size:.8rem;font-weight:700;letter-spacing:.06em;color:var(--text-secondary);text-transform:uppercase">Dados Comerciais da Venda</span>
-      </div>
-      <div id="comercial-body" style="display:none">
-        <div class="fr">
-          <div class="input-group">
-            <label class="input-label">Valor da Venda (R$) <span style="color:var(--green);font-size:.7rem">obrigatório para ganho</span></label>
-            <input id="fl-valor-venda" class="input" type="number" placeholder="0,00" min="0" step="0.01">
-          </div>
-          <div class="input-group">
-            <label class="input-label">Forma de Pagamento <span style="color:var(--green);font-size:.7rem">obrigatório para ganho</span></label>
-            <select id="fl-forma-pgto" class="input">
-              <option value="">— Selecione —</option>
-              <option value="Boleto">Boleto</option>
-              <option value="Cartão de Crédito">Cartão de Crédito</option>
-              <option value="Pix">Pix</option>
-              <option value="Variadas">Variadas</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- ── Produtos da Venda (múltiplos) ─────────────────── -->
-        <div class="input-group" style="margin-top:8px" id="area-produtos-venda">
-          <label class="input-label" style="display:flex;align-items:center;justify-content:space-between">
-            <span>Produtos da Venda <span style="color:var(--green);font-size:.7rem">obrigatório para ganho</span></span>
-            <button type="button" id="btn-add-linha-produto" class="btn btn-secondary btn-sm" style="font-size:.72rem;padding:3px 10px">+ Adicionar Produto</button>
-          </label>
-
-          <!-- Cabeçalho da tabela (visível quando há itens) -->
-          <div id="lp-header" style="display:none;display:grid;grid-template-columns:1fr 70px 100px 90px 28px;gap:4px;font-size:.7rem;color:var(--text-muted);padding:4px 2px;margin-top:6px">
-            <span>Produto</span><span>Qtd</span><span>Val. Unit.</span><span>Total</span><span></span>
-          </div>
-
-          <!-- Lista dinâmica de linhas de produto -->
-          <div id="lp-lista" style="display:flex;flex-direction:column;gap:6px;margin-top:4px"></div>
-
-          <!-- Empty state -->
-          <div id="lp-empty" style="font-size:.8rem;color:var(--text-muted);padding:8px 2px">
-            Nenhum produto adicionado. Clique em "+ Adicionar Produto".
-          </div>
-
-          <!-- Mini form novo produto (oculto) — mantido para cadastrar produto novo -->
-          <div id="form-novo-produto" style="display:none;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-top:8px">
-            <div style="font-size:.75rem;font-weight:700;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">Cadastrar Novo Produto</div>
-            <div class="fr">
-              <div class="input-group">
-                <label class="input-label">Nome do produto *</label>
-                <input id="np-nome" class="input" placeholder="Ex: Plano Essencial">
-              </div>
-              <div class="input-group" style="max-width:120px">
-                <label class="input-label">Cor</label>
-                <input id="np-cor" class="input" type="color" value="#6CFF4E" style="height:38px;padding:2px 4px;cursor:pointer">
-              </div>
-            </div>
-            <div style="display:flex;gap:8px;margin-top:6px">
-              <button type="button" id="btn-salvar-produto" class="btn btn-primary btn-sm">Cadastrar</button>
-              <button type="button" id="btn-cancelar-produto" class="btn btn-secondary btn-sm">Cancelar</button>
-            </div>
-          </div>
-
-          <!-- Total da venda (calculado) -->
-          <div id="lp-total-wrap" style="display:none;margin-top:8px;padding:8px 10px;background:var(--surface-2);border-radius:8px;font-size:.82rem;display:none;justify-content:space-between;align-items:center">
-            <span style="color:var(--text-muted)">Total dos produtos:</span>
-            <span id="lp-total-valor" style="font-weight:700;color:var(--green)">R$ 0,00</span>
-          </div>
-        </div>
-
-        <!-- Campo oculto legado — mantido para compatibilidade (não exibido ao usuário) -->
-        <select id="fl-produto" style="display:none"><option value="">—</option></select>
-
-        <!-- Parcelas -->
-        <div class="input-group" style="margin-top:12px">
-          <label class="input-label" style="display:flex;align-items:center;justify-content:space-between">
-            <span>Parcelamento</span>
-            <button type="button" id="btn-add-parcela" class="btn btn-secondary btn-sm" style="font-size:.72rem;padding:3px 10px">+ Parcela</button>
-          </label>
-          <div id="parcelas-lista" style="display:flex;flex-direction:column;gap:6px;margin-top:6px"></div>
-          <div id="parcelas-empty" style="font-size:.8rem;color:var(--text-muted);padding:8px 0">
-            Nenhuma parcela adicionada. Clique em "+ Parcela" ou deixe em branco para venda à vista.
-          </div>
-        </div>
-      </div>
-    </div>
-    <!-- ── FIM DADOS COMERCIAIS ────────────────────────────────── -->
-  </div>
   </div>
 
-  <div id="tab-hist" style="display:none">
-    <div id="hist-list" style="max-height:300px;overflow-y:auto;margin-bottom:16px"></div>
-    <div class="input-group">
-      <label class="input-label">Nova nota</label>
-      <textarea id="nova-nota" class="input" rows="2" placeholder="Adicionar nota ao histórico..."></textarea>
+  <!-- ABA 2: INFORMAÇÕES (timeline + tags + atividades) -->
+  <div id="tab-hist" class="lead-tab-content" style="display:none">
+
+    <!-- Timeline -->
+    <div class="info-section">
+      <div class="info-section-title">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        Timeline do Lead
+      </div>
+      <div id="lead-timeline" class="timeline-wrap">
+        <p style="font-size:.75rem;color:var(--text-muted)">Carregando histórico...</p>
+      </div>
     </div>
-    <button class="btn btn-secondary btn-sm" style="margin-top:8px" id="btn-add-nota">Adicionar Nota</button>
+
+    <!-- Tags -->
+    <div class="info-section">
+      <div class="info-section-title">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+        Tags
+      </div>
+      <div id="lead-tags-display" style="display:flex;flex-wrap:wrap;gap:5px;min-height:28px">
+        <span style="font-size:.72rem;color:var(--text-muted)">Sem tags registradas.</span>
+      </div>
+    </div>
+
+    <!-- Atividades (renderizado via atividades.js) -->
+    <div id="atividades-container"></div>
+
+    <!-- Notas / Histórico -->
+    <div class="info-section">
+      <div class="info-section-title">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Histórico de Notas
+      </div>
+      <div id="hist-list" style="max-height:180px;overflow-y:auto;margin-bottom:10px"></div>
+      <div class="input-group-sm">
+        <label class="lbl-sm">Nova nota</label>
+        <textarea id="nova-nota" class="input input-sm" rows="2" placeholder="Adicionar nota ao histórico..."></textarea>
+      </div>
+      <button class="btn btn-secondary btn-sm" style="margin-top:6px;font-size:.72rem" id="btn-add-nota">Adicionar Nota</button>
+    </div>
   </div>
 
+  <!-- ABA 3: DADOS PARA VENDA -->
+  <div id="tab-venda" class="lead-tab-content" style="display:none">
+
+    <div class="info-section">
+      <div class="info-section-title">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+        Dados Comerciais da Venda
+      </div>
+
+      <div class="fr-compact">
+        <div class="input-group-sm">
+          <label class="lbl-sm">Valor da Venda (R$) <span style="color:var(--green);font-size:.65rem">obrigatório p/ ganho</span></label>
+          <input id="fl-valor-venda" class="input input-sm" type="number" placeholder="0,00" min="0" step="0.01">
+        </div>
+        <div class="input-group-sm">
+          <label class="lbl-sm">Forma de Pagamento <span style="color:var(--green);font-size:.65rem">obrigatório p/ ganho</span></label>
+          <select id="fl-forma-pgto" class="input input-sm">
+            <option value="">— Selecione —</option>
+            <option value="Boleto">Boleto</option>
+            <option value="Cartão de Crédito">Cartão de Crédito</option>
+            <option value="Pix">Pix</option>
+            <option value="Variadas">Variadas</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="fr-compact" style="margin-top:4px">
+        <div class="input-group-sm"><label class="lbl-sm">Data de fechamento</label><input id="fl-data-fechamento" class="input input-sm date-input" type="date"></div>
+        <div class="input-group-sm"><label class="lbl-sm">Próxima compra prevista</label><input id="fl-proxima-compra" class="input input-sm date-input" type="date" disabled title="Em breve"></div>
+      </div>
+
+      <!-- Produtos -->
+      <div class="input-group-sm" style="margin-top:8px" id="area-produtos-venda">
+        <label class="lbl-sm" style="display:flex;align-items:center;justify-content:space-between">
+          <span>Produtos <span style="color:var(--green);font-size:.65rem">obrigatório p/ ganho</span></span>
+          <button type="button" id="btn-add-linha-produto" class="btn btn-secondary btn-sm" style="font-size:.68rem;padding:2px 8px">+ Produto</button>
+        </label>
+        <div id="lp-header" style="display:none;display:grid;grid-template-columns:1fr 70px 100px 90px 28px;gap:4px;font-size:.65rem;color:var(--text-muted);padding:4px 2px;margin-top:4px">
+          <span>Produto</span><span>Qtd</span><span>Val. Unit.</span><span>Total</span><span></span>
+        </div>
+        <div id="lp-lista" style="display:flex;flex-direction:column;gap:5px;margin-top:3px"></div>
+        <div id="lp-empty" style="font-size:.75rem;color:var(--text-muted);padding:6px 2px">Nenhum produto adicionado.</div>
+        <div id="form-novo-produto" style="display:none;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:6px">
+          <div style="font-size:.7rem;font-weight:700;color:var(--text-muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Cadastrar Produto</div>
+          <div class="fr-compact">
+            <div class="input-group-sm"><label class="lbl-sm">Nome *</label><input id="np-nome" class="input input-sm" placeholder="Ex: Plano Essencial"></div>
+            <div class="input-group-sm" style="max-width:100px"><label class="lbl-sm">Cor</label><input id="np-cor" class="input input-sm" type="color" value="#6CFF4E" style="height:32px;padding:2px 4px;cursor:pointer"></div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:5px">
+            <button type="button" id="btn-salvar-produto" class="btn btn-primary btn-sm" style="font-size:.72rem">Cadastrar</button>
+            <button type="button" id="btn-cancelar-produto" class="btn btn-secondary btn-sm" style="font-size:.72rem">Cancelar</button>
+          </div>
+        </div>
+        <div id="lp-total-wrap" style="display:none;margin-top:6px;padding:7px 10px;background:var(--surface-2);border-radius:7px;font-size:.78rem;justify-content:space-between;align-items:center">
+          <span style="color:var(--text-muted)">Total:</span>
+          <span id="lp-total-valor" style="font-weight:700;color:var(--green)">R$ 0,00</span>
+        </div>
+      </div>
+
+      <!-- Parcelamento -->
+      <div class="input-group-sm" style="margin-top:8px">
+        <label class="lbl-sm" style="display:flex;align-items:center;justify-content:space-between">
+          <span>Parcelamento</span>
+          <button type="button" id="btn-add-parcela" class="btn btn-secondary btn-sm" style="font-size:.68rem;padding:2px 8px">+ Parcela</button>
+        </label>
+        <div id="parcelas-lista" style="display:flex;flex-direction:column;gap:5px;margin-top:5px"></div>
+        <div id="parcelas-empty" style="font-size:.75rem;color:var(--text-muted);padding:5px 0">Sem parcelas — à vista.</div>
+      </div>
+
+      <!-- Campo legado oculto -->
+      <select id="fl-produto" style="display:none"><option value="">—</option></select>
+    </div>
+
+    <!-- Estrutura futura: campos quantidade/peças -->
+    <div class="info-section info-section-future">
+      <div class="info-section-title">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+        Detalhes do Pedido <span class="badge-future">Em breve</span>
+      </div>
+      <div class="future-placeholder">
+        Campos: Nº de produtos, quantidade de peças, observações de pedido.
+      </div>
+    </div>
+  </div>
+
+  <!-- ABA 4: PRODUÇÃO (renderizado via producao.js) -->
+  <div id="tab-producao" class="lead-tab-content" style="display:none">
+    <!-- Conteúdo injetado por Producao.renderTab() ao abrir lead -->
+    <p style="font-size:.75rem;color:var(--text-muted);padding:12px 0">Selecione um lead para ver a produção.</p>
+  </div>
+
+    <div class="info-section">
+      <div class="info-section-title">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Anotações &amp; Layout <span class="badge-future">Em breve</span>
+      </div>
+      <div class="future-placeholder">
+        Área para anotações de produção, upload de layout e arquivos aprovados.
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
   <div class="mf">
-    <button class="btn btn-danger btn-sm" id="ml-excluir" style="margin-right:auto;display:none">Excluir lead</button>
-    <button class="btn btn-secondary" id="ml-cancelar">Cancelar</button>
-    <button class="btn btn-primary" id="ml-salvar">
+    <button class="btn btn-danger btn-sm" id="ml-excluir" style="margin-right:auto;display:none;font-size:.75rem">Excluir</button>
+    <button class="btn btn-secondary btn-sm" id="ml-clonar" style="display:none;font-size:.75rem" title="Clona somente Dados Principais">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      Clonar Lead
+    </button>
+    <button class="btn btn-secondary" id="ml-cancelar" style="font-size:.8rem">Cancelar</button>
+    <button class="btn btn-primary" id="ml-salvar" style="font-size:.8rem">
       <span id="ml-salvar-txt">Salvar</span>
       <div class="spinner hidden" id="ml-spinner"></div>
     </button>
   </div>
+
 </div>
 </div>
 
@@ -259,30 +327,33 @@
 <div class="modal-ov" id="ov-motivo">
 <div class="modal-box" style="max-width:480px">
   <div class="mh">
-    <h3>⚠️ Informe o Motivo de Perda</h3>
+    <h3 style="font-size:.9rem">⚠️ Motivo de Perda</h3>
   </div>
-  <p style="color:var(--text-muted);font-size:.875rem;margin-bottom:16px">
-    Para mover o lead para uma etapa de perda, o motivo é obrigatório.
-  </p>
-  <div class="input-group">
-    <label class="input-label">Motivo</label>
-    <select id="motivo-perda-sel" class="input"></select>
+  <p style="color:var(--text-muted);font-size:.8rem;margin-bottom:14px">Para mover o lead para etapa de perda, o motivo é obrigatório.</p>
+  <div class="input-group-sm">
+    <label class="lbl-sm">Motivo</label>
+    <select id="motivo-perda-sel" class="input input-sm"></select>
   </div>
-  <div class="input-group" style="margin-top:12px">
-    <label class="input-label">Outro motivo (opcional)</label>
-    <input id="motivo-perda-outro" class="input" placeholder="Descreva o motivo...">
+  <div class="input-group-sm" style="margin-top:10px">
+    <label class="lbl-sm">Outro motivo (opcional)</label>
+    <input id="motivo-perda-outro" class="input input-sm" placeholder="Descreva o motivo...">
   </div>
-  <div class="mf" style="margin-top:20px">
-    <button class="btn btn-secondary" id="btn-motivo-cancelar">Cancelar</button>
-    <button class="btn btn-primary" id="btn-motivo-confirmar">Confirmar e Mover</button>
+  <div class="mf" style="margin-top:16px">
+    <button class="btn btn-secondary btn-sm" id="btn-motivo-cancelar">Cancelar</button>
+    <button class="btn btn-primary btn-sm" id="btn-motivo-confirmar">Confirmar e Mover</button>
   </div>
 </div>
 </div>
+
 <script src="/js/auth.js"></script>
 <script src="/js/toast.js"></script>
 <script src="/js/sidebar.js"></script>
 <script src="/js/avatar.js"></script>
+<script src="/js/atividades.js"></script>
+<script src="/js/producao.js"></script>
 <script src="/js/pipeline.js"></script>
 
+
+<script src="/js/mobile-nav.js"></script>
 </body>
 </html>

@@ -1622,6 +1622,39 @@ async function webhookReceberMensagem(req, res) {
 
     if (msgSalva) {
       console.log('MENSAGEM_SALVA_COM_SUCESSO:', resultado);
+
+      // ── 9. Se há mídia recebida: registra metadados em lead_arquivos ───────
+      // Só para mensagens RECEBIDAS (fromMe=false) que tenham URL de mídia
+      if (!fromMe && midiaUrl && leadId && conversaId && isSupa) {
+        try {
+          // Deduplicar por evolution_message_id (campo mensagem_id na tabela)
+          const { data: existe } = await sb.from('lead_arquivos')
+            .select('id').eq('mensagem_id', msgId).maybeSingle();
+          if (!existe) {
+            const arqId = crypto.randomBytes(16).toString('hex');
+            const ext   = (arquivoNome?.split('.').pop() || (tipo === 'imagem' ? 'jpg' : tipo === 'audio' ? 'ogg' : tipo === 'video' ? 'mp4' : 'bin'));
+            await sb.from('lead_arquivos').insert({
+              id:              arqId,
+              lead_id:         leadId,
+              conversa_id:     conversaId,
+              mensagem_id:     msgId,
+              nome_original:   arquivoNome || `${tipo}-${agora.slice(0,10)}.${ext}`,
+              nome_storage:    `wa/${leadId}/${msgId}.${ext}`,
+              url:             midiaUrl,
+              tamanho:         null,
+              mime_type:       mimeType || null,
+              enviado_por:     null, // recebido do lead, não do usuário
+              origem:          'whatsapp',
+              criado_em:       agora,
+            });
+            console.log('[WA Webhook] Mídia registrada em lead_arquivos:', { arqId, leadId, conversaId, tipo });
+          } else {
+            console.log('[WA Webhook] Mídia já registrada (dedup):', msgId);
+          }
+        } catch (eArq) {
+          console.warn('[WA Webhook] Falha ao registrar mídia em lead_arquivos (não crítico):', eArq.message);
+        }
+      }
     } else {
       console.error('ERRO_AO_SALVAR_MENSAGEM_WHATSAPP:', { ...resultado, erro: erroSalvar?.message || 'Sem conversa ou erro no insert' });
     }

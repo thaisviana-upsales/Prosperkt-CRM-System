@@ -5,29 +5,29 @@
  */
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
-const MESES_NOME = ['','Janeiro','Fevereiro','Março','Abril','Maio','Junho',
-  'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+const MESES_NOME = ['', 'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 
 const TIPO_INFO = {
-  FATURAMENTO:        { label:'Faturamento',        icon:'💰', prefix:'R$ ', suffix:'', pct:false },
-  QUANTIDADE_VENDAS:  { label:'Qtd. Vendas',         icon:'🏆', prefix:'',    suffix:' vd', pct:false },
-  LEADS_RECEBIDOS:    { label:'Leads Recebidos',     icon:'📥', prefix:'',    suffix:' leads', pct:false },
-  ORCAMENTOS_ENVIADOS:{ label:'Orçamentos',           icon:'📄', prefix:'',    suffix:'', pct:false },
-  CONVERSAO:          { label:'Conversão',            icon:'📈', prefix:'',    suffix:'%', pct:true },
-  TICKET_MEDIO:       { label:'Ticket Médio',         icon:'🎯', prefix:'R$ ', suffix:'', pct:false },
+  FATURAMENTO: { label: 'Faturamento', icon: '💰', prefix: 'R$ ', suffix: '', pct: false },
+  QUANTIDADE_VENDAS: { label: 'Qtd. Vendas', icon: '🏆', prefix: '', suffix: ' vd', pct: false },
+  LEADS_RECEBIDOS: { label: 'Leads Recebidos', icon: '📥', prefix: '', suffix: ' leads', pct: false },
+  ORCAMENTOS_ENVIADOS: { label: 'Orçamentos', icon: '📄', prefix: '', suffix: '', pct: false },
+  CONVERSAO: { label: 'Conversão', icon: '📈', prefix: '', suffix: '%', pct: true },
+  TICKET_MEDIO: { label: 'Ticket Médio', icon: '🎯', prefix: 'R$ ', suffix: '', pct: false },
 };
 
 const STATUS_INFO = {
-  SUPERADA:   { label:'Meta superada',  cls:'superada' },
-  ATINGIDA:   { label:'Meta atingida',  cls:'atingida' },
-  EM_EVOLUCAO:{ label:'Em evolução',    cls:'em_evolucao' },
-  ABAIXO:     { label:'Abaixo da meta', cls:'abaixo' },
+  SUPERADA: { label: 'Meta superada', cls: 'superada' },
+  ATINGIDA: { label: 'Meta atingida', cls: 'atingida' },
+  EM_EVOLUCAO: { label: 'Em evolução', cls: 'em_evolucao' },
+  ABAIXO: { label: 'Abaixo da meta', cls: 'abaixo' },
 };
 
 // ─── Estado ──────────────────────────────────────────────────────────────────
-let _usuario  = null;
-let _canEdit  = false;
-let _funis    = [];
+let _usuario = null;
+let _canEdit = false;
+let _funis = [];
 let _usuarios = [];
 let _metasCache = []; // cache da última listagem para editar sem re-fetch
 
@@ -42,7 +42,7 @@ function fmtValor(tipo, v) {
   const info = TIPO_INFO[tipo];
   if (!info) return String(v);
   if (info.prefix === 'R$ ') return fmtMoney(v);
-  if (info.suffix === '%')   return fmtNum(v) + '%';
+  if (info.suffix === '%') return fmtNum(v) + '%';
   return fmtNum(v) + info.suffix;
 }
 
@@ -131,17 +131,17 @@ async function carregar() {
   mostrarCarregando();
 
   const params = new URLSearchParams();
-  const fv  = document.getElementById('f-funil').value;
-  const vv  = document.getElementById('f-vendedor')?.value;
-  const mv  = document.getElementById('f-mes').value;
-  const av  = document.getElementById('f-ano').value;
-  const tv  = document.getElementById('f-tipo').value;
+  const fv = document.getElementById('f-funil').value;
+  const vv = document.getElementById('f-vendedor')?.value;
+  const mv = document.getElementById('f-mes').value;
+  const av = document.getElementById('f-ano').value;
+  const tv = document.getElementById('f-tipo').value;
 
-  if (fv) params.append('funil_id',   fv);
+  if (fv) params.append('funil_id', fv);
   if (vv) params.append('usuario_id', vv);
-  if (mv) params.append('mes',        mv);
-  if (av) params.append('ano',        av);
-  if (tv) params.append('tipo',       tv);
+  if (mv) params.append('mes', mv);
+  if (av) params.append('ano', av);
+  if (tv) params.append('tipo', tv);
 
   const qs = params.toString();
   try {
@@ -153,7 +153,7 @@ async function carregar() {
     _metasCache = r.data.dados || []; // salva no cache local
     renderMetas(_metasCache);
     document.getElementById('ultima-att').textContent =
-      'Atualizado ' + new Date().toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
+      'Atualizado ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   } catch (e) {
     console.error('[Metas] carregar error:', e);
     mostrarErro('Falha de conexão. Verifique o servidor.');
@@ -186,7 +186,7 @@ function mostrarErro(msg) {
 // ─── Render cards ─────────────────────────────────────────────────────────────
 function renderMetas(metas) {
   const grid = document.getElementById('metas-grid');
-  const bar  = document.getElementById('summary-bar');
+  const bar = document.getElementById('summary-bar');
 
   if (!metas.length) {
     grid.innerHTML = `
@@ -204,14 +204,14 @@ function renderMetas(metas) {
   }
 
   // Atualiza summary bar
-  const total     = metas.length;
-  const atingidas = metas.filter(m => ['ATINGIDA','SUPERADA'].includes(m.status_calc)).length;
-  const evolucao  = metas.filter(m => m.status_calc === 'EM_EVOLUCAO').length;
-  const abaixo    = metas.filter(m => m.status_calc === 'ABAIXO').length;
-  document.getElementById('sum-total').textContent     = total;
+  const total = metas.length;
+  const atingidas = metas.filter(m => ['ATINGIDA', 'SUPERADA'].includes(m.status_calc)).length;
+  const evolucao = metas.filter(m => m.status_calc === 'EM_EVOLUCAO').length;
+  const abaixo = metas.filter(m => m.status_calc === 'ABAIXO').length;
+  document.getElementById('sum-total').textContent = total;
   document.getElementById('sum-atingidas').textContent = atingidas;
-  document.getElementById('sum-evolucao').textContent  = evolucao;
-  document.getElementById('sum-abaixo').textContent    = abaixo;
+  document.getElementById('sum-evolucao').textContent = evolucao;
+  document.getElementById('sum-abaixo').textContent = abaixo;
   bar.style.display = '';
 
   grid.innerHTML = metas.map(m => renderCard(m)).join('');
@@ -226,24 +226,24 @@ function renderMetas(metas) {
 }
 
 function renderCard(m) {
-  const info     = TIPO_INFO[m.tipo] || { label: m.tipo, icon:'🎯' };
-  const statusI  = STATUS_INFO[m.status_calc] || STATUS_INFO.ABAIXO;
-  const pct      = Math.min(m.pct || 0, 150); // cap visual em 150%
-  const barPct   = Math.min(pct, 100);
+  const info = TIPO_INFO[m.tipo] || { label: m.tipo, icon: '🎯' };
+  const statusI = STATUS_INFO[m.status_calc] || STATUS_INFO.ABAIXO;
+  const pct = Math.min(m.pct || 0, 150); // cap visual em 150%
+  const barPct = Math.min(pct, 100);
 
   const vendedorNome = m.usuario_nome || 'Equipe toda';
-  const funilNome    = m.funil_nome || 'Todos os funis';
-  const periodoStr   = MESES_NOME[m.mes] ? `${MESES_NOME[m.mes]}/${m.ano}` : (m.ano || '—');
+  const funilNome = m.funil_nome || 'Todos os funis';
+  const periodoStr = MESES_NOME[m.mes] ? `${MESES_NOME[m.mes]}/${m.ano}` : (m.ano || '—');
 
-  const realizado   = fmtValor(m.tipo, m.realizado);
-  const valorAlvo   = fmtValor(m.tipo, m.valor_alvo);
-  const gapFmt      = fmtValor(m.tipo, m.gap);
-  const pctFmt      = fmtNum(m.pct) + '%';
+  const realizado = fmtValor(m.tipo, m.realizado);
+  const valorAlvo = fmtValor(m.tipo, m.valor_alvo);
+  const gapFmt = fmtValor(m.tipo, m.gap);
+  const pctFmt = fmtNum(m.pct) + '%';
 
   const clsStatus = statusI.cls;
-  const clsBar    = statusI.cls;
+  const clsBar = statusI.cls;
 
-  const pctColor = ['atingida','superada'].includes(clsStatus) ? 'var(--green)'
+  const pctColor = ['atingida', 'superada'].includes(clsStatus) ? 'var(--green)'
     : clsStatus === 'em_evolucao' ? '#7dbfff' : 'var(--pink)';
 
   return `
@@ -279,12 +279,12 @@ function renderCard(m) {
 
   <div class="mc-stats">
     <div class="mc-stat">
-      <div class="mc-stat-val" style="color:var(--green)">${realizado}</div>
-      <div class="mc-stat-lbl">Realizado</div>
-    </div>
-    <div class="mc-stat">
       <div class="mc-stat-val">${valorAlvo}</div>
       <div class="mc-stat-lbl">Meta</div>
+    </div>
+    <div class="mc-stat">
+      <div class="mc-stat-val" style="color:var(--green)">${realizado}</div>
+      <div class="mc-stat-lbl">Realizado</div>
     </div>
     <div class="mc-stat">
       <div class="mc-stat-val" style="color:${m.gap > 0 ? 'var(--pink)' : 'var(--green)'}">
@@ -293,6 +293,7 @@ function renderCard(m) {
       <div class="mc-stat-lbl">Gap</div>
     </div>
   </div>
+
 
   ${_canEdit ? `
   <div class="mc-actions">
@@ -316,14 +317,14 @@ function renderCard(m) {
 // ─── Modal ────────────────────────────────────────────────────────────────────
 function abrirModal(modo = 'criar', meta = null) {
   document.getElementById('modal-title').textContent = modo === 'criar' ? 'Nova Meta' : 'Editar Meta';
-  document.getElementById('m-id').value       = meta?.id         || '';
+  document.getElementById('m-id').value = meta?.id || '';
   document.getElementById('m-vendedor').value = meta?.usuario_id || '';
-  document.getElementById('m-mes').value      = meta?.mes        || '';
-  document.getElementById('m-ano').value      = meta?.ano        || new Date().getFullYear();
-  document.getElementById('m-funil').value    = meta?.funil_id   || '';
-  document.getElementById('m-tipo').value     = meta?.tipo       || 'FATURAMENTO';
-  document.getElementById('m-valor').value    = meta?.valor_alvo || '';
-  document.getElementById('m-obs').value      = meta?.observacoes || '';
+  document.getElementById('m-mes').value = meta?.mes || '';
+  document.getElementById('m-ano').value = meta?.ano || new Date().getFullYear();
+  document.getElementById('m-funil').value = meta?.funil_id || '';
+  document.getElementById('m-tipo').value = meta?.tipo || 'FATURAMENTO';
+  document.getElementById('m-valor').value = meta?.valor_alvo || '';
+  document.getElementById('m-obs').value = meta?.observacoes || '';
   document.getElementById('modal-alert').style.display = 'none';
 
   atualizarHintValor();
@@ -368,14 +369,14 @@ async function salvar() {
   const alertEl = document.getElementById('modal-alert');
   alertEl.style.display = 'none';
 
-  const id         = document.getElementById('m-id').value;
+  const id = document.getElementById('m-id').value;
   const usuario_id = document.getElementById('m-vendedor').value;
-  const mes        = parseInt(document.getElementById('m-mes').value);
-  const ano        = parseInt(document.getElementById('m-ano').value);
-  const funilSel   = document.getElementById('m-funil');
-  const funil_id   = funilSel.value || null;
+  const mes = parseInt(document.getElementById('m-mes').value);
+  const ano = parseInt(document.getElementById('m-ano').value);
+  const funilSel = document.getElementById('m-funil');
+  const funil_id = funilSel.value || null;
   const funil_tipo = funil_id ? 'ESPECIFICO' : 'TODOS';
-  const tipo       = document.getElementById('m-tipo').value;
+  const tipo = document.getElementById('m-tipo').value;
   const valor_alvo = parseFloat(document.getElementById('m-valor').value);
   const observacoes = document.getElementById('m-obs').value.trim() || null;
 
@@ -435,11 +436,11 @@ function mostrarAlertModal(msg) {
 function confirmDialog(titulo, msg) {
   return new Promise(resolve => {
     document.getElementById('confirm-title').textContent = titulo;
-    document.getElementById('confirm-msg').textContent   = msg;
+    document.getElementById('confirm-msg').textContent = msg;
     const ov = document.getElementById('confirm-ov');
     ov.classList.add('open');
 
-    const okBtn  = document.getElementById('confirm-ok');
+    const okBtn = document.getElementById('confirm-ok');
     const canBtn = document.getElementById('confirm-cancel');
 
     function cleanup(val) {
@@ -449,13 +450,13 @@ function confirmDialog(titulo, msg) {
       ov.removeEventListener('click', onOverlay);
       resolve(val);
     }
-    function onOk()      { cleanup(true); }
-    function onCancel()  { cleanup(false); }
-    function onOverlay(e){ if (e.target === ov) cleanup(false); }
+    function onOk() { cleanup(true); }
+    function onCancel() { cleanup(false); }
+    function onOverlay(e) { if (e.target === ov) cleanup(false); }
 
-    okBtn.addEventListener('click',  onOk);
+    okBtn.addEventListener('click', onOk);
     canBtn.addEventListener('click', onCancel);
-    ov.addEventListener('click',     onOverlay);
+    ov.addEventListener('click', onOverlay);
   });
 }
 
@@ -524,7 +525,7 @@ function bindEvents() {
   });
   document.getElementById('btn-filtrar').addEventListener('click', carregar);
   document.getElementById('btn-limpar').addEventListener('click', () => {
-    ['f-funil','f-vendedor','f-mes','f-tipo'].forEach(id => {
+    ['f-funil', 'f-vendedor', 'f-mes', 'f-tipo'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.value = '';
     });

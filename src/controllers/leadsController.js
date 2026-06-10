@@ -5,6 +5,65 @@
 const crypto = require('crypto');
 const { getProvider } = require('../database/dbProvider');
 
+// ── Rodízio de Leads entre Vendedores ─────────────────────────────────────────
+/**
+ * Retorna o ID do próximo vendedor ativo em rodízio justo.
+ * Algoritmo: pega o vendedor que tem o menor número de leads criados,
+ * desempatando pelo último lead criado (quem recebeu mais recentemente fica por último).
+ * Isso garante distribuição igualitária sem depender de tabela de controle separada.
+ */
+async function _proximoVendedorRodizio(sb) {
+  try {
+    // 1. Lista vendedores ativos (role=VENDEDOR, ativo=true)
+    const { data: vendedores, error: eV } = await sb.from('usuarios')
+      .select('id, nome')
+      .eq('role', 'VENDEDOR')
+      .eq('ativo', true)
+      .order('nome');
+    if (eV || !vendedores?.length) {
+      console.log('[Rodízio] Nenhum vendedor ativo disponível para distribuição.');
+      return null;
+    }
+
+    // 2. Conta leads por vendedor (apenas leads não arquivados/deletados)
+    const { data: contagens } = await sb.from('leads')
+      .select('responsavel_id')
+      .in('responsavel_id', vendedores.map(v => v.id))
+      .neq('status', 'arquivado');
+
+    const count = {};
+    vendedores.forEach(v => { count[v.id] = 0; });
+    (contagens || []).forEach(l => { if (count[l.responsavel_id] !== undefined) count[l.responsavel_id]++; });
+
+    // 3. Pega o último lead de cada vendedor (para desempate temporal)
+    const { data: ultimosLeads } = await sb.from('leads')
+      .select('responsavel_id, criado_em')
+      .in('responsavel_id', vendedores.map(v => v.id))
+      .order('criado_em', { ascending: false })
+      .limit(vendedores.length * 2);
+
+    const ultimoEm = {};
+    vendedores.forEach(v => { ultimoEm[v.id] = '1970-01-01'; });
+    (ultimosLeads || []).forEach(l => {
+      if (!ultimoEm[l.responsavel_id] || l.criado_em > ultimoEm[l.responsavel_id])
+        ultimoEm[l.responsavel_id] = l.criado_em;
+    });
+
+    // 4. Ordena: menor contagem primeiro; empate = quem recebeu há mais tempo primeiro
+    const ordenados = vendedores.slice().sort((a, b) => {
+      if (count[a.id] !== count[b.id]) return count[a.id] - count[b.id];
+      return ultimoEm[a.id] < ultimoEm[b.id] ? -1 : 1;
+    });
+
+    const escolhido = ordenados[0];
+    console.log(`[Rodízio] Próximo vendedor: ${escolhido.nome} (${escolhido.id}) — leads: ${count[escolhido.id]}`);
+    return escolhido.id;
+  } catch (e) {
+    console.warn('[Rodízio] Erro ao calcular rodízio:', e.message);
+    return null;
+  }
+}
+
 // ── Helpers Supabase ──────────────────────────────────────────────────────────
 
 function mapStatus(s) {
@@ -124,7 +183,19 @@ async function criar(req, res) {
           responsavel_id, origem, tags, dados_extras, observacoes, funil_id } = req.body;
   if (!nome) return res.status(400).json({ sucesso:false, erro:'Nome é obrigatório.' });
 
-  const respId = req.usuario.role==='VENDEDOR' ? req.usuario.id : (responsavel_id || req.usuario.id);
+  // Rodízio automático:
+  // - VENDEDOR: sempre recebe seus próprios leads
+  // - GESTOR/ADMIN criando com responsavel_id explícito: respeita a escolha
+  // - GESTOR/ADMIN sem responsavel_id: ativa rodízio entre vendedores ativos
+  let respId;
+  if (req.usuario.role === 'VENDEDOR') {
+    respId = req.usuario.id;
+  } else if (responsavel_id) {
+    respId = responsavel_id;
+  } else {
+    // Rodízio automático via Supabase (não funciona em SQLite — fallback para admin)
+    respId = (await _proximoVendedorRodizio(sb)) || req.usuario.id;
+  }
   const id = crypto.randomBytes(16).toString('hex');
 
   try {
@@ -368,7 +439,8 @@ async function transferir(req, res) {
 // ── DELETE /api/leads/:id ─────────────────────────────────────────────────────
 async function deletar(req, res) {
   const { sb, isSupa, sqlite } = getProvider();
-  if (req.usuario.role==='VENDEDOR') return res.status(403).json({ sucesso:false, erro:'Acesso negado.' });
+  // Somente SUPER_ADMIN pode excluir leads
+  if (req.usuario.role !== 'SUPER_ADMIN') return res.status(403).json({ sucesso:false, erro:'Apenas o Super Admin pode excluir leads.' });
   const agora = new Date().toISOString();
   try {
     if (isSupa) {
@@ -653,4 +725,78 @@ async function removerProdutoLead(req, res) {
   } catch(e) { return res.status(500).json({ sucesso: false, erro: e.message }); }
 }
 
-module.exports = { listar, buscarPorId, criar, atualizar, mover, transferir, deletar, adicionarMensagem, historico, getDistribuicao, setDistribuicao, listarProdutosLead, adicionarProdutoLead, atualizarProdutoLead, removerProdutoLead };
+// ── POST /api/leads/:id/clonar ───────────────────────────────────────────────
+async function clonar(req, res) {
+  const { sb, isSupa, sqlite } = getProvider();
+  const { id } = req.params;
+  const novoId = crypto.randomBytes(16).toString('hex');
+  const agora  = new Date().toISOString();
+
+  try {
+    if (isSupa) {
+      const { data: origem, error: errO } = await sb.from('leads').select('*').eq('id', id).single();
+      if (errO || !origem) return res.status(404).json({ sucesso:false, erro:'Lead não encontrado.' });
+      // Permissão: vendedor só clona seus leads
+      if (req.usuario.role === 'VENDEDOR' && origem.responsavel_id !== req.usuario.id)
+        return res.status(403).json({ sucesso:false, erro:'Acesso negado.' });
+
+      // Copia APENAS Dados Principais — zera tudo comercial/produção/histórico
+      const clone = {
+        id:             novoId,
+        nome:           `${origem.nome} (Cópia)`,
+        empresa:        origem.empresa        || null,
+        telefone:       origem.telefone       || null,
+        email:          origem.email          || null,
+        funil_id:       origem.funil_id       || null,
+        etapa_id:       origem.etapa_id       || null,
+        pipeline_id:    origem.pipeline_id    || null,
+        responsavel_id: origem.responsavel_id || null,
+        status:         'ativo',
+        origem:         'clone',
+        valor:          0,
+        // Zera campos comerciais
+        valor_venda:          null,
+        forma_pagamento:      null,
+        quantidade_parcelas:  null,
+        parcelas_json:        null,
+        produto_id:           null,
+        produto_nome:         null,
+        produto_cor:          null,
+        ganho_em:             null,
+        perdido_em:           null,
+        perdido_motivo:       null,
+        motivo_perda:         null,
+        data_fechamento:      null,
+        tags:                 null,
+        observacoes:          null,
+        criado_em:            agora,
+        atualizado_em:        agora,
+      };
+
+      const { data, error } = await sb.from('leads').insert(clone).select().single();
+      if (error) throw error;
+      req.log({ acao:'CLONE', entidade:'leads', entidade_id:novoId, depois:{ clonado_de:id, nome:clone.nome } });
+      return res.status(201).json({ sucesso:true, dados: normalizeLead(data), mensagem:'Lead clonado com sucesso. Apenas Dados Principais copiados.' });
+    }
+
+    // SQLite
+    const origem = sqlite.prepare('SELECT * FROM leads WHERE id=?').get(id);
+    if (!origem) return res.status(404).json({ sucesso:false, erro:'Lead não encontrado.' });
+    if (req.usuario.role === 'VENDEDOR' && origem.responsavel_id !== req.usuario.id)
+      return res.status(403).json({ sucesso:false, erro:'Acesso negado.' });
+
+    sqlite.prepare(`INSERT INTO leads (id,nome,empresa,telefone,email,funil_id,etapa_id,pipeline_id,responsavel_id,status,origem,valor,criado_em,atualizado_em)
+      VALUES (?,?,?,?,?,?,?,?,?,'ABERTO','clone',0,?,?)`).
+      run(novoId, `${origem.nome} (Cópia)`, origem.empresa||null, origem.telefone||null,
+          origem.email||null, origem.funil_id||null, origem.etapa_id||null,
+          origem.pipeline_id||null, origem.responsavel_id||null, agora, agora);
+
+    req.log({ acao:'CLONE', entidade:'leads', entidade_id:novoId, depois:{ clonado_de:id } });
+    return res.status(201).json({ sucesso:true, dados: sqlite.prepare('SELECT * FROM leads WHERE id=?').get(novoId), mensagem:'Lead clonado com sucesso.' });
+  } catch(e) {
+    console.error('[leads.clonar]', e.message);
+    return res.status(500).json({ sucesso:false, erro:e.message });
+  }
+}
+
+module.exports = { listar, buscarPorId, criar, atualizar, mover, transferir, deletar, clonar, adicionarMensagem, historico, getDistribuicao, setDistribuicao, listarProdutosLead, adicionarProdutoLead, atualizarProdutoLead, removerProdutoLead };

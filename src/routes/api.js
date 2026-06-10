@@ -25,6 +25,9 @@ const produtosCtrl       = require('../controllers/produtosController');
 const auditCtrl          = require('../controllers/auditController');
 const backupCtrl         = require('../controllers/backupController');
 const importacaoCtrl     = require('../controllers/importacaoLeadsController');
+const atividadesCtrl     = require('../controllers/atividadesController');
+const producaoCtrl       = require('../controllers/producaoController');
+const arquivosCtrl       = require('../controllers/arquivosController');
 
 // Seed funis iniciais (só roda se vazio)
 funisCtrl.seedFunis();
@@ -100,15 +103,35 @@ router.post  ('/leads',                     autenticar, leadsCtrl.criar);
 router.patch ('/leads/:id',                 autenticar, leadsCtrl.atualizar);
 router.patch ('/leads/:id/mover',           autenticar, leadsCtrl.mover);
 router.patch ('/leads/:id/transferir',      autenticar, exigirRole('GESTOR'), leadsCtrl.transferir);
-router.delete('/leads/:id',                 autenticar, exigirRole('GESTOR'), leadsCtrl.deletar);
+router.delete('/leads/:id',                 autenticar, exigirRole('SUPER_ADMIN'), leadsCtrl.deletar);
 router.post  ('/leads/:id/mensagens',       autenticar, leadsCtrl.adicionarMensagem);
 router.get   ('/leads/:id/historico',       autenticar, leadsCtrl.historico);
+router.post  ('/leads/:id/clonar',          autenticar, leadsCtrl.clonar);
 
 // ── Lead Produtos (múltiplos produtos por venda) ──────────────────────────────
 router.get   ('/leads/:id/produtos',              autenticar, leadsCtrl.listarProdutosLead);
 router.post  ('/leads/:id/produtos',              autenticar, leadsCtrl.adicionarProdutoLead);
 router.patch ('/leads/:id/produtos/:itemId',      autenticar, leadsCtrl.atualizarProdutoLead);
 router.delete('/leads/:id/produtos/:itemId',      autenticar, leadsCtrl.removerProdutoLead);
+
+// ── Atividades por lead ───────────────────────────────────────────────────────────────
+router.get   ('/leads/:id/atividades',            autenticar, atividadesCtrl.listar);
+router.post  ('/leads/:id/atividades',            autenticar, atividadesCtrl.criar);
+router.get   ('/atividades/pendentes',            autenticar, atividadesCtrl.pendentes);
+router.get   ('/atividades/dashboard',            autenticar, atividadesCtrl.dashboard);
+router.patch ('/atividades/:id',                  autenticar, atividadesCtrl.atualizar);
+router.delete('/atividades/:id',                  autenticar, atividadesCtrl.deletar);
+
+// ── Produção do lead ────────────────────────────────────────────────────────────────
+router.get   ('/leads/:id/producao',              autenticar, producaoCtrl.buscar);
+router.post  ('/leads/:id/producao',              autenticar, producaoCtrl.salvar);
+router.patch ('/leads/:id/producao',              autenticar, producaoCtrl.salvar);
+
+// ── Arquivos do lead (upload multipart) ───────────────────────────────────────────────
+router.get   ('/leads/:id/arquivos',              autenticar, arquivosCtrl.listar);
+router.post  ('/leads/:id/arquivos',              autenticar, arquivosCtrl.upload.single('arquivo'), arquivosCtrl.enviar, arquivosCtrl.handleUploadError);
+router.post  ('/leads/:id/arquivos/:arqId/producao', autenticar, arquivosCtrl.salvarEmProducao);
+router.delete('/leads/:id/arquivos/:arqId',       autenticar, arquivosCtrl.excluir);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // METAS
