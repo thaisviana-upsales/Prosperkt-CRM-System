@@ -94,66 +94,84 @@ function renderKPIs(k) {
     : '';
 }
 
-// Cor padrão por tipo de etapa
-function etapaCor(e) {
-  if (e.is_ganho)                              return { bar:'linear-gradient(90deg,#3ecf1a,#6CFF4E)', badge:'#6CFF4E' };
-  if (e.is_perdido)                            return { bar:'linear-gradient(90deg,#a8003f,#E10098)', badge:'#E10098' };
+// Cor por tipo de etapa — paleta executiva
+function etapaCor(e, idx, total) {
+  // Negativos: scarlett escuro elegante
+  if (e.is_perdido) return '#6b0a1a';
   const n = e.nome?.toLowerCase() || '';
-  if (n.includes('desqualif'))                 return { bar:'linear-gradient(90deg,#a8003f,#E10098)', badge:'#E10098' };
-  if (n.includes('orçament') || n.includes('orcament')) return { bar:'linear-gradient(90deg,#6C47FF,#9b59b6)', badge:'#9b59b6' };
-  if (n.includes('tratativa'))                 return { bar:'linear-gradient(90deg,#1e6dab,#3B8BFF)', badge:'#3B8BFF' };
-  if (n.includes('contato'))                   return { bar:'linear-gradient(90deg,#1e6dab,#3B8BFF)', badge:'#3B8BFF' };
-  return { bar:'linear-gradient(90deg,#3B8BFF,#6CFF4E)', badge:'#6CFF4E' };
+  if (n.includes('desqualif') || n.includes('perdid')) return '#5a0f1f';
+  // Ganho: verde PROSPEKT em destaque
+  if (e.is_ganho || /venda|ganho|fechad/i.test(n)) return '#1f5c2e';
+  // Sequência verde escuro → verde médio ao longo do funil
+  // idx vai de 0 (topo) a total-1 (fundo)
+  const pct = total <= 1 ? 0 : idx / (total - 1);
+  // De #0d2e1a (verde quase preto) até #1a6b38 (verde médio executivo)
+  const r = Math.round(13  + pct * (26  - 13));
+  const g = Math.round(46  + pct * (107 - 46));
+  const b = Math.round(26  + pct * (56  - 26));
+  return `rgb(${r},${g},${b})`;
 }
 
 function renderFunilVisual(etapas) {
   const el = document.getElementById('funil-visual');
   if (!etapas?.length) { el.innerHTML = '<div class="empty">Nenhum dado disponível</div>'; return; }
 
-  const max = Math.max(...etapas.map(e => e.quantidade), 1);
-  // Largura mínima 32%, máxima 100% para criar forma de funil real
-  const largura = e => Math.max(32, Math.round((e.quantidade / max) * 100));
+  const MAX_W = 100;  // % da largura do container para o primeiro item
+  const MIN_W = 28;   // % mínima para o item mais estreito
+  const maxQtd = Math.max(...etapas.map(e => e.quantidade), 1);
 
-  // Paleta sequencial por índice para etapas genéricas
-  const PALETAS = [
-    'linear-gradient(90deg,#1e6dab,#3B8BFF)',
-    'linear-gradient(90deg,#6C47FF,#9b59b6)',
-    'linear-gradient(90deg,#00838f,#26C6DA)',
-    'linear-gradient(90deg,#b8860b,#F5A623)',
-    'linear-gradient(90deg,#1a7a4a,#6CFF4E)',
-    'linear-gradient(90deg,#8B4513,#cd7f32)',
-  ];
+  // clip-path trapezoidal: cada camada afunila em relação à próxima
+  const clip = (w, wNext) => {
+    const indent = (MAX_W - w) / 2;      // margem lateral desta camada
+    const indentN = (MAX_W - wNext) / 2; // margem lateral da próxima
+    const dIn = Math.max(0, (indentN - indent));  // quanto afunila embaixo
+    const pct = (dIn / MAX_W) * 100;
+    return `polygon(${pct}% 0%, ${100-pct}% 0%, 100% 100%, 0% 100%)`;
+  };
 
-  el.innerHTML = etapas.map((e, i) => {
-    const cores  = etapaCor(e);
-    const grad   = cores.bar;
-    const w      = largura(e);
+  const total = etapas.length;
+  const widths = etapas.map(e => Math.max(MIN_W, Math.round((e.quantidade / maxQtd) * MAX_W)));
+
+  el.innerHTML = '<div class="fv-premium">' + etapas.map((e, i) => {
+    const w     = widths[i];
+    const wNext = i < total - 1 ? widths[i + 1] : w;
+    const cor   = etapaCor(e, i, total);
+    const isNeg = e.is_perdido || /desqualif|perdid/i.test(e.nome || '');
+    const isGanho = e.is_ganho || /venda|ganho|fechad/i.test(e.nome || '');
+
+    // Borda luminosa sutil para ganho
+    const borderStyle = isGanho
+      ? 'box-shadow:0 0 0 1.5px rgba(91,222,62,.45),0 3px 12px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.12)'
+      : isNeg
+      ? 'box-shadow:0 0 0 1px rgba(180,20,40,.3),0 2px 8px rgba(0,0,0,.4)'
+      : 'box-shadow:0 2px 8px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.06)';
+
     const convTxt = e.taxa_entrada != null
-      ? (e.is_perdido || e.nome?.toLowerCase().includes('desqualif')
-          ? `↘ ${e.taxa_entrada}%` : `↓ ${e.taxa_entrada}%`)
+      ? (isNeg ? `↘ ${e.taxa_entrada}%` : `${e.taxa_entrada}%`) : '';
+
+    const arrow = i > 0
+      ? `<div class="fv-arrow"><span style="opacity:.35;font-size:.55rem">▼</span><span class="fv-arrow-rate">${convTxt}</span></div>`
       : '';
-    const divider = i > 0
-      ? `<div class="fv-arrow">▼ ${convTxt}</div>`
-      : '';
-    return `${divider}
-    <div class="fv-layer" style="width:${w}%;background:${grad};border-radius:5px">
+
+    return `${arrow}
+    <div class="fv-layer" style="width:${w}%;background:${cor};${borderStyle}">
       <div class="fv-layer-inner">
         <span class="fv-layer-name">${e.nome}</span>
         <span class="fv-layer-count">${e.quantidade}</span>
       </div>
     </div>`;
-  }).join('');
+  }).join('') + '</div>';
 
-  // Animação de entrada
+  // Animação staggered
   requestAnimationFrame(() => {
     el.querySelectorAll('.fv-layer').forEach((layer, i) => {
       layer.style.opacity = '0';
-      layer.style.transform = 'scaleX(.92)';
+      layer.style.transform = 'scaleX(.88)';
       setTimeout(() => {
-        layer.style.transition = 'opacity .4s ease, transform .4s ease';
+        layer.style.transition = 'opacity .45s ease, transform .45s ease';
         layer.style.opacity = '1';
         layer.style.transform = 'scaleX(1)';
-      }, i * 60);
+      }, i * 55);
     });
   });
 }
