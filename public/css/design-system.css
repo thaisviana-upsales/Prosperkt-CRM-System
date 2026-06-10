@@ -391,22 +391,57 @@ textarea.input { resize: vertical; min-height: 80px; }
   max-width: calc(100vw - var(--sidebar-width));
 }
 
-.page-header { margin-bottom: var(--space-6); }
+.page-header {
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+}
+/* Linha de acento verde no rodapé do header */
+.page-header::after {
+  content: '';
+  position: absolute;
+  bottom: -1px; left: 0;
+  width: 48px; height: 2px;
+  background: var(--grad-brand);
+  border-radius: 2px;
+}
 
 .page-title {
-  font-size: clamp(1.1rem, 2.2vw, 1.4rem);
-  font-weight: 800;
+  font-size: clamp(1.15rem, 2vw, 1.45rem) !important;
+  font-weight: 800 !important;
   letter-spacing: -0.03em;
-  margin-bottom: 2px;
-  background: linear-gradient(90deg, rgba(245,245,245,.96) 60%, rgba(91,222,62,.70) 100%);
+  margin-bottom: 3px;
+  /* Gradiente: branco → verde PROSPEKT */
+  background: linear-gradient(92deg,
+    rgba(245,245,245,.97) 0%,
+    rgba(245,245,245,.97) 55%,
+    rgba(91,222,62,.80)   100%
+  );
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  padding-left: 10px;
+  /* Acento lateral esquerdo */
+  padding-left: 12px;
   border-left: 3px solid var(--green);
   box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  display: inline-block;
 }
-.page-subtitle { color: var(--text-secondary); font-size: 0.75rem; padding-left: 13px; }
+
+.page-subtitle {
+  color: rgba(245,245,245,.55);
+  font-size: 0.775rem;
+  padding-left: 15px;
+  line-height: 1.5;
+}
+
+/* Dashboard override — título menor, sem conflito com !important */
+.dash-header-title {
+  font-size: 1.1rem !important;
+  margin-bottom: 1px !important;
+}
+.dash-header-sub { font-size: .68rem !important; }
 
 /* ── Divider ─────────────────────────────────────────────────── */
 .divider { height: 1px; background: var(--border); margin: var(--space-5) 0; }
