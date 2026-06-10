@@ -1259,26 +1259,28 @@ async function webhookReceberMensagem(req, res) {
 
   // ── 2a. Evento de STATUS — atualiza check de entrega/leitura ─────────────
   // NUNCA cria mensagem nova — apenas atualiza status da mensagem existente
+  // Proteção tripla: 3 formas de detectar MESSAGES_UPDATE
   const ehEventoStatus =
     evento === 'MESSAGES_UPDATE' ||
     evento === 'MESSAGE_STATUS'  ||
-    evento === 'MESSAGE-STATUS';
+    evento === 'MESSAGE-STATUS'  ||
+    String(body.event || '').toUpperCase() === 'MESSAGES_UPDATE';
 
   if (ehEventoStatus) {
-    console.log('WEBHOOK_STATUS_UPDATE: processando atualização de status');
-    await processarStatusMensagem(body, req, res);
-    return;
+    console.log('WEBHOOK_STATUS_UPDATE: processando atualização de status — NÃO cria conversa/mensagem');
+    return await processarStatusMensagem(body, req, res);
+    // EARLY RETURN garantido — nunca cai no fluxo de mensagens abaixo
   }
 
   // ── 2b. Filtra eventos não-mensagem ───────────────────────────────────────
-  // Evolution v1.8.6 usa: messages.upsert, send.message, MESSAGES_UPSERT, SEND_MESSAGE
-  // Também pode enviar: chats.upsert, chats.update (ignorar silenciosamente)
-  const EVENTOS_MENSAGEM = [
+  // ATENÇÃO: usa lista EXATA (includes exato, não substring) para nunca capturar MESSAGES_UPDATE
+  const EVENTOS_MENSAGEM_NOVA = [
     'MESSAGES_UPSERT', 'MESSAGES_SET',
     'SEND_MESSAGE', 'SEND_MESSAGES',
     'MESSAGE', 'NEW_MESSAGE',
   ];
   const EVENTOS_IGNORADOS_SEM_AVISO = [
+    'MESSAGES_UPDATE', 'MESSAGE_STATUS', 'MESSAGE-STATUS', // redundância de segurança
     'CHATS_UPSERT', 'CHATS_UPDATE', 'CHATS_SET',
     'CONTACTS_UPSERT', 'CONTACTS_UPDATE', 'CONTACTS_SET',
     'PRESENCE_UPDATE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED',
@@ -1287,10 +1289,9 @@ async function webhookReceberMensagem(req, res) {
     'NEW_JWT_TOKEN', 'CALL',
   ];
 
-  const ehEventoMensagem =
-    !body.event ||  // sem campo event → tenta processar
-    EVENTOS_MENSAGEM.some(ev => evento.includes(ev)) ||
-    (evento.includes('MESSAGE') && !ehEventoStatus);
+  // Se tiver campo event, exige que seja da lista EXATA de mensagens novas
+  // Se NÃO tiver campo event, tenta processar (payload legado)
+  const ehEventoMensagem = !body.event || EVENTOS_MENSAGEM_NOVA.includes(evento);
 
   if (!ehEventoMensagem) {
     if (EVENTOS_IGNORADOS_SEM_AVISO.includes(evento)) {
@@ -1335,8 +1336,22 @@ async function webhookReceberMensagem(req, res) {
   });
 
   if (!tel) {
-    console.warn('[WA Webhook] Telefone não identificado. Body:', JSON.stringify(body));
+    console.warn('[WA Webhook] Telefone não identificado. Body:', JSON.stringify(body).slice(0, 300));
     return res.status(400).json({ sucesso: false, erro: 'Telefone não identificado no payload.' });
+  }
+
+  // ── AÇÃO 5: Valida número antes de criar qualquer conversa ───────────────
+  // Brasil: 55 + DDD(2) + número(8-9) = 12-13 dígitos
+  // Internacional genérico: 10-15 dígitos
+  const numBrasileiro = /^55\d{10,11}$/.test(tel);
+  const numGenerico   = /^\d{10,15}$/.test(tel);
+  if (!numBrasileiro && !numGenerico) {
+    console.warn('WEBHOOK_NUMERO_INVALIDO_NAO_CRIAR_CONVERSA', {
+      telefoneOriginal: rawJid,
+      telefoneNormalizado: tel,
+      eventName: evento,
+    });
+    return res.json({ sucesso: true, ignorado: true, motivo: 'numero_invalido', telefone: tel });
   }
 
   // Ignora mensagens de grupos (JID com @g.us)
@@ -1345,9 +1360,9 @@ async function webhookReceberMensagem(req, res) {
     return res.json({ sucesso: true, ignorado: true, motivo: 'grupo_ignorado' });
   }
 
-  // Avisa se não houver texto mas não bloqueia (pode ser mídia)
+  // Bloqueia se não houver conteúdo real — sem texto E não é mídia
   if (!conteudo && tipo === 'texto') {
-    console.warn('PAYLOAD_SEM_TEXTO_RECONHECIDO:', JSON.stringify(req.body, null, 2));
+    console.warn('PAYLOAD_SEM_TEXTO_RECONHECIDO — ignorando sem criar conversa:', JSON.stringify(req.body).slice(0, 300));
     return res.json({ sucesso: true, ignorado: true, motivo: 'sem_conteudo' });
   }
 
@@ -1487,7 +1502,14 @@ async function webhookReceberMensagem(req, res) {
       console.log('[WA Webhook] CONVERSA_ANTES_DE_CRIAR:', { conversaId, leadId, tel, telSem55 });
 
       if (!conversaId) {
-        // Cria nova conversa — só chega aqui se realmente não existe
+        // fromMe=true sem conversa existente → NÃO cria conversa nova
+        // Mensagem enviada pelo CRM: a conversa já existe ou será criada na próxima mensagem recebida
+        if (fromMe) {
+          console.log('[WA Webhook] fromMe=true sem conversa existente — NÃO cria conversa nova');
+          console.log('WEBHOOK_STATUS_UPDATE_IGNORADO_SEM_MENSAGEM', { messageId, status: 'fromMe_sem_conversa' });
+          return res.json({ sucesso: true, ignorado: true, motivo: 'fromMe_sem_conversa_existente' });
+        }
+        // Cria nova conversa apenas para mensagens RECEBIDAS (fromMe=false)
         const novoConvId = crypto.randomBytes(16).toString('hex');
         const { data: novaConv, error: errC } = await sb.from('conversas_whatsapp').insert({
           id: novoConvId, telefone: tel, nome_contato: nome || null,
@@ -1496,7 +1518,7 @@ async function webhookReceberMensagem(req, res) {
         }).select('id').single();
         if (!errC && novaConv) {
           conversaId = novaConv.id;
-          console.log(`[WA Webhook] ✅ Nova conversa criada: ${conversaId} tel=${tel} leadId=${leadId}`);
+          console.log(`[WA Webhook] ✅ Nova conversa criada (recebida): ${conversaId} tel=${tel} leadId=${leadId}`);
         } else {
           console.error('[WA Webhook] Erro ao criar conversa:', errC?.message);
         }
