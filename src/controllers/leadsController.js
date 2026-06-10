@@ -5,6 +5,13 @@
 const crypto = require('crypto');
 const { getProvider } = require('../database/dbProvider');
 
+// SLA Contato 1 — importação lazy para evitar dependência circular
+let _automacaoSvc = null;
+function getAutomacaoSvc() {
+  if (!_automacaoSvc) _automacaoSvc = require('../services/automacaoLeadsService');
+  return _automacaoSvc;
+}
+
 // ── Rodízio de Leads entre Vendedores ─────────────────────────────────────────
 /**
  * Retorna o ID do próximo vendedor ativo em rodízio justo.
@@ -229,6 +236,11 @@ async function criar(req, res) {
       if (error) throw error;
       // observacoes salva diretamente em leads.observacoes — nao duplicar em mensagens
       req.log({ acao:'CREATE', entidade:'leads', entidade_id:id, depois:{ nome, etapa_id, funil_id:fId } });
+      // Dispara SLA Contato 1 de forma assíncrona (não bloqueia resposta)
+      setImmediate(() => {
+        getAutomacaoSvc().enviarSlaContato1({ id, nome: nome.trim(), telefone: telefone || null, responsavel_id: respId })
+          .catch(e => console.error('[SLA_CONTATO_1]', e.message));
+      });
       return res.status(201).json({ sucesso:true, dados: normalizeLead(data) });
     }
 
@@ -244,6 +256,11 @@ async function criar(req, res) {
     );
     // observacoes salva em leads.observacoes — nao duplicar em mensagens
     req.log({ acao:'CREATE', entidade:'leads', entidade_id:id, depois:{ nome, pipeline_id, etapa_id } });
+    // Dispara SLA Contato 1 de forma assíncrona
+    setImmediate(() => {
+      getAutomacaoSvc().enviarSlaContato1({ id, nome: nome.trim(), telefone: telefone || null, responsavel_id: respId })
+        .catch(e => console.error('[SLA_CONTATO_1]', e.message));
+    });
     return res.status(201).json({ sucesso:true, dados: sqlite.prepare('SELECT * FROM leads WHERE id=?').get(id) });
   } catch(e) {
     console.error('[leads.criar]', e.message);
@@ -360,7 +377,7 @@ async function mover(req, res) {
       // Resolve funil_id e pipeline_id a partir da etapa se não vierem no body
       let funilIdUpd = req.body.funil_id || lead.funil_id || null;
       if (!funilIdUpd && etapa.funil_id) funilIdUpd = etapa.funil_id;
-      const upd = { etapa_id, atualizado_em: agora, status: novoStatus };
+      const upd = { etapa_id, atualizado_em: agora, status: novoStatus, etapa_atualizada_em: agora };
       if (funilIdUpd) upd.funil_id = funilIdUpd;
       if (pipeline_id) upd.pipeline_id = pipeline_id;
       if (isGanho && !lead.ganho_em) upd.ganho_em = agora;
@@ -404,6 +421,7 @@ async function mover(req, res) {
     const extras = {};
     if (etapa.is_ganho && !lead.data_fechamento) extras.data_fechamento = agora.slice(0,10);
     if (etapa.is_perdido && motivo_perda) extras.motivo_perda = motivo_perda;
+    extras.etapa_atualizada_em = agora; // rastreia entrada na etapa
     const extraSets = Object.keys(extras).map(k=>`${k}=?`).join(',');
     sqlite.prepare(`UPDATE leads SET etapa_id=?, pipeline_id=COALESCE(?,pipeline_id), status=?, atualizado_em=?${extraSets?','+extraSets:''} WHERE id=?`).run(etapa_id, pipeline_id||null, novoStatus, agora, ...Object.values(extras), id);
 

@@ -83,6 +83,8 @@ app.use((err, req, res, _next) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Start — aguarda banco pronto antes de escutar
 // ─────────────────────────────────────────────────────────────────────────────
+const { iniciarAutomacoes } = require('./src/services/automacaoLeadsService');
+
 initProvider().then(() => {
   app.listen(PORT, () => {
     console.log('\n╔══════════════════════════════════════╗');
@@ -92,6 +94,9 @@ initProvider().then(() => {
     console.log(`║  ENV: ${(process.env.NODE_ENV || 'development').padEnd(29)}║`);
     console.log(`║  DB:  ${(process.env.DATABASE_PROVIDER || 'sqlite').padEnd(29)}║`);
     console.log('╚══════════════════════════════════════╝\n');
+
+    // Inicia automações (stale leads + SLA Contato 1 no criar)
+    iniciarAutomacoes();
   });
 }).catch(err => {
   console.error('[FATAL] Falha ao inicializar banco de dados:', err.message);

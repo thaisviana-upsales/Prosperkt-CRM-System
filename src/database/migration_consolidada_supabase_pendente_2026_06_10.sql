@@ -179,3 +179,21 @@ ORDER BY table_name;
 
 SELECT 'Migration consolidada aplicada com sucesso! 🚀' AS resultado,
        NOW() AS executada_em;
+
+-- ============================================================
+-- BLOCO 7 — AUTOMAÇÕES: campo etapa_atualizada_em em leads
+-- Rastreia quando o lead entrou na etapa atual (usado pelas automações
+-- de leads parados e SLA Contato 1).
+-- ============================================================
+
+ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS etapa_atualizada_em TIMESTAMPTZ;
+
+-- Retroativamente: preenche com atualizado_em para leads sem valor
+UPDATE public.leads
+SET etapa_atualizada_em = atualizado_em
+WHERE etapa_atualizada_em IS NULL AND atualizado_em IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_leads_etapa_atualizada ON public.leads (etapa_atualizada_em)
+WHERE etapa_atualizada_em IS NOT NULL AND status = 'ativo';
+
+SELECT 'Bloco 7 (etapa_atualizada_em) aplicado.' AS resultado;
