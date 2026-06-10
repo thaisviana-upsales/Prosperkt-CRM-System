@@ -57,12 +57,12 @@
 .wa-conv-list::-webkit-scrollbar{width:2px}
 .wa-conv-list::-webkit-scrollbar-thumb{background:#2a2e3d;border-radius:2px}
 
-/* ÁREA CENTRAL — CHAT (claro) */
-.wa-chat{flex:1;display:flex;flex-direction:column;background:#F0F2F5;position:relative;min-width:0}
-.wa-chat-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;background:#F0F2F5}
-.wa-chat-empty-icon{font-size:4rem;opacity:.25}
-.wa-chat-empty > div:nth-child(2){color:#374151;font-size:1rem;font-weight:700}
-.wa-chat-empty > div:nth-child(3){color:#9CA3AF;font-size:.82rem}
+/* ÁREA CENTRAL — CHAT */
+.wa-chat{flex:1;display:flex;flex-direction:column;background:linear-gradient(160deg,#1e2130 0%,#181c28 100%);position:relative;min-width:0}
+.wa-chat-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;background:linear-gradient(160deg,#1e2130 0%,#181c28 100%)}
+.wa-chat-empty-icon{font-size:4rem;opacity:.18}
+.wa-chat-empty > div:nth-child(2){color:rgba(245,245,245,.7);font-size:1rem;font-weight:700}
+.wa-chat-empty > div:nth-child(3){color:rgba(245,245,245,.35);font-size:.82rem}
 
 /* HEADER DO CHAT */
 .wa-chat-header{background:#1a1e2a;border-bottom:1px solid rgba(255,255,255,.07);padding:12px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0;box-shadow:0 2px 12px rgba(0,0,0,.3)}
@@ -76,14 +76,14 @@
 .wa-icon-btn:hover{background:rgba(255,255,255,.07);color:#d8dce8}
 
 /* MENSAGENS */
-.wa-messages{flex:1;overflow-y:auto;overflow-x:hidden;padding:20px 16px;display:flex;flex-direction:column;gap:4px;position:relative;background:#EEF1F5}
-.wa-messages::before{content:"";position:absolute;inset:0;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 240'%3E%3Crect x='10' y='10' width='170' height='170' rx='38' fill='none' stroke='%23374151' stroke-width='7'/%3E%3Cpath d='M55 42 L55 148 M55 42 L112 42 Q142 42 142 80 Q142 118 112 118 L55 118' fill='none' stroke='%23374151' stroke-width='12' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ctext x='95' y='218' font-family='Arial%2Csans-serif' font-weight='800' font-size='19' text-anchor='middle' letter-spacing='5' fill='%23374151'%3EPROSPEKT%3C/text%3E%3C/svg%3E");background-repeat:no-repeat;background-position:center 42%;background-size:200px 240px;opacity:.04;pointer-events:none;z-index:0;animation:waBreath 14s ease-in-out infinite;will-change:opacity}
-@keyframes waBreath{0%,100%{opacity:.04}50%{opacity:.055}}
+.wa-messages{flex:1;overflow-y:auto;overflow-x:hidden;padding:20px 16px;display:flex;flex-direction:column;gap:4px;position:relative;background:linear-gradient(160deg,#1e2130 0%,#181c28 100%)}
+.wa-messages::before{content:"";position:absolute;inset:0;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 240'%3E%3Crect x='10' y='10' width='170' height='170' rx='38' fill='none' stroke='%235BDE3E' stroke-width='5'/%3E%3Cpath d='M55 42 L55 148 M55 42 L112 42 Q142 42 142 80 Q142 118 112 118 L55 118' fill='none' stroke='%235BDE3E' stroke-width='10' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ctext x='95' y='218' font-family='Arial%2Csans-serif' font-weight='800' font-size='19' text-anchor='middle' letter-spacing='5' fill='%235BDE3E'%3EPROSPEKT%3C/text%3E%3C/svg%3E");background-repeat:no-repeat;background-position:center 42%;background-size:200px 240px;opacity:.03;pointer-events:none;z-index:0;animation:waBreath 14s ease-in-out infinite;will-change:opacity}
+@keyframes waBreath{0%,100%{opacity:.03}50%{opacity:.045}}
 .wa-msg,.wa-date-sep,.wa-typing{position:relative;z-index:1}
 .wa-date-sep{text-align:center;margin:14px 0}
-.wa-date-sep span{background:rgba(0,0,0,.06);border:1px solid rgba(0,0,0,.08);border-radius:20px;padding:3px 14px;font-size:.69rem;color:#6B7280;font-weight:600}
+.wa-date-sep span{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:3px 14px;font-size:.69rem;color:rgba(245,245,245,.5);font-weight:600}
 .wa-messages::-webkit-scrollbar{width:4px}
-.wa-messages::-webkit-scrollbar-thumb{background:#D1D5DB;border-radius:2px}
+.wa-messages::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:2px}
 
 /* BALÕES */
 .wa-msg{display:flex;margin-bottom:3px;max-width:100%}
