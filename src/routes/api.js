@@ -41,10 +41,11 @@ router.use(auditMiddleware);
 // ─────────────────────────────────────────────────────────────────────────────
 // AUTH
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/auth/login',   authCtrl.login);
-router.post('/auth/refresh', authCtrl.refresh);
-router.post('/auth/logout',  autenticar, authCtrl.logout);
-router.get ('/auth/me',      autenticar, authCtrl.me);
+router.post('/auth/login',        authCtrl.login);
+router.post('/auth/refresh',       authCtrl.refresh);
+router.post('/auth/logout',        autenticar, authCtrl.logout);
+router.get ('/auth/me',            autenticar, authCtrl.me);
+router.post('/auth/trocar-senha',  authCtrl.trocarSenha); // primeiro acesso — sem JWT (valida senha_atual)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // USUARIOS

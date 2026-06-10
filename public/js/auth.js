@@ -209,9 +209,10 @@ const Auth = (() => {
       body: JSON.stringify({ email, senha }),
     });
     const data = await res.json();
-    if (data.sucesso) {
+    if (data.sucesso && !data.deve_trocar_senha) {
+      // Só salva sessão se NÃO precisa trocar senha
       setSession(data.accessToken, data.usuario);
-      window.__redirectingToLogin = false; // reseta flag ao logar
+      window.__redirectingToLogin = false;
     }
     return data;
   }

@@ -373,8 +373,16 @@
         const result = await Auth.login(email, senha);
 
         if (result.sucesso) {
-          Toast.show('Bem-vindo! Redirecionando...', 'success');
-          setTimeout(() => { window.location.href = '/dashboard.html'; }, 800);
+          if (result.deve_trocar_senha) {
+            // Primeiro acesso — redireciona para troca de senha obrigatória
+            Toast.show('Bem-vindo(a)! Por segurança, crie sua senha pessoal.', 'info');
+            setTimeout(() => {
+              window.location.href = '/trocar-senha.html?email=' + encodeURIComponent(email);
+            }, 1200);
+          } else {
+            Toast.show('Bem-vindo! Redirecionando...', 'success');
+            setTimeout(() => { window.location.href = '/dashboard.html'; }, 800);
+          }
         } else {
           errMsg.textContent = result.erro || 'Credenciais inválidas.';
           errEl.classList.add('visible');

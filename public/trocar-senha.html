@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Primeiro Acesso — PROSPEKT CRM</title>
+  <link rel="stylesheet" href="/css/design-system.css">
+  <style>
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+      position: relative;
+    }
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: var(--grad-glow-green), var(--grad-glow-pink), var(--bg);
+      z-index: 0;
+    }
+    .orb { position: fixed; border-radius: 50%; filter: blur(80px); opacity: 0.12; pointer-events: none; z-index: 0; }
+    .orb-1 { width: 500px; height: 500px; background: var(--green); top: -200px; left: -200px; animation: float 12s ease-in-out infinite; }
+    .orb-2 { width: 400px; height: 400px; background: var(--pink); bottom: -150px; right: -150px; animation: float 10s ease-in-out infinite reverse; }
+    @keyframes float { 0%,100%{transform:translate(0,0) scale(1)} 33%{transform:translate(30px,-20px) scale(1.05)} 66%{transform:translate(-20px,30px) scale(.97)} }
+
+    .wrapper {
+      position: relative; z-index: 1;
+      width: 100%; max-width: 440px;
+      padding: var(--space-4);
+      animation: fadeIn .5s cubic-bezier(.16,1,.3,1);
+    }
+    .card {
+      background: rgba(22,22,22,.78);
+      backdrop-filter: blur(32px);
+      -webkit-backdrop-filter: blur(32px);
+      border: 1px solid var(--border-hover);
+      border-radius: var(--radius-xl);
+      padding: var(--space-10) var(--space-8);
+      box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255,255,255,.04);
+    }
+
+    /* Header */
+    .header { text-align: center; margin-bottom: var(--space-8); }
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px;
+      background: rgba(108,255,78,.1);
+      border: 1px solid rgba(108,255,78,.25);
+      border-radius: 50px;
+      font-size: .7375rem; font-weight: 700;
+      color: var(--green); letter-spacing: .04em;
+      margin-bottom: var(--space-4);
+    }
+    .badge svg { flex-shrink: 0; }
+    .titulo { font-size: 1.25rem; font-weight: 800; margin-bottom: 6px; }
+    .subtitulo { font-size: .875rem; color: var(--text-secondary); line-height: 1.5; }
+
+    /* Regras de senha */
+    .senha-regras {
+      background: rgba(255,255,255,.04);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: var(--space-4);
+      margin-bottom: var(--space-5);
+      font-size: .775rem; color: var(--text-muted); line-height: 1.7;
+    }
+    .senha-regras strong { color: var(--text-secondary); }
+    .regra { display: flex; align-items: center; gap: 6px; }
+    .regra.ok { color: var(--green); }
+    .regra.ok svg { stroke: var(--green); }
+    .regra.no { color: var(--text-muted); }
+
+    /* Toggle password */
+    .input-wrap { position: relative; }
+    .input-wrap .input { padding-left: 42px; padding-right: 44px; }
+    .input-icon { position: absolute; left: var(--space-4); top: 50%; transform: translateY(-50%); color: var(--text-muted); pointer-events: none; }
+    .toggle-pass { position: absolute; right: var(--space-4); top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 0; transition: var(--transition-fast); }
+    .toggle-pass:hover { color: var(--text-primary); }
+
+    /* Strength bar */
+    .strength-bar { height: 4px; border-radius: 2px; background: var(--border); margin-top: 6px; overflow: hidden; }
+    .strength-fill { height: 100%; border-radius: 2px; transition: width .3s ease, background .3s ease; width: 0; }
+
+    /* Error/Success */
+    .alert {
+      display: none; padding: var(--space-3) var(--space-4);
+      border-radius: var(--radius-md); font-size: .875rem;
+      align-items: center; gap: var(--space-2); animation: fadeIn .3s ease;
+    }
+    .alert.visible { display: flex; }
+    .alert-error { background: rgba(255,59,92,.1); border: 1px solid rgba(255,59,92,.25); color: #ff6b6b; }
+    .alert-success { background: rgba(108,255,78,.1); border: 1px solid rgba(108,255,78,.25); color: var(--green); }
+
+    @keyframes fadeIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:none} }
+  </style>
+</head>
+<body>
+  <div class="orb orb-1" aria-hidden="true"></div>
+  <div class="orb orb-2" aria-hidden="true"></div>
+
+  <main class="wrapper" role="main">
+    <div class="card">
+
+      <!-- Header -->
+      <div class="header">
+        <div class="badge">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+          PRIMEIRO ACESSO
+        </div>
+        <div class="titulo">Crie sua senha</div>
+        <div class="subtitulo">
+          Por segurança, você precisa criar uma senha pessoal<br>
+          antes de acessar o PROSPEKT CRM.
+        </div>
+      </div>
+
+      <!-- Alerta -->
+      <div id="alerta" class="alert alert-error" role="alert">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <span id="alerta-msg">Erro</span>
+      </div>
+
+      <!-- Form -->
+      <form id="form-trocar" novalidate>
+        <div style="display:flex;flex-direction:column;gap:var(--space-5);">
+
+          <!-- Email (oculto — preenchido via URL param) -->
+          <input type="hidden" id="email" name="email">
+
+          <!-- Senha atual (temporária) -->
+          <div class="input-group">
+            <label class="input-label" for="senha-atual">Senha temporária atual</label>
+            <div class="input-wrap">
+              <svg class="input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              <input id="senha-atual" type="password" class="input" placeholder="prospekt123" autocomplete="current-password" required>
+              <button type="button" class="toggle-pass" data-target="senha-atual" aria-label="Mostrar/ocultar senha">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Nova senha -->
+          <div class="input-group">
+            <label class="input-label" for="nova-senha">Nova senha</label>
+            <div class="input-wrap">
+              <svg class="input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+              <input id="nova-senha" type="password" class="input" placeholder="Mínimo 8 caracteres" autocomplete="new-password" required>
+              <button type="button" class="toggle-pass" data-target="nova-senha" aria-label="Mostrar/ocultar senha">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                </svg>
+              </button>
+            </div>
+            <div class="strength-bar"><div class="strength-fill" id="strength-fill"></div></div>
+          </div>
+
+          <!-- Confirmar senha -->
+          <div class="input-group">
+            <label class="input-label" for="confirmar-senha">Confirmar nova senha</label>
+            <div class="input-wrap">
+              <svg class="input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+              <input id="confirmar-senha" type="password" class="input" placeholder="Repita a nova senha" autocomplete="new-password" required>
+              <button type="button" class="toggle-pass" data-target="confirmar-senha" aria-label="Mostrar/ocultar senha">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Regras visuais -->
+          <div class="senha-regras">
+            <strong>Requisitos da nova senha:</strong>
+            <div id="regra-tamanho" class="regra no">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/></svg>
+              Mínimo de 8 caracteres
+            </div>
+            <div id="regra-diferente" class="regra no">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/></svg>
+              Diferente da senha temporária
+            </div>
+            <div id="regra-confirmar" class="regra no">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/></svg>
+              Confirmação coincide
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary btn-lg" id="btn-confirmar" style="width:100%">
+            <span id="btn-text">Criar minha senha</span>
+            <div class="spinner hidden" id="btn-spinner"></div>
+          </button>
+        </div>
+      </form>
+
+    </div>
+  </main>
+
+  <div id="toast-container" aria-live="polite"></div>
+
+  <script src="/js/auth.js"></script>
+  <script src="/js/toast.js"></script>
+  <script>
+    // ─── Recupera email da URL (passado pelo login.js via redirect) ──────────
+    const params = new URLSearchParams(window.location.search);
+    const emailParam = params.get('email') || '';
+    const senhaParam = params.get('st') || ''; // senha temporária pré-preenchida (opcional)
+
+    if (!emailParam) {
+      // Se não tem email, redireciona para o login
+      window.location.href = '/login.html';
+    }
+
+    document.getElementById('email').value = emailParam;
+    if (senhaParam) document.getElementById('senha-atual').value = decodeURIComponent(senhaParam);
+
+    // ─── Toggle password visibility ──────────────────────────────────────────
+    document.querySelectorAll('.toggle-pass').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const input = document.getElementById(btn.dataset.target);
+        input.type = input.type === 'text' ? 'password' : 'text';
+      });
+    });
+
+    // ─── Validação em tempo real ─────────────────────────────────────────────
+    const ICONE_OK = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>`;
+    const ICONE_NO = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/></svg>`;
+
+    function atualizarRegras() {
+      const nova      = document.getElementById('nova-senha').value;
+      const atual     = document.getElementById('senha-atual').value;
+      const confirmar = document.getElementById('confirmar-senha').value;
+
+      const ok8    = nova.length >= 8;
+      const okDif  = nova.length > 0 && nova !== atual;
+      const okConf = nova.length > 0 && nova === confirmar;
+
+      setRegra('regra-tamanho',   ok8,   'Mínimo de 8 caracteres');
+      setRegra('regra-diferente', okDif, 'Diferente da senha temporária');
+      setRegra('regra-confirmar', okConf,'Confirmação coincide');
+
+      // Strength bar
+      const fill = document.getElementById('strength-fill');
+      const pts  = [ok8, okDif, nova.length >= 12, /[A-Z]/.test(nova) && /[0-9]/.test(nova)].filter(Boolean).length;
+      const cores = ['', '#ef4444', '#f97316', '#eab308', '#22c55e'];
+      const widths = [0, 25, 50, 75, 100];
+      fill.style.width = widths[pts] + '%';
+      fill.style.background = cores[pts] || 'transparent';
+
+      return ok8 && okDif && okConf;
+    }
+
+    function setRegra(id, ok, texto) {
+      const el = document.getElementById(id);
+      el.className = 'regra ' + (ok ? 'ok' : 'no');
+      el.innerHTML = (ok ? ICONE_OK : ICONE_NO) + ' ' + texto;
+    }
+
+    ['nova-senha', 'senha-atual', 'confirmar-senha'].forEach(id => {
+      document.getElementById(id).addEventListener('input', atualizarRegras);
+    });
+
+    // ─── Submit ──────────────────────────────────────────────────────────────
+    document.getElementById('form-trocar').addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const email      = document.getElementById('email').value;
+      const senhaAtual = document.getElementById('senha-atual').value;
+      const novaSenha  = document.getElementById('nova-senha').value;
+      const confirmar  = document.getElementById('confirmar-senha').value;
+      const alertaEl   = document.getElementById('alerta');
+      const alertaMsg  = document.getElementById('alerta-msg');
+      const btn        = document.getElementById('btn-confirmar');
+      const btnText    = document.getElementById('btn-text');
+      const spinner    = document.getElementById('btn-spinner');
+
+      alertaEl.classList.remove('visible', 'alert-error', 'alert-success');
+
+      if (!atualizarRegras()) {
+        alertaMsg.textContent = 'Corrija os requisitos da nova senha antes de continuar.';
+        alertaEl.className = 'alert alert-error visible';
+        return;
+      }
+
+      btn.disabled = true;
+      btnText.textContent = 'Aguarde...';
+      spinner.classList.remove('hidden');
+
+      try {
+        const res  = await fetch('/api/auth/trocar-senha', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ email, senha_atual: senhaAtual, nova_senha: novaSenha }),
+        });
+        const data = await res.json();
+
+        if (data.sucesso) {
+          // Salva sessão e redireciona
+          if (typeof Auth !== 'undefined' && data.accessToken) {
+            Auth.setSession(data.accessToken, data.usuario);
+          }
+          alertaMsg.textContent = 'Senha criada com sucesso! Redirecionando...';
+          alertaEl.className = 'alert alert-success visible';
+          Toast.show('Senha criada com sucesso! Bem-vindo(a)!', 'success');
+          setTimeout(() => { window.location.href = '/dashboard.html'; }, 1500);
+        } else {
+          alertaMsg.textContent = data.erro || 'Erro ao trocar a senha. Tente novamente.';
+          alertaEl.className = 'alert alert-error visible';
+          btn.disabled = false;
+          btnText.textContent = 'Criar minha senha';
+          spinner.classList.add('hidden');
+        }
+      } catch (err) {
+        alertaMsg.textContent = 'Erro de conexão. Tente novamente.';
+        alertaEl.className = 'alert alert-error visible';
+        btn.disabled = false;
+        btnText.textContent = 'Criar minha senha';
+        spinner.classList.add('hidden');
+      }
+    });
+  </script>
+</body>
+</html>
