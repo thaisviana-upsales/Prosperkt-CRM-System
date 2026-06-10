@@ -236,30 +236,36 @@ function renderCard(l, mostrarFunil) {
   const telNorm = (() => { let t = (l.telefone||'').replace(/\D/g,''); if(t.length===10||t.length===11) t='55'+t; return t; })();
   const funilCor  = _funis.find(f => f.nome === l.funil_nome)?.cor || '#aaa';
   const funilNome = l.funil_nome || '';
+
+  const waIcon = l.telefone ? `
+    <button
+      class="btn-wa-card btn-wa-nav"
+      title="Abrir conversa WhatsApp"
+      data-wa-lead-id="${l.id}"
+      data-wa-tel="${telNorm}"
+      data-wa-nome="${l.nome.replace(/"/g,'&quot;')}"
+      style="background:none;border:none;padding:0 0 0 5px;cursor:pointer;display:inline-flex;align-items:center;flex-shrink:0;opacity:.7;transition:opacity .15s"
+      onmouseover="this.style.opacity='1'"
+      onmouseout="this.style.opacity='.7'"
+    >
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#5BDE3E" stroke-width="2.2">
+        <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+      </svg>
+    </button>` : '';
+
   return `<div class="lead-card" draggable="true" data-id="${l.id}">
-    <div style="font-size:.8rem;font-weight:700;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:3px">${l.nome}</div>
+    <div style="display:flex;align-items:center;gap:0;margin-bottom:3px">
+      <span style="font-size:.8rem;font-weight:700;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${l.nome}</span>
+      ${waIcon}
+    </div>
     ${dataCriacao ? `<div style="font-size:.6rem;color:var(--text-muted);margin-bottom:3px">${dataCriacao}</div>` : ''}
-    ${funilNome ? `<div style="display:flex;align-items:center;gap:4px;margin-bottom:4px">
+    ${funilNome ? `<div style="display:flex;align-items:center;gap:4px">
       <span style="width:5px;height:5px;border-radius:50%;background:${funilCor};flex-shrink:0"></span>
       <span style="font-size:.6rem;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${funilNome}</span>
     </div>` : ''}
-    ${l.telefone ? `
-    <div class="lead-card-actions" style="margin-top:4px;padding-top:4px;border-top:1px solid var(--border)">
-      <button
-        class="btn-wa-card btn-wa-nav"
-        title="Abrir conversa WhatsApp"
-        data-wa-lead-id="${l.id}"
-        data-wa-tel="${telNorm}"
-        data-wa-nome="${l.nome.replace(/"/g,'&quot;')}"
-      >
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
-        </svg>
-        WhatsApp
-      </button>
-    </div>` : ''}
   </div>`;
 }
+
 
 
 async function moverLead(etapaId) {
