@@ -190,6 +190,27 @@ async function abrirConversa(id) {
   document.getElementById('wa-messages').style.display = '';
   document.getElementById('wa-input-bar').style.display = '';
 
+  // ── MOBILE: abre chat em tela cheia ──────────────────────────
+  const isMobile = window.innerWidth <= 768;
+  const waChat = document.getElementById('wa-chat');
+  if (isMobile && waChat) {
+    waChat.classList.add('mobile-open');
+    // Botão Voltar — injeta apenas uma vez no header
+    if (!document.getElementById('btn-mobile-voltar')) {
+      const btnBack = document.createElement('button');
+      btnBack.id = 'btn-mobile-voltar';
+      btnBack.className = 'wa-icon-btn';
+      btnBack.title = 'Voltar para conversas';
+      btnBack.style.cssText = 'margin-right:4px;color:var(--green)';
+      btnBack.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>`;
+      btnBack.addEventListener('click', () => {
+        waChat.classList.remove('mobile-open');
+      });
+      const chatHeader = document.getElementById('chat-header');
+      chatHeader.insertBefore(btnBack, chatHeader.firstChild);
+    }
+  }
+
   // Popula header
   const nome = _convAtiva.nome_contato || _convAtiva.lead_nome || _convAtiva.telefone;
   document.getElementById('chat-nome').textContent = nome;
@@ -213,6 +234,7 @@ async function abrirConversa(id) {
 
   await carregarMensagens(id);
 }
+
 
 // ─── Resolver conversa do lead ────────────────────────────────────────────────
 // DETERMINÍSTICO: busca por telefone exato, nunca abre outra conversa

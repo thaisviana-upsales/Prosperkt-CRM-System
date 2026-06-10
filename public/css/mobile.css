@@ -199,25 +199,46 @@
   /* Painel de chat: sobrepõe lista quando aberto */
   .wa-chat {
     position: fixed !important;
-    inset: var(--mobile-hdr-h) 0 calc(var(--mobile-nav-h) + var(--safe-bottom)) 0 !important;
+    top: var(--mobile-hdr-h) !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: calc(var(--mobile-nav-h) + var(--safe-bottom)) !important;
     width: 100% !important;
-    z-index: 50 !important;
-    background: var(--bg-primary, #0D0D0D) !important;
-    display: none;
+    z-index: 150 !important;
+    display: none !important;
   }
   .wa-chat.mobile-open {
     display: flex !important;
     flex-direction: column;
   }
-  /* Input de mensagem: fixo no rodapé do chat */
-  .wa-input-bar {
+  /* Suporte a teclado virtual: encolhe o chat quando teclado abre */
+  @supports (height: 100dvh) {
+    .wa-chat.mobile-open {
+      top: var(--mobile-hdr-h) !important;
+      bottom: calc(var(--mobile-nav-h) + var(--safe-bottom)) !important;
+      height: auto !important;
+    }
+  }
+  /* Input de mensagem: sticky no fundo do flex container */
+  .wa-chat.mobile-open .wa-input-bar {
     position: sticky !important;
     bottom: 0;
     padding-bottom: var(--safe-bottom);
-    background: var(--surface, #1a1a1a) !important;
+    flex-shrink: 0;
+  }
+  /* Mensagens: scrollável, sem overflow lateral */
+  .wa-chat.mobile-open .wa-messages {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    padding: 14px 12px !important;
   }
   /* Balões de mensagem */
   .wa-bubble { max-width: 85% !important; font-size: .82rem !important; }
+  /* Botão voltar — visível só no mobile */
+  #btn-mobile-voltar { display: flex; }
+
 
   /* ── Tabelas → rolagem horizontal ──────────────────────────── */
   .table-wrapper, .table-container {
