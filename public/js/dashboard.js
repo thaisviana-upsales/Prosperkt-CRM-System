@@ -111,37 +111,49 @@ function renderFunilVisual(etapas) {
   if (!etapas?.length) { el.innerHTML = '<div class="empty">Nenhum dado disponível</div>'; return; }
 
   const max = Math.max(...etapas.map(e => e.quantidade), 1);
+  // Largura mínima 32%, máxima 100% para criar forma de funil real
+  const largura = e => Math.max(32, Math.round((e.quantidade / max) * 100));
+
+  // Paleta sequencial por índice para etapas genéricas
+  const PALETAS = [
+    'linear-gradient(90deg,#1e6dab,#3B8BFF)',
+    'linear-gradient(90deg,#6C47FF,#9b59b6)',
+    'linear-gradient(90deg,#00838f,#26C6DA)',
+    'linear-gradient(90deg,#b8860b,#F5A623)',
+    'linear-gradient(90deg,#1a7a4a,#6CFF4E)',
+    'linear-gradient(90deg,#8B4513,#cd7f32)',
+  ];
 
   el.innerHTML = etapas.map((e, i) => {
-    const pct      = Math.max(Math.round((e.quantidade / max) * 100), e.quantidade > 0 ? 4 : 0);
-    const cores    = etapaCor(e);
-    const taxaStr  = e.taxa_entrada != null ? `↓ ${e.taxa_entrada}%` : '';
-    const taxaClass= (e.is_perdido || e.nome?.toLowerCase().includes('desqualif'))
-      ? 'fv-drop' : 'fv-conv';
-    const divider  = i > 0 ? `<div class="fv-divider">▼</div>` : '';
-
+    const cores  = etapaCor(e);
+    const grad   = cores.bar;
+    const w      = largura(e);
+    const convTxt = e.taxa_entrada != null
+      ? (e.is_perdido || e.nome?.toLowerCase().includes('desqualif')
+          ? `↘ ${e.taxa_entrada}%` : `↓ ${e.taxa_entrada}%`)
+      : '';
+    const divider = i > 0
+      ? `<div class="fv-arrow">▼ ${convTxt}</div>`
+      : '';
     return `${divider}
-    <div class="fv-row">
-      <div class="fv-meta">
-        <span class="fv-name">${e.nome}</span>
-        <div class="fv-stats">
-          <span>${e.quantidade} lead${e.quantidade !== 1 ? 's' : ''}</span>
-          ${e.taxa_entrada != null ? `<span class="${taxaClass}">${taxaStr}</span>` : ''}
-        </div>
-      </div>
-      <div class="fv-bar-outer">
-        <div class="fv-bar-inner" style="width:0%;background:${cores.bar}" data-target="${pct}">
-          ${e.quantidade > 0 ? `<span class="fv-bar-label">${e.quantidade}</span>` : ''}
-        </div>
+    <div class="fv-layer" style="width:${w}%;background:${grad};border-radius:5px">
+      <div class="fv-layer-inner">
+        <span class="fv-layer-name">${e.nome}</span>
+        <span class="fv-layer-count">${e.quantidade}</span>
       </div>
     </div>`;
   }).join('');
 
-  // Animação de entrada após render
+  // Animação de entrada
   requestAnimationFrame(() => {
-    el.querySelectorAll('.fv-bar-inner').forEach(bar => {
-      const target = bar.dataset.target;
-      setTimeout(() => { bar.style.width = target + '%'; }, 80);
+    el.querySelectorAll('.fv-layer').forEach((layer, i) => {
+      layer.style.opacity = '0';
+      layer.style.transform = 'scaleX(.92)';
+      setTimeout(() => {
+        layer.style.transition = 'opacity .4s ease, transform .4s ease';
+        layer.style.opacity = '1';
+        layer.style.transform = 'scaleX(1)';
+      }, i * 60);
     });
   });
 }
@@ -149,21 +161,46 @@ function renderFunilVisual(etapas) {
 function renderRanking(ranking) {
   const el = document.getElementById('ranking');
   if (!ranking?.length) { el.innerHTML = '<div class="empty">Nenhum dado disponível</div>'; return; }
-  const posColors = ['gold','silver','bronze'];
+  const MEDALS  = ['🥇','🥈','🥉'];
+  const ROWCLS  = ['gold-row','silver-row','bronze-row'];
+  const AVCLS   = ['av-gold','av-silver','av-bronze'];
+  const maxFat  = Math.max(...ranking.map(r => r.faturamento || 0), 1);
+  const BAR_COLORS = [
+    'linear-gradient(90deg,#b8860b,#F5A623)',
+    'linear-gradient(90deg,#888,#ccc)',
+    'linear-gradient(90deg,#8B4513,#cd7f32)',
+  ];
+
   el.innerHTML = ranking.map((r, i) => {
-    const initials = r.nome.slice(0,2).toUpperCase();
-    const posClass = posColors[i] || '';
-    return `<div class="rank-row">
-      <span class="rank-pos ${posClass}">${i+1}</span>
-      <div class="rank-avatar">${initials}</div>
-      <span class="rank-name">${r.nome}</span>
-      <div class="rank-stats">
-        <div><strong>${r.ganhos}</strong> vendas</div>
-        <div><strong>${r.conversao}%</strong> conv.</div>
-        <div><strong>${fmtR(r.faturamento)}</strong></div>
+    const initials  = r.nome.slice(0,2).toUpperCase();
+    const isTop3    = i < 3;
+    const medal     = isTop3 ? `<span class="rank-medal">${MEDALS[i]}</span>` : `<span class="rank-pos-num">${i+1}</span>`;
+    const rowCls    = isTop3 ? ROWCLS[i] : 'other-row';
+    const avCls     = isTop3 ? AVCLS[i] : '';
+    const barW      = Math.round((r.faturamento || 0) / maxFat * 100);
+    const barGrad   = isTop3 ? BAR_COLORS[i] : 'var(--green)';
+    return `<div class="rank-row ${rowCls}">
+      ${medal}
+      <div class="rank-avatar ${avCls}">${initials}</div>
+      <div class="rank-info">
+        <div class="rank-name">${r.nome}</div>
+        <div class="rank-bar-wrap"><div class="rank-bar-fill" style="width:0%;background:${barGrad}" data-w="${barW}"></div></div>
+      </div>
+      <div class="rank-right">
+        <span class="rank-vendas">${r.ganhos} venda${r.ganhos !== 1 ? 's' : ''}</span>
+        <span class="rank-fat">${fmtR(r.faturamento)}</span>
+        <span class="rank-conv">${r.conversao}% conv.</span>
       </div>
     </div>`;
   }).join('');
+
+  // Anima barras
+  requestAnimationFrame(() => {
+    el.querySelectorAll('.rank-bar-fill').forEach(bar => {
+      const w = bar.dataset.w;
+      setTimeout(() => { bar.style.width = w + '%'; }, 120);
+    });
+  });
 }
 
 function renderPorFunil(lista) {
