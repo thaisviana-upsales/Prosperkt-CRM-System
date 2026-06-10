@@ -234,23 +234,28 @@ function renderCard(l, mostrarFunil) {
     ? new Date(l.criado_em).toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' })
     : '';
   const telNorm = (() => { let t = (l.telefone||'').replace(/\D/g,''); if(t.length===10||t.length===11) t='55'+t; return t; })();
+  const funilCor  = _funis.find(f => f.nome === l.funil_nome)?.cor || '#aaa';
+  const funilNome = l.funil_nome || '';
   return `<div class="lead-card" draggable="true" data-id="${l.id}">
-    <div class="lead-name" style="font-size:.8rem;font-weight:700;margin-bottom:3px;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.nome}</div>
-    <div style="font-size:.62rem;color:var(--text-muted);margin-bottom:${l.telefone?'5':'0'}px">${dataCriacao}</div>
+    <div style="font-size:.8rem;font-weight:700;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:3px">${l.nome}</div>
+    ${dataCriacao ? `<div style="font-size:.6rem;color:var(--text-muted);margin-bottom:3px">${dataCriacao}</div>` : ''}
+    ${funilNome ? `<div style="display:flex;align-items:center;gap:4px;margin-bottom:4px">
+      <span style="width:5px;height:5px;border-radius:50%;background:${funilCor};flex-shrink:0"></span>
+      <span style="font-size:.6rem;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${funilNome}</span>
+    </div>` : ''}
     ${l.telefone ? `
-    <div class="lead-card-actions" style="margin-top:4px;padding-top:4px">
+    <div class="lead-card-actions" style="margin-top:4px;padding-top:4px;border-top:1px solid var(--border)">
       <button
         class="btn-wa-card btn-wa-nav"
         title="Abrir conversa WhatsApp"
         data-wa-lead-id="${l.id}"
         data-wa-tel="${telNorm}"
         data-wa-nome="${l.nome.replace(/"/g,'&quot;')}"
-        style="font-size:.6rem;padding:2px 7px"
       >
-        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
         </svg>
-        WA
+        WhatsApp
       </button>
     </div>` : ''}
   </div>`;
