@@ -77,8 +77,8 @@
 
 /* MENSAGENS */
 .wa-messages{flex:1;overflow-y:auto;overflow-x:hidden;padding:20px 16px;display:flex;flex-direction:column;gap:4px;position:relative;background:linear-gradient(160deg,#1e2130 0%,#181c28 100%)}
-.wa-messages::before{content:"";position:absolute;inset:0;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 240'%3E%3Crect x='10' y='10' width='170' height='170' rx='38' fill='none' stroke='%235BDE3E' stroke-width='5'/%3E%3Cpath d='M55 42 L55 148 M55 42 L112 42 Q142 42 142 80 Q142 118 112 118 L55 118' fill='none' stroke='%235BDE3E' stroke-width='10' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ctext x='95' y='218' font-family='Arial%2Csans-serif' font-weight='800' font-size='19' text-anchor='middle' letter-spacing='5' fill='%235BDE3E'%3EPROSPEKT%3C/text%3E%3C/svg%3E");background-repeat:no-repeat;background-position:center 42%;background-size:200px 240px;opacity:.03;pointer-events:none;z-index:0;animation:waBreath 14s ease-in-out infinite;will-change:opacity}
-@keyframes waBreath{0%,100%{opacity:.03}50%{opacity:.045}}
+.wa-messages::before{content:"";position:absolute;inset:0;background-image:url("/icons/icon-512.png");background-repeat:no-repeat;background-position:center 44%;background-size:300px 300px;opacity:.06;pointer-events:none;z-index:0;animation:waBreath 12s ease-in-out infinite;will-change:opacity;filter:grayscale(30%) brightness(0.9)}
+@keyframes waBreath{0%,100%{opacity:.05}50%{opacity:.08}}
 .wa-msg,.wa-date-sep,.wa-typing{position:relative;z-index:1}
 .wa-date-sep{text-align:center;margin:14px 0}
 .wa-date-sep span{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:3px 14px;font-size:.69rem;color:rgba(245,245,245,.5);font-weight:600}
