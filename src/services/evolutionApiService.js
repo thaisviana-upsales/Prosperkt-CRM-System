@@ -109,6 +109,13 @@ async function criarInstancia() {
     ...(WEBHOOK_URL ? {
       webhook:        WEBHOOK_URL,
       webhook_by_events: false,
+      events: [
+        'MESSAGES_UPSERT',
+        'MESSAGES_UPDATE',
+        'MESSAGES_SET',
+        'CONNECTION_UPDATE',
+        'QRCODE_UPDATED',
+      ],
     } : {}),
   };
 
@@ -150,6 +157,38 @@ async function deletarInstancia() {
  */
 async function listarInstancias() {
   return call('GET', '/instance/fetchInstances');
+}
+
+/**
+ * Configura (ou reconfigura) o webhook da instância com todos os eventos necessários.
+ * IMPORTANTE: inclui MESSAGES_UPSERT para receber novas mensagens.
+ * Chame este método sempre que o webhook URL mudar ou os eventos precisarem ser atualizados.
+ */
+async function configurarWebhook() {
+  if (!WEBHOOK_URL) {
+    return { sucesso: false, erro: 'WEBHOOK_URL não configurada no .env' };
+  }
+  const payload = {
+    url: WEBHOOK_URL,
+    webhook_by_events: false,
+    events: [
+      'MESSAGES_UPSERT',
+      'MESSAGES_UPDATE',
+      'MESSAGES_SET',
+      'CONNECTION_UPDATE',
+      'QRCODE_UPDATED',
+    ],
+  };
+  console.log(`[EVO] configurarWebhook: PUT /webhook/set/${EVOLUTION_INSTANCE}`, JSON.stringify(payload));
+  return call('PUT', `/webhook/set/${EVOLUTION_INSTANCE}`, payload);
+}
+
+/**
+ * Retorna a configuração atual do webhook da instância.
+ * Usar para diagnosticar se MESSAGES_UPSERT está habilitado.
+ */
+async function consultarWebhook() {
+  return call('GET', `/webhook/find/${EVOLUTION_INSTANCE}`);
 }
 
 /**
