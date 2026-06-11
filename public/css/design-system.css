@@ -100,6 +100,24 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  position: relative;
+}
+
+/* Fundo global com glow sutil — mesma linguagem do login */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 55% 45% at -5% -5%, rgba(91,222,62,.06) 0%, transparent 60%),
+    radial-gradient(ellipse 45% 38% at 105% 105%, rgba(214,0,142,.05) 0%, transparent 55%);
+  pointer-events: none;
+  z-index: 0;
+  animation: bgBreath 18s ease-in-out infinite;
+}
+@keyframes bgBreath {
+  0%,100% { opacity: 1; }
+  50%      { opacity: .85; }
 }
 
 /* ── Typography ─────────────────────────────────────────────── */
