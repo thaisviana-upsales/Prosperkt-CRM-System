@@ -33,6 +33,10 @@ function normalizePhone(tel) {
   t = t.split(':')[0];
   // Remove tudo que não é dígito
   t = t.replace(/\D/g, '');
+  // Remove DDI duplo: algumas versões da Evolution retornam 5555XXXXXXXXXXX
+  if (t.startsWith('5555') && t.length >= 14) {
+    t = t.slice(2); // remove os primeiros 55 extras
+  }
   // Se 10 ou 11 dígitos (sem código de país), adiciona 55 (Brasil)
   if (t.length === 10 || t.length === 11) {
     t = '55' + t;
@@ -1536,14 +1540,37 @@ async function webhookReceberMensagem(req, res) {
       if (!conversaId) {
         const variantesCompletas = phoneVariants(tel);
         console.log('[WA Webhook] VARIANTES_TELEFONE:', variantesCompletas);
+
+        // Passo 2a: exact match para cada variante (mais preciso)
         for (const variant of variantesCompletas) {
           const { data: convExist } = await sb.from('conversas_whatsapp')
-            .select('id').eq('telefone', variant).neq('status', 'FECHADA')
+            .select('id,telefone').eq('telefone', variant).neq('status', 'FECHADA')
             .order('criado_em', { ascending: false }).limit(1);
           if (convExist?.[0]) {
             conversaId = convExist[0].id;
-            console.log(`[WA Webhook] Conversa encontrada por telefone variante ${variant} → conv=${conversaId}`);
+            console.log(`[WA Webhook] Conversa encontrada (eq) por variante ${variant} → conv=${conversaId}`);
             break;
+          }
+        }
+
+        // Passo 2b: fallback ILIKE para cobrir formatos legados (com +, espaços, etc.)
+        // Usa apenas as variantes mais longas (13+ dígitos) para evitar falso positivo
+        if (!conversaId) {
+          const variantesLongas = variantesCompletas.filter(v => v.length >= 11);
+          for (const variant of variantesLongas) {
+            const { data: convIlike } = await sb.from('conversas_whatsapp')
+              .select('id,telefone').ilike('telefone', `%${variant}%`).neq('status', 'FECHADA')
+              .order('criado_em', { ascending: false }).limit(1);
+            if (convIlike?.[0]) {
+              conversaId = convIlike[0].id;
+              console.log(`[WA Webhook] Conversa encontrada (ilike) por variante ${variant} → conv=${conversaId} tel_salvo=${convIlike[0].telefone}`);
+              // Atualiza o telefone da conversa para o formato canônico do webhook
+              await sb.from('conversas_whatsapp')
+                .update({ telefone: tel, atualizado_em: new Date().toISOString() })
+                .eq('id', conversaId);
+              console.log(`[WA Webhook] ✅ Telefone da conversa normalizado: ${convIlike[0].telefone} → ${tel}`);
+              break;
+            }
           }
         }
       }
@@ -1572,9 +1599,16 @@ async function webhookReceberMensagem(req, res) {
           console.error('[WA Webhook] Erro ao criar conversa:', errC?.message);
         }
       } else {
-        // Atualiza ultima_msg_em e vincula lead se ainda não vinculado
+        // Atualiza ultima_msg_em, vincula lead se não vinculado, e normaliza telefone se necessário
+        const { data: convAtual } = await sb.from('conversas_whatsapp')
+          .select('telefone,lead_id').eq('id', conversaId).single();
         const upd = { ultima_msg_em: agora, atualizado_em: agora, status: 'ABERTA' };
         if (leadId) upd.lead_id = leadId;
+        // Se o telefone salvo difere do canônico atual, corrige para o formato do webhook
+        if (convAtual && convAtual.telefone !== tel) {
+          upd.telefone = tel;
+          console.log(`[WA Webhook] 📞 Telefone corrigido na conversa: ${convAtual.telefone} → ${tel}`);
+        }
         await sb.from('conversas_whatsapp').update(upd).eq('id', conversaId);
         console.log(`[WA Webhook] ✅ Conversa existente atualizada: ${conversaId} leadId=${leadId}`);
       }
