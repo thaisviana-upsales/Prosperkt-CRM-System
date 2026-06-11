@@ -1552,15 +1552,30 @@ async function webhookReceberMensagem(req, res) {
     if (isSupa) {
     // Busca 0: se LID e tel ainda é o LID (participant não resolveu) → busca em dados_extras
       if (!conversaId && isLidJid && lidNumero && tel === lidNumero) {
-        // Ordena por ultima_msg_em para pegar a conversa mais ATIVA, não apenas a mais nova
-        const { data: convLid } = await sb.from('conversas_whatsapp')
+        // Tenta LIKE (coluna TEXT) + JSONB contains — cobre ambos os tipos de coluna
+        const { data: byLike } = await sb.from('conversas_whatsapp')
           .select('id, telefone, lead_id')
           .like('dados_extras', `%${lidNumero}%`)
           .neq('status', 'FECHADA')
           .order('ultima_msg_em', { ascending: false, nullsFirst: false })
           .limit(1);
-        if (convLid?.[0]) {
-          const convLidEncontrada = convLid[0];
+
+        let convLidItem = byLike?.[0] || null;
+        if (convLidItem) {
+          console.log(`[WA Webhook] ✅ LID_MATCH (LIKE): ${lidNumero}`);
+        } else {
+          const { data: byJson } = await sb.from('conversas_whatsapp')
+            .select('id, telefone, lead_id')
+            .filter('dados_extras', 'cs', JSON.stringify({ lid: lidNumero }))
+            .neq('status', 'FECHADA')
+            .order('ultima_msg_em', { ascending: false, nullsFirst: false })
+            .limit(1);
+          convLidItem = byJson?.[0] || null;
+          if (convLidItem) console.log(`[WA Webhook] ✅ LID_MATCH (JSONB cs): ${lidNumero}`);
+        }
+
+        if (convLidItem) {
+          const convLidEncontrada = convLidItem;
           // Se a conversa com LID tem lead_id, busca a conversa mais ativa desse lead
           // (pode haver múltiplas conversas para o mesmo lead)
           if (convLidEncontrada.lead_id) {
