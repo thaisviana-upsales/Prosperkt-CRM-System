@@ -1552,15 +1552,30 @@ async function webhookReceberMensagem(req, res) {
     if (isSupa) {
     // Busca 0: se LID e tel ainda é o LID (participant não resolveu) → busca em dados_extras
       if (!conversaId && isLidJid && lidNumero && tel === lidNumero) {
+        // Ordena por ultima_msg_em para pegar a conversa mais ATIVA, não apenas a mais nova
         const { data: convLid } = await sb.from('conversas_whatsapp')
-          .select('id, telefone')
+          .select('id, telefone, lead_id')
           .like('dados_extras', `%${lidNumero}%`)
           .neq('status', 'FECHADA')
-          .order('criado_em', { ascending: false })
+          .order('ultima_msg_em', { ascending: false, nullsFirst: false })
           .limit(1);
         if (convLid?.[0]) {
-          conversaId = convLid[0].id;
-          console.log(`[WA Webhook] ✅ LID_MATCH por dados_extras: ${lidNumero} → conv=${conversaId} tel=${convLid[0].telefone}`);
+          const convLidEncontrada = convLid[0];
+          // Se a conversa com LID tem lead_id, busca a conversa mais ativa desse lead
+          // (pode haver múltiplas conversas para o mesmo lead)
+          if (convLidEncontrada.lead_id) {
+            const { data: convMaisAtiva } = await sb.from('conversas_whatsapp')
+              .select('id')
+              .eq('lead_id', convLidEncontrada.lead_id)
+              .neq('status', 'FECHADA')
+              .order('ultima_msg_em', { ascending: false, nullsFirst: false })
+              .limit(1);
+            conversaId = convMaisAtiva?.[0]?.id || convLidEncontrada.id;
+            console.log(`[WA Webhook] ✅ LID_MATCH: ${lidNumero} → conv_lid=${convLidEncontrada.id} conv_ativa=${conversaId}`);
+          } else {
+            conversaId = convLidEncontrada.id;
+            console.log(`[WA Webhook] ✅ LID_MATCH por dados_extras: ${lidNumero} → conv=${conversaId}`);
+          }
         } else {
           // LID sem mapeamento: não cria conversa/lead com número inválido
           console.warn(`[WA Webhook] ⚠️ LID sem mapeamento: ${lidNumero} — mensagem não roteada.`);
@@ -1568,11 +1583,11 @@ async function webhookReceberMensagem(req, res) {
         }
       }
 
-      // Busca 1: por lead_id (mais confiável — já linkado)
+      // Busca 1: por lead_id (mais confiável — já linkado) — ordena por ultima_msg_em
       if (!conversaId && leadId) {
         const { data: convByLead } = await sb.from('conversas_whatsapp')
           .select('id').eq('lead_id', leadId).neq('status', 'FECHADA')
-          .order('criado_em', { ascending: false }).limit(1);
+          .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
         conversaId = convByLead?.[0]?.id || null;
         if (conversaId) console.log(`[WA Webhook] Conversa encontrada por lead_id=${leadId} → conv=${conversaId}`);
       }
