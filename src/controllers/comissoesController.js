@@ -290,31 +290,56 @@ function calcularComissaoFaixas(valorVenda, regras) {
   return 0;
 }
 
-// GET /api/comissoes/regras  — Lista regras de comissão
+// GET /api/comissoes/regras  — Lista regras de comissão (permanentes/anuais, sem filtro de mês)
 async function listarRegras(req, res) {
+  console.log('COMISSAO_REGRA_LIST_START');
   const { isSupa, sb } = getProvider();
   try {
     if (isSupa) {
+      // Usa select('*') simples — evita erro de FK não reconhecida pelo PostgREST
       const { data, error } = await sb.from('comissao_regras')
-        .select('*, usuarios(nome), funis(nome)')
+        .select('*')
         .order('criado_em', { ascending: false });
-      if (error) throw error;
-      const rows = (data || []).map(r => ({
-        ...r,
-        usuario_nome: r.usuarios?.nome || null,
-        funil_nome:   r.funis?.nome   || null,
+
+      if (error) {
+        console.error('COMISSAO_REGRA_LIST_ERROR', error.message, error.code || '');
+        throw error;
+      }
+
+      const regras = data || [];
+      console.log(`COMISSAO_REGRA_LIST_SUCCESS count=${regras.length}`);
+      if (!regras.length) console.log('COMISSAO_REGRA_LIST_EMPTY');
+
+      // Resolve nomes de usuário e funil via queries individuais (evita join PostgREST)
+      const rows = await Promise.all(regras.map(async r => {
+        let usuario_nome = null;
+        let funil_nome   = null;
+        if (r.usuario_id) {
+          const { data: u } = await sb.from('usuarios').select('nome').eq('id', r.usuario_id).single();
+          usuario_nome = u?.nome || null;
+        }
+        if (r.funil_id) {
+          const { data: f } = await sb.from('funis').select('nome').eq('id', r.funil_id).single();
+          funil_nome = f?.nome || null;
+        }
+        return { ...r, usuario_nome, funil_nome };
       }));
+
       return res.json({ sucesso: true, dados: rows });
     }
+
+    // SQLite fallback
     const db = getDb();
     const rows = db.prepare(`SELECT r.*, u.nome as usuario_nome, f.nome as funil_nome
       FROM comissao_regras r
       LEFT JOIN usuarios u ON r.usuario_id=u.id
       LEFT JOIN funis f ON r.funil_id=f.id
       ORDER BY r.criado_em DESC`).all();
+    console.log(`COMISSAO_REGRA_LIST_SUCCESS count=${rows.length} (sqlite)`);
     return res.json({ sucesso: true, dados: rows });
+
   } catch (e) {
-    console.error('[comissoes.listarRegras]', e.message);
+    console.error('COMISSAO_REGRA_LIST_ERROR', e.message);
     return res.status(500).json({ sucesso: false, erro: e.message });
   }
 }
@@ -324,6 +349,7 @@ async function criarRegra(req, res) {
   if (req.usuario.role !== 'SUPER_ADMIN')
     return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
 
+  console.log('COMISSAO_REGRA_CREATE_START', { tipo_calculo: req.body?.tipo_calculo, tem_usuario: !!req.body?.usuario_id });
   const { isSupa, sb } = getProvider();
   const { nome, usuario_id, funil_id, tipo_calculo, percentual, valor_fixo, valor_min, valor_max, bonus_meta_valor } = req.body;
   if (!nome || !tipo_calculo)
@@ -356,6 +382,7 @@ async function criarRegra(req, res) {
         if (funil_id) dupQ = dupQ.eq('funil_id', funil_id);
         const { data: dup } = await dupQ.limit(1);
         if (dup?.[0]) {
+          console.log('COMISSAO_REGRA_CREATE_ERROR duplicidade id=' + dup[0].id);
           return res.status(409).json({
             sucesso: false,
             erro: `Este vendedor já possui uma regra ativa: "${dup[0].nome}". Edite a regra existente em vez de criar uma nova.`,
@@ -364,8 +391,12 @@ async function criarRegra(req, res) {
         }
       }
       const { data, error } = await sb.from('comissao_regras').insert(payload).select().single();
-      if (error) throw error;
-      req.log({ acao: 'CREATE', entidade: 'comissao_regras', entidade_id: id, depois: payload });
+      if (error) {
+        console.error('COMISSAO_REGRA_CREATE_ERROR', error.message, error.code || '');
+        throw error;
+      }
+      console.log('COMISSAO_REGRA_CREATE_SUCCESS id=' + id);
+      req.log({ acao: 'CREATE', entidade: 'comissao_regras', entidade_id: id, depois: { nome, tipo_calculo } });
       return res.status(201).json({ sucesso: true, dados: data });
     }
     const db = getDb();
@@ -376,10 +407,11 @@ async function criarRegra(req, res) {
       tipo_calculo, payload.percentual, payload.valor_fixo, payload.valor_min,
       payload.valor_max, payload.bonus_meta_pct, 1, req.usuario.id, agora, agora
     );
-    req.log({ acao: 'CREATE', entidade: 'comissao_regras', entidade_id: id, depois: req.body });
+    console.log('COMISSAO_REGRA_CREATE_SUCCESS id=' + id + ' (sqlite)');
+    req.log({ acao: 'CREATE', entidade: 'comissao_regras', entidade_id: id, depois: { nome, tipo_calculo } });
     return res.status(201).json({ sucesso: true, dados: db.prepare('SELECT * FROM comissao_regras WHERE id=?').get(id) });
   } catch (e) {
-    console.error('[comissoes.criarRegra]', e.message);
+    console.error('COMISSAO_REGRA_CREATE_ERROR', e.message);
     return res.status(500).json({ sucesso: false, erro: e.message });
   }
 }
