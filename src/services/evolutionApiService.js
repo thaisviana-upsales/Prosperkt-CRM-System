@@ -179,8 +179,8 @@ async function configurarWebhook() {
       'QRCODE_UPDATED',
     ],
   };
-  console.log(`[EVO] configurarWebhook: PUT /webhook/set/${EVOLUTION_INSTANCE}`, JSON.stringify(payload));
-  return call('PUT', `/webhook/set/${EVOLUTION_INSTANCE}`, payload);
+  console.log(`[EVO] configurarWebhook: POST /webhook/set/${EVOLUTION_INSTANCE}`, JSON.stringify(payload));
+  return call('POST', `/webhook/set/${EVOLUTION_INSTANCE}`, payload);
 }
 
 /**
