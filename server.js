@@ -108,6 +108,24 @@ initProvider().then(() => {
 
     // Inicia automações (stale leads + SLA Contato 1 no criar)
     iniciarAutomacoes();
+
+    // Configura webhook da Evolution API com MESSAGES_UPSERT no startup
+    // Necessário para garantir que respostas do WhatsApp chegam ao CRM
+    const evoSvc = require('./src/services/evolutionApiService');
+    if (evoSvc.isConfigured()) {
+      setTimeout(async () => {
+        try {
+          const r = await evoSvc.configurarWebhook();
+          if (r.sucesso) {
+            console.log('[EVO] ✅ Webhook configurado com MESSAGES_UPSERT no startup.');
+          } else {
+            console.warn('[EVO] ⚠️ Webhook não configurado no startup:', r.erro);
+          }
+        } catch (e) {
+          console.warn('[EVO] ⚠️ Erro ao configurar webhook no startup:', e.message);
+        }
+      }, 3000); // aguarda 3s para garantir que o servidor está pronto
+    }
   });
 }).catch(err => {
   console.error('[FATAL] Falha ao inicializar banco de dados:', err.message);
