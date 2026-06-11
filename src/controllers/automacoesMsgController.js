@@ -77,9 +77,11 @@ async function criar(req, res) {
     if (isSupa) {
       const payload = {
         id, nome: nome.trim(), descricao: descricao || null,
-        trigger_tipo: TRIGGER, trigger_config: triggerConfig,
-        acao_tipo: ACAO, acao_config: acaoConfig,
-        ativo: ativo ? true : false,
+        trigger_tipo: TRIGGER,
+        trigger_config: { funil_id: funil_id || null, etapa_id: etapa_id || null },
+        acao_tipo: ACAO,
+        acao_config: { mensagem_texto, delay_segundos: Number(delay_segundos) },
+        ativo: ativo ? 1 : 0,
         criado_por: req.usuario.id,
         criado_em: agora, atualizado_em: agora,
       };
@@ -133,13 +135,13 @@ async function editar(req, res) {
       });
 
       const campos = {
-        trigger_config: triggerConfig,
-        acao_config:    acaoConfig,
-        atualizado_em:  agora,
+        trigger_config: { funil_id: funil_id !== undefined ? (funil_id || null) : tcAtual.funil_id, etapa_id: etapa_id !== undefined ? (etapa_id || null) : tcAtual.etapa_id },
+        acao_config: { mensagem_texto: mensagem_texto !== undefined ? mensagem_texto : acAtual.mensagem_texto, delay_segundos: delay_segundos !== undefined ? Number(delay_segundos) : acAtual.delay_segundos },
+        atualizado_em: agora,
       };
-      if (nome          !== undefined) campos.nome        = nome.trim();
-      if (descricao     !== undefined) campos.descricao   = descricao || null;
-      if (ativo         !== undefined) campos.ativo       = ativo ? true : false;
+      if (nome      !== undefined) campos.nome      = nome.trim();
+      if (descricao !== undefined) campos.descricao = descricao || null;
+      if (ativo     !== undefined) campos.ativo     = ativo ? 1 : 0;
 
       const { data, error } = await sb.from('automacoes').update(campos).eq('id', req.params.id).select().single();
       if (error) throw error;
