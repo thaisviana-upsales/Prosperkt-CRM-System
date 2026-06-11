@@ -1903,6 +1903,8 @@ module.exports = {
   evoQrCode,
   evoDesconectar,
   evoDeletarInstancia,
+  evoConfigurarWebhook,
+  evoConsultarWebhook,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2056,3 +2058,23 @@ async function evoDeletarInstancia(req, res) {
   }
 }
 
+/** POST /api/whatsapp/evolution/configurar-webhook — reconfigura eventos do webhook */
+async function evoConfigurarWebhook(req, res) {
+  try {
+    const r = await evoSvc.configurarWebhook();
+    if (!r.sucesso) return res.status(400).json({ sucesso: false, erro: r.erro, dados: r.dados });
+    return res.json({ sucesso: true, mensagem: 'Webhook configurado com MESSAGES_UPSERT.', dados: r.dados });
+  } catch (e) {
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}
+
+/** GET /api/whatsapp/evolution/webhook-config — consulta config atual do webhook */
+async function evoConsultarWebhook(req, res) {
+  try {
+    const r = await evoSvc.consultarWebhook();
+    return res.json({ sucesso: r.sucesso, dados: r.dados, erro: r.erro });
+  } catch (e) {
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}

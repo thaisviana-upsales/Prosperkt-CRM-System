@@ -276,6 +276,8 @@ module.exports = {
   desconectar,
   deletarInstancia,
   listarInstancias,
+  configurarWebhook,
+  consultarWebhook,
   enviarTexto,
   enviarMidia,
   enviarAudio,

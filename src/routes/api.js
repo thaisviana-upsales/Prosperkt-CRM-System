@@ -165,6 +165,8 @@ router.post  ('/whatsapp/evolution/criar',            autenticar, exigirSuperAdm
 router.get   ('/whatsapp/evolution/qrcode',           autenticar, exigirSuperAdmin, whatsappCtrl.evoQrCode);
 router.delete('/whatsapp/evolution/desconectar',      autenticar, exigirSuperAdmin, whatsappCtrl.evoDesconectar);
 router.delete('/whatsapp/evolution/deletar',          autenticar, exigirSuperAdmin, whatsappCtrl.evoDeletarInstancia);
+router.post  ('/whatsapp/evolution/configurar-webhook', autenticar, exigirSuperAdmin, whatsappCtrl.evoConfigurarWebhook);
+router.get   ('/whatsapp/evolution/webhook-config',   autenticar, exigirSuperAdmin, whatsappCtrl.evoConsultarWebhook);
 
 router.get   ('/whatsapp/conversas',              autenticar, whatsappCtrl.listarConversas);
 router.post  ('/whatsapp/conversas',              autenticar, whatsappCtrl.criarOuAbrirConversa);
