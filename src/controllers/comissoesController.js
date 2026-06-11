@@ -291,60 +291,143 @@ function calcularComissaoFaixas(valorVenda, regras) {
 }
 
 // GET /api/comissoes/regras  — Lista regras de comissão
-function listarRegras(req, res) {
-  const db = getDb();
-  const rows = db.prepare(`SELECT r.*, u.nome as usuario_nome, f.nome as funil_nome
-    FROM comissao_regras r
-    LEFT JOIN usuarios u ON r.usuario_id=u.id
-    LEFT JOIN funis f ON r.funil_id=f.id
-    ORDER BY r.criado_em DESC`).all();
-  return res.json({ sucesso:true, dados:rows });
+async function listarRegras(req, res) {
+  const { isSupa, sb } = getProvider();
+  try {
+    if (isSupa) {
+      const { data, error } = await sb.from('comissao_regras')
+        .select('*, usuarios(nome), funis(nome)')
+        .order('criado_em', { ascending: false });
+      if (error) throw error;
+      const rows = (data || []).map(r => ({
+        ...r,
+        usuario_nome: r.usuarios?.nome || null,
+        funil_nome:   r.funis?.nome   || null,
+      }));
+      return res.json({ sucesso: true, dados: rows });
+    }
+    const db = getDb();
+    const rows = db.prepare(`SELECT r.*, u.nome as usuario_nome, f.nome as funil_nome
+      FROM comissao_regras r
+      LEFT JOIN usuarios u ON r.usuario_id=u.id
+      LEFT JOIN funis f ON r.funil_id=f.id
+      ORDER BY r.criado_em DESC`).all();
+    return res.json({ sucesso: true, dados: rows });
+  } catch (e) {
+    console.error('[comissoes.listarRegras]', e.message);
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
 }
 
 // POST /api/comissoes/regras  — Cria regra
-function criarRegra(req, res) {
-  if (req.usuario.role !== 'SUPER_ADMIN') return res.status(403).json({ sucesso:false, erro:'Acesso negado.' });
-  const db = getDb();
+async function criarRegra(req, res) {
+  if (req.usuario.role !== 'SUPER_ADMIN')
+    return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
+
+  const { isSupa, sb } = getProvider();
   const { nome, usuario_id, funil_id, tipo_calculo, percentual, valor_fixo, valor_min, valor_max, bonus_meta_valor } = req.body;
-  if (!nome || !tipo_calculo) return res.status(400).json({ sucesso:false, erro:'nome e tipo_calculo obrigatórios.' });
+  if (!nome || !tipo_calculo)
+    return res.status(400).json({ sucesso: false, erro: 'nome e tipo_calculo obrigatórios.' });
+
   const id = crypto.randomBytes(16).toString('hex');
-  db.prepare(`INSERT INTO comissao_regras
-    (id,nome,usuario_id,funil_id,tipo_calculo,percentual,valor_fixo,valor_min,valor_max,bonus_meta_pct,criado_por)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(id, nome, usuario_id||null, funil_id||null,
-    tipo_calculo, percentual||0, valor_fixo||0, valor_min||0, valor_max||null, bonus_meta_valor||0, req.usuario.id);
-  req.log({ acao:'CREATE', entidade:'comissao_regras', entidade_id:id, depois:req.body });
-  return res.status(201).json({ sucesso:true, dados: db.prepare('SELECT * FROM comissao_regras WHERE id=?').get(id) });
+  const agora = new Date().toISOString();
+  const payload = {
+    id,
+    nome,
+    usuario_id:     usuario_id  || null,
+    funil_id:       funil_id    || null,
+    tipo_calculo,
+    percentual:     Number(percentual  || 0),
+    valor_fixo:     Number(valor_fixo  || 0),
+    valor_min:      Number(valor_min   || 0),
+    valor_max:      valor_max ? Number(valor_max) : null,
+    bonus_meta_pct: Number(bonus_meta_valor || 0),
+    ativo:          1,
+    criado_por:     req.usuario.id,
+    criado_em:      agora,
+    atualizado_em:  agora,
+  };
+
+  try {
+    if (isSupa) {
+      const { data, error } = await sb.from('comissao_regras').insert(payload).select().single();
+      if (error) throw error;
+      req.log({ acao: 'CREATE', entidade: 'comissao_regras', entidade_id: id, depois: payload });
+      return res.status(201).json({ sucesso: true, dados: data });
+    }
+    const db = getDb();
+    db.prepare(`INSERT INTO comissao_regras
+      (id,nome,usuario_id,funil_id,tipo_calculo,percentual,valor_fixo,valor_min,valor_max,bonus_meta_pct,ativo,criado_por,criado_em,atualizado_em)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      id, nome, usuario_id||null, funil_id||null,
+      tipo_calculo, payload.percentual, payload.valor_fixo, payload.valor_min,
+      payload.valor_max, payload.bonus_meta_pct, 1, req.usuario.id, agora, agora
+    );
+    req.log({ acao: 'CREATE', entidade: 'comissao_regras', entidade_id: id, depois: req.body });
+    return res.status(201).json({ sucesso: true, dados: db.prepare('SELECT * FROM comissao_regras WHERE id=?').get(id) });
+  } catch (e) {
+    console.error('[comissoes.criarRegra]', e.message);
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
 }
 
 // PATCH /api/comissoes/regras/:id
-function atualizarRegra(req, res) {
-  if (req.usuario.role !== 'SUPER_ADMIN') return res.status(403).json({ sucesso:false, erro:'Acesso negado.' });
-  const db = getDb();
-  const atual = db.prepare('SELECT * FROM comissao_regras WHERE id=?').get(req.params.id);
-  if (!atual) return res.status(404).json({ sucesso:false, erro:'Regra não encontrada.' });
+async function atualizarRegra(req, res) {
+  if (req.usuario.role !== 'SUPER_ADMIN')
+    return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
+
+  const { isSupa, sb } = getProvider();
   const campos = {};
-  // Aceita tanto bonus_meta_valor (novo) quanto bonus_meta_pct (retrocompatibilidade)
-  ['nome','usuario_id','funil_id','tipo_calculo','percentual','valor_fixo','valor_min','valor_max','bonus_meta_pct','ativo'].forEach(k => {
-    if (k === 'bonus_meta_pct' && req.body.bonus_meta_valor !== undefined) {
-      campos.bonus_meta_pct = req.body.bonus_meta_valor; // salva no campo legado do banco
-    } else if (req.body[k] !== undefined) {
-      campos[k] = req.body[k];
-    }
+  ['nome','usuario_id','funil_id','tipo_calculo','percentual','valor_fixo','valor_min','valor_max','ativo'].forEach(k => {
+    if (req.body[k] !== undefined) campos[k] = req.body[k];
   });
+  if (req.body.bonus_meta_valor !== undefined) campos.bonus_meta_pct = req.body.bonus_meta_valor;
+  else if (req.body.bonus_meta_pct !== undefined) campos.bonus_meta_pct = req.body.bonus_meta_pct;
   campos.atualizado_em = new Date().toISOString();
-  db.prepare(`UPDATE comissao_regras SET ${Object.keys(campos).map(k=>`${k}=?`).join(',')} WHERE id=?`)
-    .run(...Object.values(campos), req.params.id);
-  req.log({ acao:'UPDATE', entidade:'comissao_regras', entidade_id:req.params.id, antes:atual, depois:campos });
-  return res.json({ sucesso:true, dados: db.prepare('SELECT * FROM comissao_regras WHERE id=?').get(req.params.id) });
+
+  try {
+    if (isSupa) {
+      const { data: antes } = await sb.from('comissao_regras').select('*').eq('id', req.params.id).single();
+      if (!antes) return res.status(404).json({ sucesso: false, erro: 'Regra não encontrada.' });
+      const { data, error } = await sb.from('comissao_regras').update(campos).eq('id', req.params.id).select().single();
+      if (error) throw error;
+      req.log({ acao: 'UPDATE', entidade: 'comissao_regras', entidade_id: req.params.id, antes, depois: campos });
+      return res.json({ sucesso: true, dados: data });
+    }
+    const db = getDb();
+    const atual = db.prepare('SELECT * FROM comissao_regras WHERE id=?').get(req.params.id);
+    if (!atual) return res.status(404).json({ sucesso: false, erro: 'Regra não encontrada.' });
+    db.prepare(`UPDATE comissao_regras SET ${Object.keys(campos).map(k=>`${k}=?`).join(',')} WHERE id=?`)
+      .run(...Object.values(campos), req.params.id);
+    req.log({ acao: 'UPDATE', entidade: 'comissao_regras', entidade_id: req.params.id, antes: atual, depois: campos });
+    return res.json({ sucesso: true, dados: db.prepare('SELECT * FROM comissao_regras WHERE id=?').get(req.params.id) });
+  } catch (e) {
+    console.error('[comissoes.atualizarRegra]', e.message);
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
 }
 
 // DELETE /api/comissoes/regras/:id
-function deletarRegra(req, res) {
-  if (req.usuario.role !== 'SUPER_ADMIN') return res.status(403).json({ sucesso:false, erro:'Acesso negado.' });
-  const db = getDb();
-  db.prepare('DELETE FROM comissao_regras WHERE id=?').run(req.params.id);
-  req.log({ acao:'DELETE', entidade:'comissao_regras', entidade_id:req.params.id });
-  return res.json({ sucesso:true });
+async function deletarRegra(req, res) {
+  if (req.usuario.role !== 'SUPER_ADMIN')
+    return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
+
+  const { isSupa, sb } = getProvider();
+  try {
+    if (isSupa) {
+      const { error } = await sb.from('comissao_regras').delete().eq('id', req.params.id);
+      if (error) throw error;
+      req.log({ acao: 'DELETE', entidade: 'comissao_regras', entidade_id: req.params.id });
+      return res.json({ sucesso: true });
+    }
+    const db = getDb();
+    db.prepare('DELETE FROM comissao_regras WHERE id=?').run(req.params.id);
+    req.log({ acao: 'DELETE', entidade: 'comissao_regras', entidade_id: req.params.id });
+    return res.json({ sucesso: true });
+  } catch (e) {
+    console.error('[comissoes.deletarRegra]', e.message);
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
 }
 
 // GET /api/comissoes/calcular  — Calcula comissões em tempo real por vendedor
