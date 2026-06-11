@@ -411,52 +411,70 @@ textarea.input { resize: vertical; min-height: 80px; }
 
 .page-header {
   margin-bottom: var(--space-5);
-  padding-bottom: var(--space-4);
-  border-bottom: 1px solid var(--border);
+  padding: 18px 20px 16px;
+  border-bottom: 1px solid rgba(91,222,62,.15);
   position: relative;
+  background: linear-gradient(135deg, rgba(15,31,23,.6) 0%, rgba(10,10,10,.4) 100%);
+  border-radius: 10px;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 }
-/* Linha de acento verde no rodapé do header */
+/* Acento verde esquerdo no header */
+.page-header::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--green) 0%, rgba(91,222,62,.2) 100%);
+  border-radius: 3px 0 0 3px;
+}
+/* Linha acento inferior */
 .page-header::after {
   content: '';
   position: absolute;
-  bottom: -1px; left: 0;
-  width: 48px; height: 2px;
-  background: var(--grad-brand);
+  bottom: -1px; left: 20px;
+  width: 60px; height: 2px;
+  background: var(--green);
   border-radius: 2px;
+  box-shadow: 0 0 8px rgba(91,222,62,.5);
 }
 
 .page-title {
-  font-size: clamp(1.15rem, 2vw, 1.45rem) !important;
+  font-size: clamp(1.15rem, 2vw, 1.5rem) !important;
   font-weight: 800 !important;
-  letter-spacing: -0.03em;
-  margin-bottom: 3px;
-  /* Gradiente: branco → verde PROSPEKT */
+  letter-spacing: -0.02em;
+  margin-bottom: 4px !important;
+  /* Gradiente branco → verde PROSPEKT mais vivo */
   background: linear-gradient(92deg,
-    rgba(245,245,245,.97) 0%,
-    rgba(245,245,245,.97) 55%,
-    rgba(91,222,62,.80)   100%
-  );
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+    #ffffff 0%,
+    rgba(245,255,245,.95) 40%,
+    rgba(91,222,62,.9) 100%
+  ) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  background-clip: text !important;
   /* Acento lateral esquerdo */
-  padding-left: 12px;
-  border-left: 3px solid var(--green);
+  padding-left: 14px !important;
+  border-left: 3px solid var(--green) !important;
+  box-shadow: -3px 0 12px rgba(91,222,62,.3);
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
   display: inline-block;
+  /* Glow sutil no texto */
+  filter: drop-shadow(0 0 8px rgba(91,222,62,.25));
 }
 
 .page-subtitle {
-  color: rgba(245,245,245,.55);
-  font-size: 0.775rem;
-  padding-left: 15px;
+  color: rgba(245,245,245,.65) !important;
+  font-size: 0.775rem !important;
+  padding-left: 17px;
   line-height: 1.5;
+  margin-top: 2px;
 }
 
-/* Dashboard override — título menor, sem conflito com !important */
+/* Dashboard override */
 .dash-header-title {
-  font-size: 1.1rem !important;
+  font-size: 1.05rem !important;
   margin-bottom: 1px !important;
 }
 .dash-header-sub { font-size: .68rem !important; }
