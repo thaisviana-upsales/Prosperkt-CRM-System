@@ -350,6 +350,19 @@ async function criarRegra(req, res) {
 
   try {
     if (isSupa) {
+      // Verifica duplicidade: regra ativa para o mesmo vendedor+funil
+      if (usuario_id) {
+        let dupQ = sb.from('comissao_regras').select('id,nome').eq('ativo', 1).eq('usuario_id', usuario_id);
+        if (funil_id) dupQ = dupQ.eq('funil_id', funil_id);
+        const { data: dup } = await dupQ.limit(1);
+        if (dup?.[0]) {
+          return res.status(409).json({
+            sucesso: false,
+            erro: `Este vendedor já possui uma regra ativa: "${dup[0].nome}". Edite a regra existente em vez de criar uma nova.`,
+            regra_existente_id: dup[0].id,
+          });
+        }
+      }
       const { data, error } = await sb.from('comissao_regras').insert(payload).select().single();
       if (error) throw error;
       req.log({ acao: 'CREATE', entidade: 'comissao_regras', entidade_id: id, depois: payload });

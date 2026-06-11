@@ -147,7 +147,7 @@
 <!-- ═══ TAB: REGRAS ═══ -->
 <div class="tab-content" id="tab-regras">
   <div class="info-box">
-    💡 Regras de comissão são aplicadas automaticamente quando um lead é movido para a etapa <strong>VENDAS (GANHO)</strong>. Somente Super Admin pode criar ou editar regras.
+    📋 <strong>Regras permanentes — cadastre uma vez por vendedor.</strong> A regra de comissão vale automaticamente para todos os meses do ano. O mês do filtro serve apenas para selecionar as <em>vendas</em> daquele período, não limita a validade da regra. Edite a regra somente quando houver mudança na política de comissão.
   </div>
 
   <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
@@ -160,16 +160,17 @@
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden">
     <table class="table-premium">
       <thead><tr>
-        <th>Nome / Descrição</th>
+        <th>Nome / Regra</th>
         <th>Tipo</th>
         <th>Faixa de Valor</th>
         <th>Comissão</th>
         <th>Bônus Meta</th>
         <th>Vendedor</th>
         <th>Funil</th>
+        <th>Status</th>
         <th></th>
       </tr></thead>
-      <tbody id="regras-tbody"><tr><td colspan="8" class="empty-state">Carregando...</td></tr></tbody>
+      <tbody id="regras-tbody"><tr><td colspan="9" class="empty-state">Carregando...</td></tr></tbody>
     </table>
   </div>
 
@@ -191,7 +192,7 @@
   <div class="mh">
     <div>
       <h3 id="modal-title">Nova Regra de Comissão</h3>
-      <p style="font-size:.78rem;color:var(--text-muted);margin-top:2px">Somente Super Admin pode criar regras</p>
+      <p id="modal-subtitle" style="font-size:.78rem;color:var(--green);margin-top:2px;opacity:.8">Válida para todos os meses do ano — cadastre uma vez por vendedor</p>
     </div>
     <button class="xl" id="modal-close"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
   </div>

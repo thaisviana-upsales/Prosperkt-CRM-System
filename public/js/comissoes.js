@@ -245,30 +245,34 @@ async function atualizarStatus(sel) {
 async function carregarRegras() {
   const r = await Auth.api('GET','/comissoes/regras');
   _regras = r?.data?.dados||[];
-  renderRegras();
-}
-
-function renderRegras() {
   const tbody = document.getElementById('regras-tbody');
-  if (!_regras.length) { tbody.innerHTML='<tr><td colspan="8" class="empty-state">Nenhuma regra configurada ainda.</td></tr>'; updateFaixasPreview(); return; }
+  if (!_regras.length) {
+    tbody.innerHTML = `<tr><td colspan="9" class="empty-state" style="text-align:center;padding:32px">
+      <div style="font-size:1.1rem;margin-bottom:6px">Nenhuma regra configurada ainda.</div>
+      <div style="font-size:.85rem;color:var(--text-muted)">Cadastre uma regra por vendedor — ela vale automaticamente para todos os meses do ano.</div>
+    </td></tr>`;
+    updateFaixasPreview(); return;
+  }
   tbody.innerHTML = _regras.map(r => {
     const faixaStr = (r.valor_min>0||r.valor_max)
       ? `${fmtR(r.valor_min)} → ${r.valor_max?fmtR(r.valor_max):'∞'}`
       : 'Qualquer valor';
     const comStr   = r.tipo_calculo==='PERCENTUAL' ? `${fmtN(r.percentual)}%` : fmtR(r.valor_fixo);
     const bonusStr = r.bonus_meta_pct>0 ? `+${fmtR(r.bonus_meta_pct)}` : '—';
-    const vNome    = _usuarios.find(u=>u.id===r.usuario_id)?.nome || 'Todos';
-    const fNome    = _funis.find(f=>f.id===r.funil_id)?.nome    || 'Todos';
+    const vNome    = r.usuario_nome || _usuarios.find(u=>u.id===r.usuario_id)?.nome || 'Todos os vendedores';
+    const fNome    = r.funil_nome  || _funis.find(f=>f.id===r.funil_id)?.nome     || 'Todos os funis';
+    const ativo    = r.ativo==1||r.ativo===true;
     return `<tr>
-      <td><strong>${r.nome}</strong></td>
+      <td><strong>${r.nome}</strong><br><span style="font-size:.72rem;color:var(--green);opacity:.8">✓ Válida todo o ano</span></td>
       <td><span class="tipo-badge ${r.tipo_calculo==='PERCENTUAL'?'pct':'fix'}">${r.tipo_calculo}</span></td>
       <td style="font-size:.8125rem">${faixaStr}</td>
       <td style="font-weight:700;color:var(--green)">${comStr}</td>
       <td style="color:var(--pink);font-size:.8125rem">${bonusStr}</td>
       <td style="font-size:.8125rem">${vNome}</td>
       <td style="font-size:.8125rem">${fNome}</td>
+      <td><span style="font-size:.72rem;padding:2px 8px;border-radius:20px;background:${ativo?'rgba(0,200,100,.12)':'rgba(255,80,80,.12)'};color:${ativo?'var(--green)':'var(--pink)'};font-weight:700">${ativo?'Ativa':'Inativa'}</span></td>
       <td>${_canEdit?`<div style="display:flex;gap:4px">
-        <button class="btn btn-ghost btn-sm" data-edit="${r.id}" title="Editar">
+        <button class="btn btn-ghost btn-sm" data-edit="${r.id}" title="Editar regra">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
         </button>
         <button class="btn btn-ghost btn-sm" data-del="${r.id}" style="color:var(--pink)" title="Excluir">
@@ -302,7 +306,11 @@ function updateFaixasPreview() {
 
 // Modal
 function abrirModal(modo='criar',regra=null) {
-  document.getElementById('modal-title').textContent = modo==='criar'?'Nova Regra de Comissão':'Editar Regra';
+  document.getElementById('modal-title').textContent = modo==='criar'
+    ? 'Nova Regra de Comissão'
+    : 'Editar Regra de Comissão';
+  const subtitleEl = document.getElementById('modal-subtitle');
+  if (subtitleEl) subtitleEl.textContent = 'Válida para todos os meses do ano — cadastre uma vez por vendedor';
   document.getElementById('r-id').value      = regra?.id||'';
   document.getElementById('r-nome').value    = regra?.nome||'';
   document.getElementById('r-tipo').value    = regra?.tipo_calculo||'PERCENTUAL';
@@ -347,9 +355,23 @@ async function salvarRegra() {
   document.getElementById('modal-salvar-txt').textContent='Salvando...';
   document.getElementById('modal-spinner').classList.remove('hidden');
   try {
-    const r = id ? await Auth.api('PATCH',`/comissoes/regras/${id}`,body) : await Auth.api('POST','/comissoes/regras',body);
-    if (r?.ok) { Toast.show(id?'Regra atualizada!':'Regra criada!','success'); fecharModal(); await carregarRegras(); }
-    else { alertEl.className='alert alert-error'; alertEl.textContent=r?.data?.erro||'Erro.'; alertEl.style.display=''; }
+    const r = id
+      ? await Auth.api('PATCH',`/comissoes/regras/${id}`,body)
+      : await Auth.api('POST','/comissoes/regras',body);
+    if (r?.ok) {
+      Toast.show(id?'Regra atualizada! Válida para todos os meses.':'Regra criada! Válida automaticamente em todos os meses.','success');
+      fecharModal(); await carregarRegras();
+    } else if (r?.status === 409 && r?.data?.regra_existente_id) {
+      // Duplicidade: oferece editar a regra existente
+      const rExistente = _regras.find(x => x.id === r.data.regra_existente_id);
+      alertEl.className='alert alert-error';
+      alertEl.innerHTML = `${r.data.erro}<br><button class="btn btn-sm" style="margin-top:8px" onclick="fecharModal();setTimeout(()=>abrirEditar('${r.data.regra_existente_id}'),100)">✏️ Editar regra existente</button>`;
+      alertEl.style.display='';
+    } else {
+      alertEl.className='alert alert-error';
+      alertEl.textContent=r?.data?.erro||'Erro.';
+      alertEl.style.display='';
+    }
   } finally {
     btn.disabled=false;
     document.getElementById('modal-salvar-txt').textContent='Salvar regra';
@@ -358,7 +380,7 @@ async function salvarRegra() {
 }
 
 async function deletarRegra(id) {
-  if (!confirm('Excluir esta regra? Comissões já calculadas não serão afetadas.')) return;
+  if (!confirm('Excluir esta regra? A comissão deste vendedor não será mais calculada nos próximos meses.')) return;
   const r = await Auth.api('DELETE',`/comissoes/regras/${id}`);
   if (r?.ok) { Toast.show('Regra excluída.','success'); await carregarRegras(); }
   else Toast.show(r?.data?.erro||'Erro.','error');
