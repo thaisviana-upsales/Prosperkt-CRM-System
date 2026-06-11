@@ -230,9 +230,17 @@ async function resumo(req, res) {
       });
 
       // ── 5. Ranking vendedores ─────────────────────────────────────────────────
+      // Carrega SOMENTE usuários ativos — exclui removidos/inativos (ThaisTeste, Maria Gestora etc)
+      const { data: usuariosAtivos } = await sb.from('usuarios')
+        .select('id,nome,role')
+        .eq('ativo', true);
+      const usuariosAtivosMap = Object.fromEntries((usuariosAtivos||[]).map(u => [u.id, u]));
+      const idsAtivos = new Set(Object.keys(usuariosAtivosMap));
+
       const vendedorMap = {};
       leads.forEach(l => {
         if (!l.responsavel_id) return;
+        if (!idsAtivos.has(l.responsavel_id)) return; // ignora usuários inativos
         if (!vendedorMap[l.responsavel_id]) vendedorMap[l.responsavel_id] = { id:l.responsavel_id, leads:0, ganhos:0, faturamento:0 };
         vendedorMap[l.responsavel_id].leads++;
         if (isGanhoLead(l, etapaMap)) {
@@ -240,13 +248,14 @@ async function resumo(req, res) {
           vendedorMap[l.responsavel_id].faturamento += valorVenda(l);
         }
       });
-      let ranking = Object.values(vendedorMap).sort((a,b) => b.faturamento-a.faturamento).slice(0,10);
-      if (ranking.length) {
-        const ids = ranking.map(r => r.id);
-        const { data: users } = await sb.from('usuarios').select('id,nome').in('id', ids);
-        const userMap = Object.fromEntries((users||[]).map(u => [u.id, u.nome]));
-        ranking = ranking.map(r => ({ ...r, nome: userMap[r.id]||r.id, conversao: r.leads>0?((r.ganhos/r.leads)*100).toFixed(1):'0.0' }));
-      }
+      const ranking = Object.values(vendedorMap)
+        .sort((a,b) => b.faturamento - a.faturamento)
+        .slice(0, 10)
+        .map(r => ({
+          ...r,
+          nome: usuariosAtivosMap[r.id]?.nome || '—',
+          conversao: r.leads > 0 ? ((r.ganhos/r.leads)*100).toFixed(1) : '0.0',
+        }));
 
       // ── 6. Por funil ─────────────────────────────────────────────────────────
       const porFunilMap = {};

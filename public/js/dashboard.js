@@ -165,7 +165,10 @@ function renderFunilVisual(etapas) {
 
 function renderRanking(ranking) {
   const el = document.getElementById('ranking');
-  if (!ranking?.length) { el.innerHTML = '<div class="empty">Nenhum dado disponível</div>'; return; }
+  if (!ranking?.length) {
+    el.innerHTML = '<div class="empty" style="text-align:center;padding:20px 10px"><div style="font-size:1.4rem;opacity:.25;margin-bottom:8px">🏆</div><div style="font-weight:600;margin-bottom:4px">Nenhum vendedor com vendas no período</div><div style="font-size:.72rem;opacity:.6">Ajuste os filtros ou amplie o período para visualizar o ranking.</div></div>';
+    return;
+  }
   const MEDALS  = ['🥇','🥈','🥉'];
   const ROWCLS  = ['gold-row','silver-row','bronze-row'];
   const AVCLS   = ['av-gold','av-silver','av-bronze'];
