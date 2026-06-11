@@ -1038,8 +1038,21 @@ function normalizarPayloadWA(body) {
   }
 
   // ── Extrai telefone (todos os caminhos possíveis) ─────────────────────────
+  // PRIORIDADE para Evolution API com LID:
+  //   1. Se remoteJid é @lid, tenta participant (JID real do contato em grupos/multi-device)
+  //   2. Tenta campos alternativos: data.number, data.sender
+  //   3. Fallback: remoteJid (pode ser LID)
+  const participantJid = isEvolution
+    ? (dataRaw?.participant || dataRaw?.key?.participant || null)
+    : null;
+  const isLidRaw = isEvolution && remoteJid.endsWith('@lid');
+
   const rawTel = isEvolution
-    ? remoteJid
+    ? (
+        // Se LID, tenta participant primeiro (JID com telefone real)
+        (isLidRaw && participantJid) ? participantJid
+        : remoteJid
+      )
     : (
         dataRaw?.key?.remoteJid ||
         dataRaw?.remoteJid ||
@@ -1050,6 +1063,8 @@ function normalizarPayloadWA(body) {
         body.telefone || body.phone || body.from || body.remoteJid || body.sender || body.number || ''
       );
   const tel = normalizarTelWhatsApp(rawTel);
+  // Preserva o número LID original (sem @) para mapeamento
+  const lidNumero = isLidRaw ? normalizePhone(remoteJid) : null;
 
   // ── Extrai nome do contato ────────────────────────────────────────────────
   const nome = (
@@ -1115,7 +1130,7 @@ function normalizarPayloadWA(body) {
   // ── JID raw para detectar grupos (@g.us) ──────────────────────────────────
   const rawJid = remoteJid || dataRaw?.remoteJid || body.from || body.remoteJid || body.sender || '';
 
-  return { tel, nome, conteudo, tipo, messageId: finalMsgId, midiaUrl, arquivoNome, mimeType, direcao, rawJid, isEvolution, fromMe: resolvedFromMe };
+  return { tel, nome, conteudo, tipo, messageId: finalMsgId, midiaUrl, arquivoNome, mimeType, direcao, rawJid, isEvolution, fromMe: resolvedFromMe, lidNumero };
 }
 
 
@@ -1354,7 +1369,7 @@ async function webhookReceberMensagem(req, res) {
 
   // ── 3. Normalizar payload ─────────────────────────────────────────────────
   const parsed = normalizarPayloadWA(body);
-  const { tel, nome, conteudo, tipo, messageId, midiaUrl, arquivoNome, mimeType, direcao, rawJid, fromMe } = parsed;
+  const { tel, nome, conteudo, tipo, messageId, midiaUrl, arquivoNome, mimeType, direcao, rawJid, fromMe, lidNumero } = parsed;
 
   // Logs obrigatórios pós-parse
   console.log('WEBHOOK_MENSAGEM_PARSEADA:', {
@@ -1388,6 +1403,14 @@ async function webhookReceberMensagem(req, res) {
   if (!tel) {
     console.warn('[WA Webhook] Telefone não identificado. Body:', JSON.stringify(body).slice(0, 300));
     return res.status(400).json({ sucesso: false, erro: 'Telefone não identificado no payload.' });
+  }
+
+  // ── Detecta JID no formato LID (WhatsApp Multi-Device) ──────────────────────
+  // LID: identificador interno do WA, não é número de telefone real.
+  // Ex: 62972877619405@lid → lidNumero=62972877619405, tel pode ser resolvido pelo participant
+  const isLidJid = rawJid.endsWith('@lid');
+  if (isLidJid) {
+    console.log(`[WA Webhook] ⚠️ LID_DETECTADO: ${lidNumero || tel} (JID: ${rawJid}) participant_tel=${tel}`);
   }
 
   // ── AÇÃO 5: Valida número antes de criar qualquer conversa ───────────────
@@ -1527,8 +1550,26 @@ async function webhookReceberMensagem(req, res) {
     // Lead pode estar salvo com 11964634949 (sem 55) mas webhook entrega 5511964634949
     let conversaId = null;
     if (isSupa) {
+    // Busca 0: se LID e tel ainda é o LID (participant não resolveu) → busca em dados_extras
+      if (!conversaId && isLidJid && lidNumero && tel === lidNumero) {
+        const { data: convLid } = await sb.from('conversas_whatsapp')
+          .select('id, telefone')
+          .like('dados_extras', `%${lidNumero}%`)
+          .neq('status', 'FECHADA')
+          .order('criado_em', { ascending: false })
+          .limit(1);
+        if (convLid?.[0]) {
+          conversaId = convLid[0].id;
+          console.log(`[WA Webhook] ✅ LID_MATCH por dados_extras: ${lidNumero} → conv=${conversaId} tel=${convLid[0].telefone}`);
+        } else {
+          // LID sem mapeamento: não cria conversa/lead com número inválido
+          console.warn(`[WA Webhook] ⚠️ LID sem mapeamento: ${lidNumero} — mensagem não roteada.`);
+          return res.json({ sucesso: true, ignorado: true, motivo: 'lid_sem_mapeamento', lid: lidNumero });
+        }
+      }
+
       // Busca 1: por lead_id (mais confiável — já linkado)
-      if (leadId) {
+      if (!conversaId && leadId) {
         const { data: convByLead } = await sb.from('conversas_whatsapp')
           .select('id').eq('lead_id', leadId).neq('status', 'FECHADA')
           .order('criado_em', { ascending: false }).limit(1);
@@ -1599,15 +1640,23 @@ async function webhookReceberMensagem(req, res) {
           console.error('[WA Webhook] Erro ao criar conversa:', errC?.message);
         }
       } else {
-        // Atualiza ultima_msg_em, vincula lead se não vinculado, e normaliza telefone se necessário
+        // Atualiza ultima_msg_em, vincula lead, normaliza telefone e armazena mapeamento LID
         const { data: convAtual } = await sb.from('conversas_whatsapp')
-          .select('telefone,lead_id').eq('id', conversaId).single();
+          .select('telefone,lead_id,dados_extras').eq('id', conversaId).single();
         const upd = { ultima_msg_em: agora, atualizado_em: agora, status: 'ABERTA' };
         if (leadId) upd.lead_id = leadId;
-        // Se o telefone salvo difere do canônico atual, corrige para o formato do webhook
         if (convAtual && convAtual.telefone !== tel) {
           upd.telefone = tel;
-          console.log(`[WA Webhook] 📞 Telefone corrigido na conversa: ${convAtual.telefone} → ${tel}`);
+          console.log(`[WA Webhook] 📞 Telefone corrigido: ${convAtual.telefone} → ${tel}`);
+        }
+        // Armazena LID no dados_extras para lookup futuro quando fromMe=true ecoa com LID
+        if (isLidJid && lidNumero) {
+          const extrasAtuais = (() => { try { return JSON.parse(convAtual?.dados_extras || '{}'); } catch { return {}; } })();
+          if (!extrasAtuais.lid || extrasAtuais.lid !== lidNumero) {
+            extrasAtuais.lid = lidNumero;
+            upd.dados_extras = JSON.stringify(extrasAtuais);
+            console.log(`[WA Webhook] 🔗 LID armazenado: ${lidNumero} → conv=${conversaId}`);
+          }
         }
         await sb.from('conversas_whatsapp').update(upd).eq('id', conversaId);
         console.log(`[WA Webhook] ✅ Conversa existente atualizada: ${conversaId} leadId=${leadId}`);
