@@ -269,6 +269,7 @@ async function enviarAudio(telefone, audioUrl) {
 
 module.exports = {
   isConfigured,
+  call,
   criarInstancia,
   getQrCode,
   getConnectionState,
