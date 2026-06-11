@@ -61,7 +61,18 @@ app.use('/api', apiRoutes);
 // ─────────────────────────────────────────────────────────────────────────────
 // Static files (frontend)
 // ─────────────────────────────────────────────────────────────────────────────
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  // CSS/JS/HTML: sempre revalida com o servidor (sem cache agressivo)
+  // Isso garante que novos deploys chegam sem hard refresh
+  setHeaders(res, filePath) {
+    if (/\.(css|js|html)$/.test(filePath)) {
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    } else if (/\.(png|jpg|jpeg|webp|svg|ico|woff2?)$/.test(filePath)) {
+      // Imagens/fontes: pode cachear por 7 dias (raramente mudam)
+      res.setHeader('Cache-Control', 'public, max-age=604800');
+    }
+  },
+}));
 
 // SPA fallback — redireciona todas as rotas não-API para o index.html
 app.get(/^(?!\/api).*/, (req, res) => {

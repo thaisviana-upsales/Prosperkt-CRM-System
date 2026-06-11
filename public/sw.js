@@ -1,35 +1,43 @@
 /**
- * PROSPEKT CRM — Service Worker v3
- * PWA installation enabler.
+ * PROSPEKT CRM — Service Worker v4 (minimal)
  *
- * ESTRATÉGIA DE CACHE:
- *  - HTML/API   : network-only (dados sempre frescos)
- *  - CSS/JS     : network-first com fallback de cache (garante que atualizações de layout chegam imediatamente)
- *  - Ícones/PNG : cache-first (imutáveis)
+ * FILOSOFIA: O SW existe APENAS para habilitar a instalação PWA.
+ * NÃO cacheia HTML, CSS nem JS — deixa o browser tratar isso
+ * com HTTP cache natural do servidor (sem interferência do SW).
  *
- * v3 — bumped para invalidar cache de CSS antigo que prendia os estilos premium
+ * Isso garante que após qualquer deploy, novos arquivos chegam
+ * imediatamente sem precisar de hard refresh.
+ *
+ * O que é cacheado:
+ *   - /manifest.json       (necessário para PWA)
+ *   - /icons/icon-*.png    (imutáveis, raramente mudam)
+ *
+ * O que NUNCA é cacheado:
+ *   - *.html   → cada página é sempre buscada da rede
+ *   - *.css    → sem interferência do SW (browser usa HTTP cache)
+ *   - *.js     → sem interferência do SW (browser usa HTTP cache)
+ *   - /api/*   → dados sempre da rede
  */
 
-const CACHE_NAME = 'prospekt-static-v3';
+const CACHE_NAME = 'prospekt-pwa-v4';
 
-// Pré-cache mínimo — só ícones (imutáveis)
 const PRECACHE = [
   '/manifest.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
 ];
 
-// Install
+// ── Install: pré-cache mínimo ────────────────────────────────────────────────
 self.addEventListener('install', (e) => {
   e.waitUntil(
-    caches.open(CACHE_NAME).then((cache) =>
-      cache.addAll(PRECACHE).catch(() => {})
-    )
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(PRECACHE).catch(() => {}))
   );
-  self.skipWaiting(); // ativa imediatamente sem esperar aba ser fechada
+  // Ativa imediatamente — não espera abas antigas fecharem
+  self.skipWaiting();
 });
 
-// Activate: remove TODOS os caches antigos (v1, v2…)
+// ── Activate: apaga TODOS os caches antigos (v1, v2, v3…) ───────────────────
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys().then((keys) =>
@@ -40,45 +48,33 @@ self.addEventListener('activate', (e) => {
       )
     )
   );
+  // Assume controle de todas as abas abertas imediatamente
   self.clients.claim();
 });
 
-// Fetch
+// ── Fetch: passa tudo para a rede, exceto ícones ────────────────────────────
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
 
-  // 1. API — nunca interceptar
-  if (url.pathname.startsWith('/api/')) return;
-
-  // 2. HTML — network-only (sempre da rede)
-  if (e.request.destination === 'document') return;
-
-  // 3. Ícones/imagens — cache-first (não mudam)
-  if (url.pathname.startsWith('/icons/') || e.request.destination === 'image') {
+  // Ícones PWA: cache-first (são imutáveis)
+  if (url.pathname.startsWith('/icons/') || url.pathname === '/manifest.json') {
     e.respondWith(
-      caches.match(e.request).then((cached) => cached || fetch(e.request).then((resp) => {
-        const clone = resp.clone();
-        caches.open(CACHE_NAME).then((c) => c.put(e.request, clone));
-        return resp;
-      }))
-    );
-    return;
-  }
-
-  // 4. CSS e JS — network-first: sempre tenta rede, usa cache só se offline
-  //    Isso garante que atualizações de design-system.css chegam imediatamente
-  if (e.request.destination === 'style' || e.request.destination === 'script') {
-    e.respondWith(
-      fetch(e.request)
-        .then((resp) => {
-          const clone = resp.clone();
-          caches.open(CACHE_NAME).then((c) => c.put(e.request, clone));
+      caches.match(e.request).then((cached) => {
+        if (cached) return cached;
+        return fetch(e.request).then((resp) => {
+          // Armazena no cache apenas se resposta válida
+          if (resp.ok) {
+            const clone = resp.clone();
+            caches.open(CACHE_NAME).then((c) => c.put(e.request, clone));
+          }
           return resp;
-        })
-        .catch(() => caches.match(e.request)) // fallback offline
+        });
+      })
     );
     return;
   }
 
-  // 5. Tudo mais — network-first silencioso
+  // TUDO O MAIS (HTML, CSS, JS, API): NÃO interceptar
+  // O browser usa HTTP cache natural — nenhuma interferência do SW
+  // Isso garante que novos deploys chegam sem hard refresh
 });
