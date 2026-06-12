@@ -12,6 +12,76 @@ function getAutomacaoSvc() {
   return _automacaoSvc;
 }
 
+// ── Helper: formata log de auditoria em texto legível ──────────────────────────
+function _parseSafe(v) {
+  if (!v) return {};
+  if (typeof v === 'object') return v;
+  try { return JSON.parse(v); } catch { return {}; }
+}
+
+function formatarLog(l, etapaMap = {}) {
+  const d = _parseSafe(l.depois);
+  const a = _parseSafe(l.antes);
+  let icone = '📋', titulo = l.acao || '', conteudo = '';
+  switch ((l.acao || '').toUpperCase()) {
+    case 'CREATE':
+      icone = '🌱'; titulo = 'Lead criado';
+      conteudo = 'Lead registrado no CRM.';
+      break;
+    case 'MOVER':
+    case 'UPDATE_ETAPA': {
+      icone = '➡️'; titulo = 'Etapa alterada';
+      const eAntes  = etapaMap[a.etapa_id]  || '';
+      const eDepois = etapaMap[d.etapa_id]  || '';
+      const stStr   = d.status ? ` · Status: ${d.status}` : '';
+      conteudo = eAntes && eDepois && eAntes !== eDepois
+        ? `Movido de "${eAntes}" para "${eDepois}"${stStr}`
+        : eDepois
+          ? `Movido para "${eDepois}"${stStr}`
+          : `Etapa atualizada${stStr}`;
+      break;
+    }
+    case 'TAG_ADD':
+      icone = '🏷️'; titulo = 'Tag adicionada';
+      conteudo = d.tag ? `Tag "${d.tag}" adicionada.` : 'Tag adicionada.';
+      break;
+    case 'TAG_REMOVE':
+      icone = '🗑️'; titulo = 'Tag removida';
+      conteudo = d.tag ? `Tag "${d.tag}" removida.` : 'Tag removida.';
+      break;
+    case 'CLONE':
+      icone = '📋'; titulo = 'Lead clonado';
+      conteudo = 'Lead criado como cópia de outro.';
+      break;
+    case 'DELETE':
+      icone = '🗑️'; titulo = 'Lead excluído';
+      conteudo = 'Lead movido para a lixeira.';
+      break;
+    case 'AUTOMACAO_MSG_ENVIADA':
+    case 'SLA_CONTATO_1':
+      icone = '🤖'; titulo = 'Mensagem automática';
+      conteudo = 'Automação disparada pelo sistema.';
+      break;
+    case 'ADD_NOTA':
+      icone = '📝'; titulo = 'Nota adicionada';
+      conteudo = d.conteudo ? `"${String(d.conteudo).slice(0, 80)}${d.conteudo.length > 80 ? '…' : ''}"` : '';
+      break;
+    default:
+      titulo = l.acao || '?';
+      conteudo = d.nome ? `"${d.nome}"` : JSON.stringify(d).slice(0, 80);
+  }
+  return {
+    id: l.id,
+    tipo: 'LOG',
+    acao: l.acao || '',
+    icone,
+    titulo,
+    conteudo,
+    autor_nome: l.autor_nome || 'Sistema',
+    criado_em: l.criado_em,
+  };
+}
+
 // ── Rodízio de Leads entre Vendedores ─────────────────────────────────────────
 /**
  * Retorna o ID do próximo vendedor ativo em rodízio justo.
@@ -555,21 +625,72 @@ function calcularComissaoSQLite(db, lead, leadId, pipeline_id, agora, req) {
 // GET /api/leads/:id/historico
 async function historico(req, res) {
   const { sb, isSupa, sqlite } = getProvider();
+  const leadId = req.params.id;
   try {
     let notas = [];
     let logs  = [];
+
     if (isSupa) {
-      const { data: msgs } = await sb.from('mensagens').select('*, autor:usuarios!usuario_id(nome)').eq('lead_id', req.params.id).order('criado_em');
-      notas = (msgs||[]).map(m=>({ id:m.id, tipo:'NOTA', conteudo:m.texto||m.conteudo||'', autor_nome:m.autor?.nome||'Sistema', criado_em:m.criado_em }));
-      const { data: lgData } = await sb.from('logs').select('*').eq('entidade_id', req.params.id).order('criado_em');
-      logs = (lgData||[]).map(l=>({ id:l.id, tipo:'LOG', acao:l.acao, conteudo:`${l.acao} — ${JSON.stringify(l.depois||{})}`, autor_nome:'Sistema', criado_em:l.criado_em }));
+      // Dado do lead para evento retroativo
+      const { data: lead } = await sb.from('leads').select('criado_em,nome').eq('id', leadId).maybeSingle();
+
+      // Notas
+      const { data: msgs } = await sb.from('mensagens').select('*, autor:usuarios!usuario_id(nome)').eq('lead_id', leadId).order('criado_em');
+      notas = (msgs||[]).map(m => ({
+        id: m.id, tipo: 'NOTA', acao: 'NOTA',
+        icone: '📝', titulo: 'Nota adicionada',
+        conteudo: m.texto || m.conteudo || '',
+        autor_nome: m.autor?.nome || 'Sistema',
+        criado_em: m.criado_em,
+      }));
+
+      // Logs de auditoria
+      const { data: lgData } = await sb.from('logs').select('*').eq('entidade_id', leadId).order('criado_em');
+
+      // Resolve nomes de etapas para MOVER
+      const etapaIds = [...new Set((lgData||[])
+        .flatMap(l => [_parseSafe(l.depois).etapa_id, _parseSafe(l.antes).etapa_id])
+        .filter(Boolean))];
+      let etapaMap = {};
+      if (etapaIds.length) {
+        const { data: etapas } = await sb.from('etapas').select('id,nome').in('id', etapaIds);
+        etapaMap = Object.fromEntries((etapas||[]).map(e => [e.id, e.nome]));
+      }
+
+      logs = (lgData||[]).map(l => formatarLog(l, etapaMap));
+
+      // Evento retroativo: Lead criado (se não houver log de criação)
+      const temCreate = logs.some(l => l.acao === 'CREATE');
+      if (!temCreate && lead) {
+        logs.unshift({
+          id: `retro-${leadId}`,
+          tipo: 'LOG', acao: 'CREATE',
+          icone: '🌱', titulo: 'Lead criado',
+          conteudo: 'Lead registrado no CRM.',
+          autor_nome: 'Sistema',
+          criado_em: lead.criado_em,
+        });
+      }
     } else {
-      notas = sqlite.prepare(`SELECT m.*, u.nome as autor_nome FROM mensagens m LEFT JOIN usuarios u ON m.usuario_id=u.id WHERE m.lead_id=? ORDER BY m.enviado_em`).all(req.params.id).map(m=>({...m,tipo:'NOTA'}));
-      logs  = sqlite.prepare(`SELECT l.*, u.nome as autor_nome FROM logs l LEFT JOIN usuarios u ON l.usuario_id=u.id WHERE l.entidade_id=? ORDER BY l.criado_em`).all(req.params.id).map(l=>({...l,tipo:'LOG',conteudo:`${l.acao}`,}));
+      notas = sqlite.prepare(`SELECT m.*, u.nome as autor_nome FROM mensagens m LEFT JOIN usuarios u ON m.usuario_id=u.id WHERE m.lead_id=? ORDER BY m.enviado_em`).all(leadId)
+        .map(m => ({ ...m, tipo:'NOTA', acao:'NOTA', icone:'📝', titulo:'Nota adicionada' }));
+      const lgRaw = sqlite.prepare(`SELECT l.*, u.nome as autor_nome FROM logs l LEFT JOIN usuarios u ON l.usuario_id=u.id WHERE l.entidade_id=? ORDER BY l.criado_em`).all(leadId);
+      // Mapeia etapas
+      const eIds = [...new Set(lgRaw.flatMap(l => [_parseSafe(l.depois).etapa_id, _parseSafe(l.antes).etapa_id]).filter(Boolean))];
+      let etapaMap = {};
+      if (eIds.length) {
+        const rows = sqlite.prepare(`SELECT id, nome FROM etapas WHERE id IN (${eIds.map(()=>'?').join(',')}) `).all(...eIds);
+        etapaMap = Object.fromEntries(rows.map(e => [e.id, e.nome]));
+      }
+      logs = lgRaw.map(l => formatarLog(l, etapaMap));
     }
-    const todos = [...notas, ...logs].sort((a,b)=>new Date(a.criado_em)-new Date(b.criado_em));
+
+    const todos = [...notas, ...logs].sort((a,b) => new Date(a.criado_em) - new Date(b.criado_em));
     return res.json({ sucesso:true, dados:todos });
-  } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
+  } catch(e) {
+    console.error('[leads.historico]', e.message);
+    return res.status(500).json({ sucesso:false, erro:e.message });
+  }
 }
 
 // ── Helper: recalcula valor_venda do lead pela soma dos produtos ativos ────────
@@ -817,4 +938,65 @@ async function clonar(req, res) {
   }
 }
 
-module.exports = { listar, buscarPorId, criar, atualizar, mover, transferir, deletar, clonar, adicionarMensagem, historico, getDistribuicao, setDistribuicao, listarProdutosLead, adicionarProdutoLead, atualizarProdutoLead, removerProdutoLead };
+// ── POST /api/leads/:id/tags ──────────────────────────────────────────────────
+async function adicionarTag(req, res) {
+  const { sb, isSupa, sqlite } = getProvider();
+  const { id } = req.params;
+  const tagRaw = (req.body.tag || '').trim();
+  if (!tagRaw) return res.status(400).json({ sucesso:false, erro:'tag é obrigatória.' });
+  const tag = tagRaw.toLowerCase();
+  try {
+    if (isSupa) {
+      const { data: lead } = await sb.from('leads').select('tags').eq('id', id).single();
+      if (!lead) return res.status(404).json({ sucesso:false, erro:'Lead não encontrado.' });
+      let tags = Array.isArray(lead.tags) ? lead.tags
+        : (typeof lead.tags === 'string' ? (() => { try { return JSON.parse(lead.tags); } catch { return lead.tags.split(',').map(t=>t.trim()).filter(Boolean); } })() : []);
+      if (tags.map(t=>t.toLowerCase()).includes(tag)) return res.status(409).json({ sucesso:false, erro:'Tag já existe neste lead.' });
+      tags = [...tags, tag];
+      const { error } = await sb.from('leads').update({ tags, atualizado_em: new Date().toISOString() }).eq('id', id);
+      if (error) throw error;
+      req.log({ acao:'TAG_ADD', entidade:'leads', entidade_id:id, depois:{ tag } });
+      return res.json({ sucesso:true, dados:{ tags } });
+    }
+    const lead = sqlite.prepare('SELECT * FROM leads WHERE id=?').get(id);
+    if (!lead) return res.status(404).json({ sucesso:false, erro:'Lead não encontrado.' });
+    let tags = [];
+    try { tags = lead.tags ? JSON.parse(lead.tags) : []; } catch { tags = []; }
+    if (tags.map(t=>t.toLowerCase()).includes(tag)) return res.status(409).json({ sucesso:false, erro:'Tag já existe neste lead.' });
+    tags = [...tags, tag];
+    sqlite.prepare('UPDATE leads SET tags=?, atualizado_em=? WHERE id=?').run(JSON.stringify(tags), new Date().toISOString(), id);
+    req.log({ acao:'TAG_ADD', entidade:'leads', entidade_id:id, depois:{ tag } });
+    return res.json({ sucesso:true, dados:{ tags } });
+  } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
+}
+
+// ── DELETE /api/leads/:id/tags/:tag ───────────────────────────────────────────
+async function removerTag(req, res) {
+  const { sb, isSupa, sqlite } = getProvider();
+  const { id } = req.params;
+  const tag = decodeURIComponent(req.params.tag || '').trim().toLowerCase();
+  if (!tag) return res.status(400).json({ sucesso:false, erro:'tag é obrigatória.' });
+  try {
+    if (isSupa) {
+      const { data: lead } = await sb.from('leads').select('tags').eq('id', id).single();
+      if (!lead) return res.status(404).json({ sucesso:false, erro:'Lead não encontrado.' });
+      let tags = Array.isArray(lead.tags) ? lead.tags
+        : (typeof lead.tags === 'string' ? (() => { try { return JSON.parse(lead.tags); } catch { return []; } })() : []);
+      const novasTags = tags.filter(t => t.toLowerCase() !== tag);
+      const { error } = await sb.from('leads').update({ tags: novasTags, atualizado_em: new Date().toISOString() }).eq('id', id);
+      if (error) throw error;
+      req.log({ acao:'TAG_REMOVE', entidade:'leads', entidade_id:id, depois:{ tag } });
+      return res.json({ sucesso:true, dados:{ tags: novasTags } });
+    }
+    const lead = sqlite.prepare('SELECT * FROM leads WHERE id=?').get(id);
+    if (!lead) return res.status(404).json({ sucesso:false, erro:'Lead não encontrado.' });
+    let tags = [];
+    try { tags = lead.tags ? JSON.parse(lead.tags) : []; } catch { tags = []; }
+    const novasTags = tags.filter(t => t.toLowerCase() !== tag);
+    sqlite.prepare('UPDATE leads SET tags=?, atualizado_em=? WHERE id=?').run(JSON.stringify(novasTags), new Date().toISOString(), id);
+    req.log({ acao:'TAG_REMOVE', entidade:'leads', entidade_id:id, depois:{ tag } });
+    return res.json({ sucesso:true, dados:{ tags: novasTags } });
+  } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
+}
+
+module.exports = { listar, buscarPorId, criar, atualizar, mover, transferir, deletar, clonar, adicionarMensagem, historico, adicionarTag, removerTag, getDistribuicao, setDistribuicao, listarProdutosLead, adicionarProdutoLead, atualizarProdutoLead, removerProdutoLead };

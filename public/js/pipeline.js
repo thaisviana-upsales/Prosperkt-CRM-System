@@ -422,8 +422,12 @@ async function abrirLead(id) {
   if (window.Atividades) window.Atividades.renderTab(id);
   // Produção — renderiza aba completa
   if (window.Producao) window.Producao.renderTab(id, l);
-  // Tags na aba Informações
-  _renderTagsDisplay(l.tags);
+  // Tags na aba Informações — chips com botão remover
+  _renderTagsDisplay(l.tags, id);
+  const tagWrap = document.getElementById('tag-input-wrap');
+  if (tagWrap) tagWrap.style.display = 'flex';
+  const tagInput = document.getElementById('tag-nova');
+  if (tagInput) tagInput.value = '';
   // Botão excluir só para SUPER_ADMIN
   document.getElementById('ml-excluir').style.display = _usuario.role === 'SUPER_ADMIN' ? '' : 'none';
   // Botão clonar visível apenas quando editando lead existente
@@ -431,49 +435,49 @@ async function abrirLead(id) {
   document.getElementById('ov-lead').classList.add('open');
 }
 
+
 async function carregarHistorico(leadId) {
   const hist = document.getElementById('hist-list');
   hist.innerHTML = '<p style="color:var(--text-muted);font-size:.8rem">Carregando...</p>';
   const r = await Auth.api('GET', `/leads/${leadId}/historico`);
   const itens = r?.data?.dados || [];
-  if (!itens.length) {
+  const notas = itens.filter(m => m.tipo === 'NOTA');
+  if (!notas.length) {
     hist.innerHTML = '<p style="color:var(--text-muted);font-size:.8rem">Sem notas ainda.</p>';
   } else {
-    hist.innerHTML = itens.map(m => {
+    hist.innerHTML = notas.map(m => {
       const data = new Date(m.criado_em || m.enviado_em).toLocaleString('pt-BR');
-      const icone = m.tipo === 'LOG' ? '📋' : '💬';
-      return `<div class="hist-item"><div>${icone} ${m.conteudo||''}</div><div class="hist-meta">${m.autor_nome||'Sistema'} · ${data}</div></div>`;
+      return `<div class="hist-item"><div>${m.icone||'📝'} ${m.conteudo||''}</div><div class="hist-meta">${m.autor_nome||'Sistema'} · ${data}</div></div>`;
     }).join('');
   }
-  // Renderiza timeline a partir do histórico de LOG
   _renderTimeline(itens, leadId);
 }
 
 function _renderTimeline(itens, leadId) {
   const tl = document.getElementById('lead-timeline');
   if (!tl) return;
-  // Filtra apenas entradas de log que indicam mudança de etapa
-  const etapaLogs = itens.filter(m => m.tipo === 'LOG' && m.conteudo && /etapa|movido|venda|perdid|ganho/i.test(m.conteudo));
-  if (!etapaLogs.length) {
+  if (!itens.length) {
     tl.innerHTML = '<p style="font-size:.72rem;color:var(--text-muted)">Nenhuma movimentação registrada ainda.</p>';
     return;
   }
-  tl.innerHTML = etapaLogs.map((m, i) => {
-    const data = new Date(m.criado_em || m.enviado_em);
-    const dataStr = data.toLocaleDateString('pt-BR') + ' ' + data.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-    const isCurrent = i === etapaLogs.length - 1;
-    // Calcula tempo desde o item anterior
+  tl.innerHTML = itens.map((m, i) => {
+    const data    = new Date(m.criado_em || m.enviado_em);
+    const dataStr = data.toLocaleDateString('pt-BR') + ' ' + data.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
+    const isLast  = i === itens.length - 1;
+    const icone   = m.icone  || (m.tipo === 'NOTA' ? '📝' : '📋');
+    const titulo  = m.titulo || (m.tipo === 'NOTA' ? 'Nota' : m.acao || 'Evento');
+    const desc    = m.conteudo ? `<div style="font-size:.7rem;color:var(--text-muted);margin-top:2px">${m.conteudo}</div>` : '';
     let duracao = '';
     if (i > 0) {
-      const prev = new Date(etapaLogs[i-1].criado_em || etapaLogs[i-1].enviado_em);
-      const diffMs = data - prev;
-      const diffH = Math.round(diffMs / 3600000);
-      duracao = diffH < 24 ? `${diffH}h` : `${Math.round(diffH/24)}d`;
+      const prev  = new Date(itens[i-1].criado_em || itens[i-1].enviado_em);
+      const diffH = Math.round((data - prev) / 3600000);
+      if (diffH >= 0) duracao = diffH < 24 ? `${diffH}h` : `${Math.round(diffH/24)}d`;
     }
     return `<div class="timeline-item">
-      <div class="timeline-dot${isCurrent?' current':''}">${isCurrent?'●':'○'}</div>
+      <div class="timeline-dot${isLast?' current':''}">${icone}</div>
       <div class="timeline-body">
-        <div class="timeline-stage">${m.conteudo}</div>
+        <div class="timeline-stage" style="font-size:.78rem;font-weight:600">${titulo}</div>
+        ${desc}
         <div class="timeline-meta">${dataStr} · ${m.autor_nome||'Sistema'}</div>
       </div>
       ${duracao ? `<div class="timeline-duration">${duracao}</div>` : ''}
@@ -503,6 +507,10 @@ function resetModal() {
   if (tl) tl.innerHTML = '<p style="font-size:.72rem;color:var(--text-muted)">Selecione um lead para ver a timeline.</p>';
   const tagsDisp = document.getElementById('lead-tags-display');
   if (tagsDisp) tagsDisp.innerHTML = '<span style="font-size:.72rem;color:var(--text-muted)">Sem tags registradas.</span>';
+  const tagWrap  = document.getElementById('tag-input-wrap');
+  if (tagWrap) tagWrap.style.display = 'none';
+  const tagInput = document.getElementById('tag-nova');
+  if (tagInput) tagInput.value = '';
   showTab('dados');
   const fSel = document.getElementById('fl-funil');
   fSel.innerHTML = _funis.map(f => `<option value="${f.id}">${f.nome}</option>`).join('');
@@ -523,16 +531,56 @@ function resetModal() {
   renderProdutosLead();
 }
 
-function _renderTagsDisplay(tagsRaw) {
+function _renderTagsDisplay(tagsRaw, leadId) {
   const el = document.getElementById('lead-tags-display');
   if (!el) return;
   let tags = [];
-  try { tags = tagsRaw ? JSON.parse(tagsRaw) : []; } catch(e) { tags = tagsRaw ? String(tagsRaw).split(',').map(t=>t.trim()) : []; }
+  if (Array.isArray(tagsRaw)) tags = tagsRaw;
+  else if (tagsRaw) {
+    try { tags = JSON.parse(tagsRaw); } catch { tags = String(tagsRaw).split(',').map(t => t.trim()).filter(Boolean); }
+  }
   if (!tags.length) {
     el.innerHTML = '<span style="font-size:.72rem;color:var(--text-muted)">Sem tags registradas.</span>';
-  } else {
-    el.innerHTML = tags.map(t => `<span class="lead-tag" style="font-size:.72rem">${t}</span>`).join('');
+    return;
   }
+  const lid = leadId || _leadIdAberto;
+  el.innerHTML = tags.map(t => {
+    const safeTag = String(t).trim();
+    const esc = safeTag.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const btn = lid ? `<button type="button" onclick="_removerTagUI('${lid}','${esc}')" style="background:none;border:none;cursor:pointer;padding:0 0 0 4px;color:inherit;opacity:.7;font-size:.8rem" title="Remover">✕</button>` : '';
+    return `<span class="lead-tag" style="font-size:.72rem;display:inline-flex;align-items:center;gap:2px">${safeTag}${btn}</span>`;
+  }).join('');
+}
+
+async function _adicionarTagUI() {
+  const leadId = _leadIdAberto;
+  if (!leadId) return;
+  const input = document.getElementById('tag-nova');
+  const tag   = (input?.value || '').trim();
+  if (!tag) return;
+  const r = await Auth.api('POST', `/leads/${leadId}/tags`, { tag });
+  if (!r?.ok) {
+    const msg = r?.data?.erro || 'Erro ao adicionar tag.';
+    if (msg.toLowerCase().includes('j') && msg.toLowerCase().includes('existe')) Toast.show('Tag já cadastrada.', 'warning');
+    else Toast.show(msg, 'error');
+    return;
+  }
+  const novasTags = r.data.dados?.tags || [];
+  _renderTagsDisplay(novasTags, leadId);
+  if (input) input.value = '';
+  if (_leadEmEdicao) _leadEmEdicao.tags = novasTags;
+  carregarHistorico(leadId);
+  Toast.show(`Tag "${tag}" adicionada.`, 'success');
+}
+
+async function _removerTagUI(leadId, tag) {
+  const r = await Auth.api('DELETE', `/leads/${leadId}/tags/${encodeURIComponent(tag)}`);
+  if (!r?.ok) { Toast.show(r?.data?.erro || 'Erro ao remover tag.', 'error'); return; }
+  const novasTags = r.data.dados?.tags || [];
+  _renderTagsDisplay(novasTags, leadId);
+  if (_leadEmEdicao) _leadEmEdicao.tags = novasTags;
+  carregarHistorico(leadId);
+  Toast.show(`Tag "${tag}" removida.`, 'success');
 }
 
 function atualizarStatusBadge(status) {
@@ -1119,6 +1167,9 @@ function bindEvents() {
   document.getElementById('ml-excluir').addEventListener('click', excluirLead);
   document.getElementById('ml-clonar').addEventListener('click', clonarLead);
   document.getElementById('btn-add-nota').addEventListener('click', adicionarNota);
+  document.getElementById('btn-add-tag')?.addEventListener('click', _adicionarTagUI);
+  document.getElementById('tag-nova')?.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); _adicionarTagUI(); } });
+
   document.getElementById('ov-lead').addEventListener('click', e => { if(e.target===document.getElementById('ov-lead')) fecharModal(); });
   // 4 abas
   document.getElementById('tab-btn-dados').addEventListener('click', () => showTab('dados'));

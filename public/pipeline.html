@@ -179,6 +179,11 @@
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
         Tags
       </div>
+      <!-- Input para adicionar tag (visível somente ao editar lead existente) -->
+      <div id="tag-input-wrap" style="display:none;flex;gap:6px;align-items:center;margin-bottom:8px">
+        <input id="tag-nova" class="input input-sm" placeholder="Nova tag..." style="flex:1;max-width:180px;font-size:.75rem" maxlength="40">
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-add-tag" style="font-size:.72rem;white-space:nowrap;padding:4px 10px">+ Tag</button>
+      </div>
       <div id="lead-tags-display" style="display:flex;flex-wrap:wrap;gap:5px;min-height:28px">
         <span style="font-size:.72rem;color:var(--text-muted)">Sem tags registradas.</span>
       </div>

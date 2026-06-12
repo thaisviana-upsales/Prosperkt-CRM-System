@@ -107,6 +107,8 @@ router.delete('/leads/:id',                 autenticar, exigirRole('SUPER_ADMIN'
 router.post  ('/leads/:id/mensagens',       autenticar, leadsCtrl.adicionarMensagem);
 router.get   ('/leads/:id/historico',       autenticar, leadsCtrl.historico);
 router.post  ('/leads/:id/clonar',          autenticar, leadsCtrl.clonar);
+router.post  ('/leads/:id/tags',            autenticar, leadsCtrl.adicionarTag);
+router.delete('/leads/:id/tags/:tag',       autenticar, leadsCtrl.removerTag);
 
 // ── Lead Produtos (múltiplos produtos por venda) ──────────────────────────────
 router.get   ('/leads/:id/produtos',              autenticar, leadsCtrl.listarProdutosLead);
