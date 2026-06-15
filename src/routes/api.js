@@ -149,6 +149,7 @@ router.delete('/metas/:id',          autenticar, metasCtrl.deletar);
 // ─────────────────────────────────────────────────────────────────────────────
 router.get   ('/comissoes/painel',            autenticar, comissoesCtrl.painel);
 router.get   ('/comissoes/calcular',          autenticar, comissoesCtrl.calcular);
+router.get   ('/comissoes/salarios',          autenticar, exigirRole('GESTOR'), comissoesCtrl.listarSalarios);
 router.get   ('/comissoes/regras',            autenticar, comissoesCtrl.listarRegras);
 router.post  ('/comissoes/regras',            autenticar, exigirSuperAdmin, comissoesCtrl.criarRegra);
 router.patch ('/comissoes/regras/:id',        autenticar, exigirSuperAdmin, comissoesCtrl.atualizarRegra);

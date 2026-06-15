@@ -61,13 +61,18 @@ function setWebhookUrl() {
 async function carregarStatus() {
   try {
     const r = await Auth.api('GET', '/whatsapp/integracao/status');
-    if (!r?.ok) { renderStatusErro(); return; }
+    if (!r?.ok) {
+      renderStatusErro();
+      renderSecretErro(r?.status);
+      return;
+    }
     _statusData = r.data;
     renderStatus(r.data);
     renderLogs(r.data.logs || []);
     renderSecret(r.data);
   } catch(e) {
     renderStatusErro();
+    renderSecretErro(0);
   }
 }
 
@@ -110,18 +115,43 @@ function renderStatusErro() {
 }
 
 function renderSecret(d) {
-  _secretoReal = d.secret_configurado
-    ? '(configurado no servidor)'
-    : '(não configurado — defina WHATSAPP_WEBHOOK_SECRET no .env)';
   const display = $id('sec-display');
+  const togBtn  = $id('sec-tog');
   if (!display) return;
-  if (d.secret_configurado) {
+
+  if (d.secret_configurado && d.secret_valor) {
+    // Armazena a chave real para cópia
+    _secretoReal    = d.secret_valor;
+    _secretoVisivel = false;
     display.textContent = '••••••••••••••••••••••••';
     display.style.color = 'var(--green)';
+    if (togBtn) togBtn.style.display = '';
+  } else if (d.secret_configurado) {
+    // Configurada mas server antigo não retorna secret_valor
+    _secretoReal = d.secret_preview || '';
+    display.textContent = d.secret_preview || '••••••••••••••••••••••••';
+    display.style.color = 'var(--green)';
+    if (togBtn) togBtn.style.display = 'none'; // sem valor completo, oculta toggle
   } else {
+    _secretoReal = '';
     display.textContent = '⚠️ WHATSAPP_WEBHOOK_SECRET não configurado';
     display.style.color = '#FFB627';
+    if (togBtn) togBtn.style.display = 'none';
   }
+}
+
+function renderSecretErro(status) {
+  const display = $id('sec-display');
+  if (!display) return;
+  if (status === 403 || status === 401) {
+    display.textContent = '🔒 Acesso restrito ao Super Admin';
+    display.style.color = 'var(--text-muted)';
+  } else {
+    display.textContent = '❌ Erro ao carregar (verifique o servidor)';
+    display.style.color = 'var(--pink)';
+  }
+  const togBtn = $id('sec-tog');
+  if (togBtn) togBtn.style.display = 'none';
 }
 
 function renderLogs(logs) {
@@ -350,13 +380,17 @@ function bindEvents() {
     Toast.show('Secret copiado!', 'success');
   });
 
-  // Toggle secret
+  // Toggle secret — mostra/oculta o valor real
   $id('sec-tog')?.addEventListener('click', function() {
     _secretoVisivel = !_secretoVisivel;
     this.textContent = _secretoVisivel ? 'Ocultar' : 'Mostrar';
-    const d = $id('sec-display'); if (!d) return;
-    if (_secretoVisivel && _statusData?.secret_configurado) d.textContent = _statusData.secret_preview || '••••••••';
-    else if (_statusData?.secret_configurado) d.textContent = '••••••••••••••••••••••••';
+    const d = $id('sec-display');
+    if (!d) return;
+    if (_secretoVisivel) {
+      d.textContent = _secretoReal || '••••••••';
+    } else {
+      d.textContent = '••••••••••••••••••••••••';
+    }
   });
 
   // Testar status

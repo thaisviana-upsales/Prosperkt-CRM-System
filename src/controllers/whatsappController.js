@@ -1879,61 +1879,70 @@ async function webhookReceberMensagem(req, res) {
 // GET /api/whatsapp/integracao/status
 // Status da integração: atividade recente, secret configurado, logs
 // ─────────────────────────────────────────────────────────────────────────────
-function statusIntegracao(req, res) {
+async function statusIntegracao(req, res) {
   try {
-    const db   = getDb();
+    const { sb, isSupa } = getProvider();
     const agora = new Date();
     const h24   = new Date(agora.getTime() - 24 * 60 * 60 * 1000).toISOString();
     const d7    = new Date(agora.getTime() - 7  * 24 * 60 * 60 * 1000).toISOString();
 
-    // Mensagens últimas 24h
-    const msgs24 = db.prepare(
-      `SELECT COUNT(*) as n FROM mensagens_whatsapp WHERE criado_em >= ?`
-    ).get(h24)?.n ?? 0;
+    let msgs24 = 0, msgs7d = 0, convAtivas = 0, ultima = null, logs = [];
 
-    // Mensagens últimas 7d
-    const msgs7d = db.prepare(
-      `SELECT COUNT(*) as n FROM mensagens_whatsapp WHERE criado_em >= ?`
-    ).get(d7)?.n ?? 0;
-
-    // Conversas abertas
-    const convAtivas = db.prepare(
-      `SELECT COUNT(*) as n FROM conversas_whatsapp WHERE status = 'ABERTA'`
-    ).get()?.n ?? 0;
-
-    // Última mensagem
-    const ultima = db.prepare(
-      `SELECT telefone, direcao, mensagem, criado_em FROM mensagens_whatsapp ORDER BY criado_em DESC LIMIT 1`
-    ).get();
-
-    // Logs recentes (últimas 15 mensagens)
-    const logs = db.prepare(
-      `SELECT telefone, direcao, mensagem, criado_em FROM mensagens_whatsapp ORDER BY criado_em DESC LIMIT 15`
-    ).all();
+    if (isSupa) {
+      // ── Supabase ──────────────────────────────────────────────────────────
+      const [r24, r7d, rConv, rUlt, rLogs] = await Promise.all([
+        sb.from('mensagens_whatsapp').select('id', { count: 'exact', head: true }).gte('criado_em', h24),
+        sb.from('mensagens_whatsapp').select('id', { count: 'exact', head: true }).gte('criado_em', d7),
+        sb.from('conversas_whatsapp').select('id', { count: 'exact', head: true }).eq('status', 'ABERTA'),
+        sb.from('mensagens_whatsapp').select('telefone,direcao,mensagem,criado_em').order('criado_em', { ascending: false }).limit(1),
+        sb.from('mensagens_whatsapp').select('telefone,direcao,mensagem,criado_em').order('criado_em', { ascending: false }).limit(15),
+      ]);
+      msgs24    = r24.count  ?? 0;
+      msgs7d    = r7d.count  ?? 0;
+      convAtivas = rConv.count ?? 0;
+      ultima    = rUlt.data?.[0]  || null;
+      logs      = rLogs.data      || [];
+    } else {
+      // ── SQLite ────────────────────────────────────────────────────────────
+      const db = getDb();
+      msgs24     = db.prepare(`SELECT COUNT(*) as n FROM mensagens_whatsapp WHERE criado_em >= ?`).get(h24)?.n ?? 0;
+      msgs7d     = db.prepare(`SELECT COUNT(*) as n FROM mensagens_whatsapp WHERE criado_em >= ?`).get(d7)?.n ?? 0;
+      convAtivas = db.prepare(`SELECT COUNT(*) as n FROM conversas_whatsapp WHERE status = 'ABERTA'`).get()?.n ?? 0;
+      ultima     = db.prepare(`SELECT telefone, direcao, mensagem, criado_em FROM mensagens_whatsapp ORDER BY criado_em DESC LIMIT 1`).get();
+      logs       = db.prepare(`SELECT telefone, direcao, mensagem, criado_em FROM mensagens_whatsapp ORDER BY criado_em DESC LIMIT 15`).all();
+    }
 
     // Secret configurado?
-    const secretConf = !!(process.env.WHATSAPP_WEBHOOK_SECRET);
+    const secretConf    = !!(process.env.WHATSAPP_WEBHOOK_SECRET);
+    const secretValor   = process.env.WHATSAPP_WEBHOOK_SECRET || '';
     const secretPreview = secretConf
-      ? process.env.WHATSAPP_WEBHOOK_SECRET.slice(0, 6) + '••••••••••••••••'
+      ? secretValor.slice(0, 6) + '••••••••••••••••'
       : '';
 
     return res.json({
-      sucesso:           true,
-      msgs_24h:          msgs24,
-      msgs_7d:           msgs7d,
-      conversas_ativas:  convAtivas,
-      ultima_msg_em:     ultima?.criado_em || null,
-      ultima_direcao:    ultima?.direcao   || null,
-      ultimo_telefone:   ultima?.telefone  || null,
+      sucesso:            true,
+      msgs_24h:           msgs24,
+      msgs_7d:            msgs7d,
+      conversas_ativas:   convAtivas,
+      ultima_msg_em:      ultima?.criado_em || null,
+      ultima_direcao:     ultima?.direcao   || null,
+      ultimo_telefone:    ultima?.telefone  || null,
       secret_configurado: secretConf,
-      secret_preview:    secretPreview,
-      logs,
+      secret_preview:     secretPreview,
+      secret_valor:       secretValor,   // retorna chave completa (rota protegida por SUPER_ADMIN)
+      logs: logs.map(m => ({
+        telefone:   m.telefone,
+        direcao:    m.direcao,
+        mensagem:   m.mensagem || m.conteudo || '',
+        criado_em:  m.criado_em,
+      })),
     });
   } catch(e) {
     console.error('[WA] statusIntegracao:', e);
     return res.status(500).json({ sucesso: false, erro: e.message });
   }
 }
+
 
 module.exports = {
   // Legado SQLite (não alterados)

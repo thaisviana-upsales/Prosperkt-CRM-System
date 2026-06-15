@@ -386,29 +386,136 @@ async function deletarRegra(id) {
   else Toast.show(r?.data?.erro||'Erro.','error');
 }
 
+// ── Aba Salário ──────────────────────────────────────────────────────────────
+let _salarios = [];
+
+async function carregarSalarios() {
+  const r = await Auth.api('GET', '/comissoes/salarios');
+  if (!r?.ok) { Toast.show('Erro ao carregar salários.', 'error'); return; }
+  _salarios = r.data.dados || [];
+  renderSalarios();
+}
+
+function renderSalarios() {
+  const grid = document.getElementById('sal-grid');
+  if (!_salarios.length) {
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:48px;color:var(--text-muted)">Nenhum usuário ativo encontrado.</div>';
+    return;
+  }
+
+  // Summary
+  const total = _salarios.reduce((s, u) => s + (u.salario_fixo || 0), 0);
+  const comSalario = _salarios.filter(u => (u.salario_fixo || 0) > 0);
+  const media = comSalario.length ? total / comSalario.length : 0;
+  document.getElementById('sal-total').textContent  = fmtR(total);
+  document.getElementById('sal-count').textContent  = comSalario.length + ' de ' + _salarios.length;
+  document.getElementById('sal-media').textContent  = fmtR(media);
+
+  const ROLE_LABEL = { SUPER_ADMIN: 'Super Admin', GESTOR: 'Gestor', VENDEDOR: 'Vendedor' };
+  const canEdit = _usuario.role !== 'VENDEDOR';
+
+  grid.innerHTML = _salarios.map(u => {
+    const initials = (u.nome || '?').slice(0, 2).toUpperCase();
+    const sal = u.salario_fixo || 0;
+    return `
+    <div class="sal-card" id="sal-card-${u.id}">
+      <div class="sal-card-header">
+        <div class="sal-avatar">${initials}</div>
+        <div class="sal-info">
+          <div class="sal-name">${u.nome || '—'}</div>
+          <div class="sal-email">${u.email || ''}</div>
+        </div>
+        <span class="sal-role-badge ${u.role}">${ROLE_LABEL[u.role] || u.role}</span>
+      </div>
+      <div class="sal-field" id="sal-field-${u.id}">
+        <div class="sal-field-label">Salário Fixo Mensal</div>
+        <div class="sal-field-value" id="sal-val-${u.id}">${fmtR(sal)}</div>
+        <input class="sal-field-input" id="sal-inp-${u.id}" type="number" min="0" step="0.01" value="${sal}" placeholder="0,00">
+      </div>
+      ${canEdit ? `
+      <div class="sal-actions">
+        <button class="sal-btn-edit" id="sal-edit-${u.id}" onclick="salModoEditar('${u.id}')">✎ Editar Salário</button>
+        <button class="sal-btn-save" id="sal-save-${u.id}" onclick="salSalvar('${u.id}')">✓ Salvar</button>
+        <button class="sal-btn-cancel" id="sal-cancel-${u.id}" onclick="salCancelar('${u.id}', ${sal})">Cancelar</button>
+      </div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function salModoEditar(uid) {
+  document.getElementById(`sal-val-${uid}`).style.display   = 'none';
+  document.getElementById(`sal-inp-${uid}`).style.display   = '';
+  document.getElementById(`sal-edit-${uid}`).style.display  = 'none';
+  document.getElementById(`sal-save-${uid}`).style.display  = '';
+  document.getElementById(`sal-cancel-${uid}`).style.display = '';
+  const inp = document.getElementById(`sal-inp-${uid}`);
+  inp.focus(); inp.select();
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') salSalvar(uid);
+    if (e.key === 'Escape') salCancelar(uid, parseFloat(inp.defaultValue) || 0);
+  }, { once: false });
+}
+
+function salCancelar(uid, valorOriginal) {
+  document.getElementById(`sal-val-${uid}`).style.display   = '';
+  document.getElementById(`sal-inp-${uid}`).style.display   = 'none';
+  document.getElementById(`sal-edit-${uid}`).style.display  = '';
+  document.getElementById(`sal-save-${uid}`).style.display  = 'none';
+  document.getElementById(`sal-cancel-${uid}`).style.display = 'none';
+  document.getElementById(`sal-inp-${uid}`).value = valorOriginal;
+}
+
+async function salSalvar(uid) {
+  const inp = document.getElementById(`sal-inp-${uid}`);
+  const novoVal = parseFloat(inp.value) || 0;
+  const btn = document.getElementById(`sal-save-${uid}`);
+  btn.textContent = 'Salvando...'; btn.disabled = true;
+  const r = await Auth.api('PATCH', `/comissoes/salario/${uid}`, { salario_fixo: novoVal });
+  btn.textContent = '✓ Salvar'; btn.disabled = false;
+  if (r?.ok) {
+    Toast.show('Salário atualizado com sucesso!', 'success');
+    // Atualiza objeto local e re-renderiza
+    const u = _salarios.find(x => x.id === uid);
+    if (u) u.salario_fixo = novoVal;
+    renderSalarios();
+  } else {
+    Toast.show(r?.data?.erro || 'Erro ao salvar salário.', 'error');
+    salCancelar(uid, novoVal);
+  }
+}
+
 function bindEvents() {
-  document.querySelectorAll('.tab-btn').forEach(btn=>{
-    btn.addEventListener('click',()=>{
-      document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
-      document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
       btn.classList.add('active');
-      document.getElementById('tab-'+btn.dataset.tab).classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+      // Carrega salários ao abrir a aba
+      if (btn.dataset.tab === 'salario' && _usuario.role !== 'VENDEDOR') carregarSalarios();
     });
   });
-  document.getElementById('btn-filtrar').addEventListener('click',carregarPainel);
-  document.getElementById('btn-limpar').addEventListener('click',()=>{
-    document.getElementById('f-funil').value='';
-    const fv=document.getElementById('f-vendedor'); if(fv) fv.value='';
+  document.getElementById('btn-filtrar').addEventListener('click', carregarPainel);
+  document.getElementById('btn-limpar').addEventListener('click', () => {
+    document.getElementById('f-funil').value = '';
+    const fv = document.getElementById('f-vendedor'); if (fv) fv.value = '';
     carregarPainel();
   });
-  document.getElementById('btn-refresh').addEventListener('click',()=>Promise.all([carregarPainel(),carregarRegras()]));
-  document.getElementById('btn-nova-regra').addEventListener('click',()=>abrirModal('criar'));
-  document.getElementById('btn-nova-regra-2').addEventListener('click',()=>abrirModal('criar'));
-  document.getElementById('modal-close').addEventListener('click',fecharModal);
-  document.getElementById('modal-cancelar').addEventListener('click',fecharModal);
-  document.getElementById('modal-salvar').addEventListener('click',salvarRegra);
-  document.getElementById('modal-ov').addEventListener('click',e=>{if(e.target===document.getElementById('modal-ov'))fecharModal();});
-  document.getElementById('r-tipo').addEventListener('change',updateValorLabel);
+  document.getElementById('btn-refresh').addEventListener('click', () => Promise.all([carregarPainel(), carregarRegras()]));
+  document.getElementById('btn-nova-regra').addEventListener('click', () => abrirModal('criar'));
+  document.getElementById('btn-nova-regra-2').addEventListener('click', () => abrirModal('criar'));
+  document.getElementById('modal-close').addEventListener('click', fecharModal);
+  document.getElementById('modal-cancelar').addEventListener('click', fecharModal);
+  document.getElementById('modal-salvar').addEventListener('click', salvarRegra);
+  document.getElementById('modal-ov').addEventListener('click', e => { if (e.target === document.getElementById('modal-ov')) fecharModal(); });
+  document.getElementById('r-tipo').addEventListener('change', updateValorLabel);
+
+  // Oculta aba Salário para vendedores
+  if (_usuario.role === 'VENDEDOR') {
+    const tabBtn = document.getElementById('tab-btn-salario');
+    if (tabBtn) tabBtn.style.display = 'none';
+  }
 }
 
 init();
+

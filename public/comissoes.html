@@ -89,6 +89,38 @@
 /* Salary editable card */
 .edit-card{cursor:default;border-style:dashed!important;transition:border-color .2s,background .2s}
 .edit-card:hover{background:rgba(108,255,78,.04);border-color:rgba(108,255,78,.4)!important}
+/* ═══ Salário Tab ═══ */
+.sal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin-top:4px}
+.sal-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px;transition:border-color .2s,transform .2s,box-shadow .2s;position:relative;overflow:hidden}
+.sal-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--grad-brand);opacity:0;transition:opacity .2s}
+.sal-card:hover{border-color:var(--border-hover);transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.25)}
+.sal-card:hover::before{opacity:1}
+.sal-card-header{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.sal-avatar{width:44px;height:44px;border-radius:50%;background:var(--grad-brand);display:flex;align-items:center;justify-content:center;font-size:.95rem;font-weight:800;color:#0D0D0D;flex-shrink:0}
+.sal-info{flex:1;min-width:0}
+.sal-name{font-size:1rem;font-weight:700;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sal-email{font-size:.72rem;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sal-role-badge{font-size:.6rem;font-weight:700;padding:2px 8px;border-radius:20px;flex-shrink:0}
+.sal-role-badge.SUPER_ADMIN{background:rgba(225,0,152,.12);color:var(--pink)}
+.sal-role-badge.GESTOR{background:rgba(59,139,255,.12);color:#3B8BFF}
+.sal-role-badge.VENDEDOR{background:rgba(108,255,78,.12);color:var(--green)}
+.sal-field{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+.sal-field-label{font-size:.65rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
+.sal-field-value{font-size:1.2rem;font-weight:800;color:var(--green)}
+.sal-field-input{display:none;width:100%;background:transparent;border:none;color:var(--green);font-family:inherit;font-size:1.2rem;font-weight:800;outline:none;padding:0}
+.sal-actions{display:flex;gap:6px;margin-top:12px}
+.sal-btn-edit{flex:1;padding:8px;border:1px solid var(--border);background:none;border-radius:8px;color:var(--text-muted);font-family:inherit;font-size:.8rem;font-weight:600;cursor:pointer;transition:all .15s}
+.sal-btn-edit:hover{border-color:var(--green);color:var(--green);background:rgba(108,255,78,.06)}
+.sal-btn-save{flex:1;padding:8px;border:none;background:var(--grad-brand);border-radius:8px;color:#0D0D0D;font-family:inherit;font-size:.8rem;font-weight:700;cursor:pointer;display:none;transition:opacity .15s}
+.sal-btn-save:hover{opacity:.85}
+.sal-btn-cancel{padding:8px 12px;border:1px solid var(--border);background:none;border-radius:8px;color:var(--text-muted);font-family:inherit;font-size:.8rem;cursor:pointer;display:none;transition:all .15s}
+.sal-btn-cancel:hover{border-color:var(--pink);color:var(--pink)}
+.sal-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px}
+.sal-sum-item{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;text-align:center;position:relative;overflow:hidden}
+.sal-sum-item::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px}
+.sal-sum-item.green::after{background:var(--green)}.sal-sum-item.blue::after{background:#3B8BFF}.sal-sum-item.gold::after{background:#FFB627}
+.sal-sum-label{font-size:.65rem;color:var(--text-muted);text-transform:uppercase;font-weight:600;margin-bottom:6px}
+.sal-sum-val{font-size:1.3rem;font-weight:800}
 </style>
 </head>
 <body>
@@ -113,8 +145,9 @@
 
 <!-- Tabs -->
 <div class="tabs" style="margin-top:16px">
-  <button class="tab-btn active" data-tab="painel">Painel</button>
-  <button class="tab-btn" data-tab="regras">Regras de Comissão</button>
+  <button class="tab-btn active" data-tab="painel" id="tab-btn-painel">Painel</button>
+  <button class="tab-btn" data-tab="regras" id="tab-btn-regras">Regras de Comissão</button>
+  <button class="tab-btn" data-tab="salario" id="tab-btn-salario">Salário</button>
 </div>
 
 <!-- ═══ TAB: PAINEL ═══ -->
@@ -180,6 +213,27 @@
       <div style="font-size:.8rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">Simulação de Faixas Configuradas</div>
       <div id="faixas-lista"></div>
     </div>
+  </div>
+</div>
+
+<!-- ═══ TAB: SALÁRIO ═══ -->
+<div class="tab-content" id="tab-salario">
+  <div class="info-box" style="background:rgba(59,139,255,.05);border-color:rgba(59,139,255,.2)">
+    💰 <strong>Salário fixo por vendedor — cadastre uma vez, vale para todo o CRM.</strong>
+    O salário fixo é somado automaticamente ao painel de comissões de cada vendedor a cada mês.
+    Edite somente quando houver alteração salarial.
+  </div>
+
+  <!-- Summary salários -->
+  <div class="sal-summary" id="sal-summary">
+    <div class="sal-sum-item green"><div class="sal-sum-label">Total Folha Salários</div><div class="sal-sum-val" id="sal-total">—</div></div>
+    <div class="sal-sum-item blue"><div class="sal-sum-label">Vendedores Cadastrados</div><div class="sal-sum-val" id="sal-count">—</div></div>
+    <div class="sal-sum-item gold"><div class="sal-sum-label">Média Salário</div><div class="sal-sum-val" id="sal-media">—</div></div>
+  </div>
+
+  <!-- Grid cards -->
+  <div class="sal-grid" id="sal-grid">
+    <div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--text-muted)">Carregando...</div>
   </div>
 </div>
 

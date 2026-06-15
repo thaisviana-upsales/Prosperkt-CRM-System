@@ -231,6 +231,31 @@ async function painel(req, res) {
   }
 }
 
+// GET /api/comissoes/salarios  — Lista todos os vendedores com salário fixo cadastrado
+async function listarSalarios(req, res) {
+  if (!['SUPER_ADMIN','GESTOR'].includes(req.usuario.role))
+    return res.status(403).json({ sucesso:false, erro:'Acesso negado.' });
+  const { isSupa, sb, sqlite: db } = getProvider();
+  try {
+    if (isSupa) {
+      const { data, error } = await sb
+        .from('usuarios')
+        .select('id, nome, email, role, ativo, salario_fixo')
+        .eq('ativo', 1)
+        .order('nome');
+      if (error) throw error;
+      return res.json({ sucesso:true, dados: data || [] });
+    }
+    const rows = db.prepare(
+      'SELECT id, nome, email, role, ativo, salario_fixo FROM usuarios WHERE ativo=1 ORDER BY nome'
+    ).all();
+    return res.json({ sucesso:true, dados: rows });
+  } catch(e) {
+    console.error('[comissoes.listarSalarios]', e.message);
+    return res.status(500).json({ sucesso:false, erro:e.message });
+  }
+}
+
 // PATCH /api/comissoes/salario/:id  — Atualiza salário fixo do vendedor
 async function atualizarSalario(req, res) {
   const { isSupa, sb, sqlite: db } = getProvider();
@@ -543,4 +568,4 @@ function calcular(req, res) {
   return res.json({ sucesso:true, dados:resultado, periodo:{ de, ate, mes:anoMes } });
 }
 
-module.exports = { painel, atualizarStatus, atualizarSalario, listarRegras, criarRegra, atualizarRegra, deletarRegra, calcular };
+module.exports = { painel, atualizarStatus, listarSalarios, atualizarSalario, listarRegras, criarRegra, atualizarRegra, deletarRegra, calcular };

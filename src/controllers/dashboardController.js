@@ -23,6 +23,12 @@ function calcPeriodo(dataTipo, dataPeriodo, dataInicio, dataFim) {
   } else if (dataPeriodo === '7d') {
     const d = new Date(agora); d.setDate(d.getDate()-6);
     ini = iso(d); fim = iso(agora);
+  } else if (dataPeriodo === 'essa_semana') {
+    // Segunda-feira até hoje (semana corrente)
+    const dow = agora.getDay(); // 0=dom,1=seg...
+    const diffSeg = dow === 0 ? 6 : dow - 1;
+    const seg = new Date(agora); seg.setDate(seg.getDate() - diffSeg);
+    ini = iso(seg); fim = iso(agora);
   } else if (dataPeriodo === '30d') {
     const d = new Date(agora); d.setDate(d.getDate()-29);
     ini = iso(d); fim = iso(agora);
@@ -230,32 +236,62 @@ async function resumo(req, res) {
       });
 
       // ── 5. Ranking vendedores ─────────────────────────────────────────────────
-      // Carrega SOMENTE usuários ativos — exclui removidos/inativos (ThaisTeste, Maria Gestora etc)
+      // Carrega SOMENTE usuários ativos
       const { data: usuariosAtivos } = await sb.from('usuarios')
         .select('id,nome,role')
         .eq('ativo', true);
       const usuariosAtivosMap = Object.fromEntries((usuariosAtivos||[]).map(u => [u.id, u]));
       const idsAtivos = new Set(Object.keys(usuariosAtivosMap));
 
+      // Para conversão correta: busca TODOS os leads do período sem filtro de status
+      // (leads filtrados por data podem ser apenas os ganhos quando data_tipo=fechamento)
+      // Precisamos do total de leads por vendedor para calcular taxa de conversão real
+      let todosLeadsRankingBase = leads;
+      const temFiltroData = periodo?.ini || periodo?.fim;
+      if (temFiltroData && data_tipo === 'fechamento') {
+        // Busca todos os leads (sem filtro de data) para contar o total por vendedor
+        let qTodos = sb.from('leads').select('id,responsavel_id,status,etapa_id,ganho_em,perdido_em');
+        if (funil_id)       qTodos = qTodos.eq('funil_id', funil_id);
+        if (responsavel_id) qTodos = qTodos.eq('responsavel_id', responsavel_id);
+        if (req.usuario.role === 'VENDEDOR') qTodos = qTodos.eq('responsavel_id', req.usuario.id);
+        qTodos = qTodos.is('deleted_at', null);
+        const { data: todosLeads } = await qTodos;
+        todosLeadsRankingBase = todosLeads || leads;
+      }
+
+      // Mapa: total de leads por vendedor (para denominador de conversão)
+      const totalLeadsMap = {};
+      todosLeadsRankingBase.forEach(l => {
+        if (!l.responsavel_id || !idsAtivos.has(l.responsavel_id)) return;
+        totalLeadsMap[l.responsavel_id] = (totalLeadsMap[l.responsavel_id] || 0) + 1;
+      });
+
+      // Dados de ganho/faturamento vêm dos leads já filtrados pelo período
       const vendedorMap = {};
       leads.forEach(l => {
         if (!l.responsavel_id) return;
-        if (!idsAtivos.has(l.responsavel_id)) return; // ignora usuários inativos
+        if (!idsAtivos.has(l.responsavel_id)) return;
         if (!vendedorMap[l.responsavel_id]) vendedorMap[l.responsavel_id] = { id:l.responsavel_id, leads:0, ganhos:0, faturamento:0 };
+        // 'leads' aqui = leads no período filtrado (para KPI de leads no período)
         vendedorMap[l.responsavel_id].leads++;
         if (isGanhoLead(l, etapaMap)) {
           vendedorMap[l.responsavel_id].ganhos++;
           vendedorMap[l.responsavel_id].faturamento += valorVenda(l);
         }
       });
+
       const ranking = Object.values(vendedorMap)
         .sort((a,b) => b.faturamento - a.faturamento)
         .slice(0, 10)
-        .map(r => ({
-          ...r,
-          nome: usuariosAtivosMap[r.id]?.nome || '—',
-          conversao: r.leads > 0 ? ((r.ganhos/r.leads)*100).toFixed(1) : '0.0',
-        }));
+        .map(r => {
+          // Usa total real de leads para conversão
+          const totalLeads = totalLeadsMap[r.id] || r.leads;
+          return {
+            ...r,
+            nome: usuariosAtivosMap[r.id]?.nome || '—',
+            conversao: totalLeads > 0 ? ((r.ganhos/totalLeads)*100).toFixed(1) : '0.0',
+          };
+        });
 
       // ── 6. Por funil ─────────────────────────────────────────────────────────
       const porFunilMap = {};
@@ -358,11 +394,43 @@ async function resumo(req, res) {
       return { ...e, quantidade:countRow.c, taxa_entrada };
     });
 
-    const ranking = db.prepare(`SELECT u.id,u.nome,COUNT(*) as leads,
-      SUM(CASE WHEN ${ganhoExpr} THEN 1 ELSE 0 END) as ganhos,
-      SUM(CASE WHEN ${ganhoExpr} THEN ${valorExpr} ELSE 0 END) as faturamento
-      ${base}${baseFilter} GROUP BY u.id,u.nome ORDER BY faturamento DESC LIMIT 10`
-    ).all(...params).map(r => ({...r, conversao:r.leads>0?((r.ganhos/r.leads)*100).toFixed(1):'0.0'}));
+    // Ranking: quando filtro é por fechamento, precisamos do total de leads (sem filtro de data)
+    // para calcular taxa de conversão corretamente
+    let rankingRows;
+    if (data_tipo === 'fechamento' && (periodo?.ini || periodo?.fim)) {
+      // Busca faturamento/ganhos no período filtrado
+      rankingRows = db.prepare(`SELECT u.id,u.nome,
+        SUM(CASE WHEN ${ganhoExpr} THEN 1 ELSE 0 END) as ganhos,
+        SUM(CASE WHEN ${ganhoExpr} THEN ${valorExpr} ELSE 0 END) as faturamento
+        ${base}${baseFilter} GROUP BY u.id,u.nome ORDER BY faturamento DESC LIMIT 10`
+      ).all(...params);
+
+      // Busca total real de leads por vendedor (sem filtro de data)
+      let baseFilterSemData = '';
+      const paramsSemData = [];
+      if (funil_id)       { baseFilterSemData += ' AND p.funil_id=?';       paramsSemData.push(funil_id); }
+      if (responsavel_id) { baseFilterSemData += ' AND l.responsavel_id=?'; paramsSemData.push(responsavel_id); }
+      if (req.usuario.role === 'VENDEDOR') { baseFilterSemData += ' AND l.responsavel_id=?'; paramsSemData.push(req.usuario.id); }
+      const totalLeadsPorVend = db.prepare(
+        `SELECT l.responsavel_id, COUNT(*) as total ${base}${baseFilterSemData} GROUP BY l.responsavel_id`
+      ).all(...paramsSemData);
+      const totalLeadsMap = Object.fromEntries(totalLeadsPorVend.map(r => [r.responsavel_id, r.total]));
+
+      rankingRows = rankingRows.map(r => ({
+        ...r,
+        leads: totalLeadsMap[r.id] || r.ganhos,
+        conversao: (totalLeadsMap[r.id] || 0) > 0
+          ? ((r.ganhos / totalLeadsMap[r.id]) * 100).toFixed(1)
+          : '0.0',
+      }));
+    } else {
+      rankingRows = db.prepare(`SELECT u.id,u.nome,COUNT(*) as leads,
+        SUM(CASE WHEN ${ganhoExpr} THEN 1 ELSE 0 END) as ganhos,
+        SUM(CASE WHEN ${ganhoExpr} THEN ${valorExpr} ELSE 0 END) as faturamento
+        ${base}${baseFilter} GROUP BY u.id,u.nome ORDER BY faturamento DESC LIMIT 10`
+      ).all(...params).map(r => ({...r, conversao:r.leads>0?((r.ganhos/r.leads)*100).toFixed(1):'0.0'}));
+    }
+    const ranking = rankingRows;
 
     const por_funil = db.prepare(`SELECT f.id,f.nome,f.cor,COUNT(*) as leads,
       SUM(CASE WHEN ${ganhoExpr} THEN 1 ELSE 0 END) as ganhos,
