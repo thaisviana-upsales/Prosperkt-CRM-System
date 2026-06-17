@@ -444,11 +444,11 @@ function renderSalarios() {
 }
 
 window.salModoEditar = function salModoEditar(uid) {
-  document.getElementById(`sal-val-${uid}`).style.display   = 'none';
-  document.getElementById(`sal-inp-${uid}`).style.display   = '';
-  document.getElementById(`sal-edit-${uid}`).style.display  = 'none';
-  document.getElementById(`sal-save-${uid}`).style.display  = '';
-  document.getElementById(`sal-cancel-${uid}`).style.display = '';
+  document.getElementById(`sal-val-${uid}`).style.display    = 'none';
+  document.getElementById(`sal-inp-${uid}`).style.display    = 'block';   // sobrepõe CSS display:none
+  document.getElementById(`sal-edit-${uid}`).style.display   = 'none';
+  document.getElementById(`sal-save-${uid}`).style.display   = 'block';   // sobrepõe CSS display:none
+  document.getElementById(`sal-cancel-${uid}`).style.display = 'block';   // sobrepõe CSS display:none
   const inp = document.getElementById(`sal-inp-${uid}`);
   inp.focus(); inp.select();
   inp.addEventListener('keydown', e => {
@@ -458,10 +458,10 @@ window.salModoEditar = function salModoEditar(uid) {
 };
 
 window.salCancelar = function salCancelar(uid, valorOriginal) {
-  document.getElementById(`sal-val-${uid}`).style.display   = '';
-  document.getElementById(`sal-inp-${uid}`).style.display   = 'none';
-  document.getElementById(`sal-edit-${uid}`).style.display  = '';
-  document.getElementById(`sal-save-${uid}`).style.display  = 'none';
+  document.getElementById(`sal-val-${uid}`).style.display    = 'block';  // restaura valor
+  document.getElementById(`sal-inp-${uid}`).style.display    = 'none';   // esconde input
+  document.getElementById(`sal-edit-${uid}`).style.display   = 'block';  // restaura botão editar
+  document.getElementById(`sal-save-${uid}`).style.display   = 'none';
   document.getElementById(`sal-cancel-${uid}`).style.display = 'none';
   document.getElementById(`sal-inp-${uid}`).value = valorOriginal;
 };
