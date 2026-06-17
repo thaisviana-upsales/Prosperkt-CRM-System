@@ -201,7 +201,7 @@ function renderPainel(d) {
 }
 
 // ── Edição inline de salário ───────────────────────────────────────────────────
-function iniciarEdicaoSalario(vendId, valorAtual) {
+window.iniciarEdicaoSalario = function iniciarEdicaoSalario(vendId, valorAtual) {
   const display = document.getElementById(`salary-display-${vendId}`);
   if (!display) return;
 
@@ -230,7 +230,8 @@ function iniciarEdicaoSalario(vendId, valorAtual) {
 
   input.addEventListener('keydown', e => { if (e.key === 'Enter') salvar(); if (e.key === 'Escape') input.replaceWith(display); });
   input.addEventListener('blur', salvar);
-}
+};
+
 
 
 
@@ -442,7 +443,7 @@ function renderSalarios() {
   }).join('');
 }
 
-function salModoEditar(uid) {
+window.salModoEditar = function salModoEditar(uid) {
   document.getElementById(`sal-val-${uid}`).style.display   = 'none';
   document.getElementById(`sal-inp-${uid}`).style.display   = '';
   document.getElementById(`sal-edit-${uid}`).style.display  = 'none';
@@ -454,18 +455,18 @@ function salModoEditar(uid) {
     if (e.key === 'Enter') salSalvar(uid);
     if (e.key === 'Escape') salCancelar(uid, parseFloat(inp.defaultValue) || 0);
   }, { once: false });
-}
+};
 
-function salCancelar(uid, valorOriginal) {
+window.salCancelar = function salCancelar(uid, valorOriginal) {
   document.getElementById(`sal-val-${uid}`).style.display   = '';
   document.getElementById(`sal-inp-${uid}`).style.display   = 'none';
   document.getElementById(`sal-edit-${uid}`).style.display  = '';
   document.getElementById(`sal-save-${uid}`).style.display  = 'none';
   document.getElementById(`sal-cancel-${uid}`).style.display = 'none';
   document.getElementById(`sal-inp-${uid}`).value = valorOriginal;
-}
+};
 
-async function salSalvar(uid) {
+window.salSalvar = async function salSalvar(uid) {
   const inp = document.getElementById(`sal-inp-${uid}`);
   const novoVal = parseFloat(inp.value) || 0;
   const btn = document.getElementById(`sal-save-${uid}`);
@@ -482,7 +483,7 @@ async function salSalvar(uid) {
     Toast.show(r?.data?.erro || 'Erro ao salvar salário.', 'error');
     salCancelar(uid, novoVal);
   }
-}
+};
 
 function bindEvents() {
   document.querySelectorAll('.tab-btn').forEach(btn => {

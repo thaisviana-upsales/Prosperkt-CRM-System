@@ -466,9 +466,12 @@ async function mover(req, res) {
       const { data, error } = await sb.from('leads').update(upd).eq('id', id).select().single();
       if (error) throw error;
 
-      // Comissão automática ao ganhar
-      if (isGanho && lead.responsavel_id && (lead.valor||0) > 0) {
-        calcularComissaoSupabase(sb, lead, req).catch(e => console.error('[COMISSAO_AUTO]', e.message));
+      // Comissão automática ao ganhar — usa valor_venda (campo da venda) ou valor como fallback
+      const valorVendaGanho = Number(req.body.valor_venda ?? lead.valor_venda ?? lead.valor ?? 0);
+      if (isGanho && lead.responsavel_id && valorVendaGanho > 0) {
+        // Passa lead enriquecido com valor_venda atualizado
+        const leadParaComissao = { ...lead, valor_venda: valorVendaGanho, funil_id: funilIdUpd || lead.funil_id };
+        calcularComissaoSupabase(sb, leadParaComissao, req).catch(e => console.error('[COMISSAO_AUTO]', e.message));
       }
 
       req.log({ acao:'MOVER', entidade:'leads', entidade_id:id, antes:{ etapa_id:lead.etapa_id, status:lead.status }, depois:{ etapa_id, status:novoStatus } });
@@ -497,7 +500,8 @@ async function mover(req, res) {
 
     req.log({ acao:'MOVER', entidade:'leads', entidade_id:id, antes:{ etapa_id:lead.etapa_id }, depois:{ etapa_id, status:novoStatus } });
 
-    if (etapa.is_ganho && lead.responsavel_id && (lead.valor||0) > 0) {
+    const valorVendaGanhoSql = Number(lead.valor_venda ?? lead.valor ?? 0);
+    if (etapa.is_ganho && lead.responsavel_id && valorVendaGanhoSql > 0) {
       try { calcularComissaoSQLite(sqlite, lead, id, pipeline_id, agora, req); } catch(e) { console.error('[COMISSAO_AUTO]', e.message); }
     }
     return res.json({ sucesso:true, dados: sqlite.prepare('SELECT * FROM leads WHERE id=?').get(id) });
@@ -600,9 +604,13 @@ async function calcularComissaoSupabase(sb, lead, req) {
   const mesRef = new Date().toISOString().slice(0,7);
   const { data: regras } = await sb.from('comissao_regras').select('*').eq('ativo', 1).or(`usuario_id.is.null,usuario_id.eq.${lead.responsavel_id}`).order('valor_min', { ascending:true });
   if (!regras?.length) return;
-  let regra = regras[0];
-  for (const r of regras) { if ((lead.valor||0) >= (r.valor_min||0)) regra = r; }
-  const valorVenda = lead.valor || 0;
+  const valorVenda = Number(lead.valor_venda ?? lead.valor ?? 0);
+  if (!valorVenda) return;
+  // Filtra por funil se disponível, depois seleciona a faixa correta
+  const regrasVend = regras.filter(r => (!r.funil_id || r.funil_id === lead.funil_id));
+  const faixas = regrasVend.length ? regrasVend : regras;
+  let regra = faixas[0];
+  for (const r of faixas) { if (valorVenda >= (r.valor_min||0)) regra = r; }
   const comissaoBase = regra.tipo_calculo === 'PERCENTUAL' ? valorVenda * (regra.percentual||0)/100 : (regra.valor_fixo||0);
   const comId = crypto.randomBytes(16).toString('hex');
   await sb.from('comissoes').insert({ id:comId, usuario_id:lead.responsavel_id, lead_id:lead.id, valor_venda:valorVenda, percentual:valorVenda>0?(comissaoBase/valorVenda)*100:0, valor_comissao:comissaoBase, status:'PENDENTE', periodo_ref:mesRef });
@@ -610,7 +618,8 @@ async function calcularComissaoSupabase(sb, lead, req) {
 
 // ── Comissão automática SQLite ────────────────────────────────────────────────
 function calcularComissaoSQLite(db, lead, leadId, pipeline_id, agora, req) {
-  const valorVenda = lead.valor || 0;
+  const valorVenda = Number(lead.valor_venda ?? lead.valor ?? 0);
+  if (!valorVenda) return;
   const mesRef = agora.slice(0,7);
   const pipelineInfo = db.prepare(`SELECT p.funil_id FROM pipelines p WHERE p.id=?`).get(pipeline_id||lead.pipeline_id);
   const regras = db.prepare(`SELECT * FROM comissao_regras WHERE ativo=1 AND (usuario_id IS NULL OR usuario_id=?) AND (funil_id IS NULL OR funil_id=?) ORDER BY valor_min ASC`).all(lead.responsavel_id, pipelineInfo?.funil_id||'');
