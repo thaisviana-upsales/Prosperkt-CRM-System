@@ -107,14 +107,14 @@
 .sal-field{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
 .sal-field-label{font-size:.65rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
 .sal-field-value{font-size:1.2rem;font-weight:800;color:var(--green)}
-.sal-field-input{display:none;width:100%;background:transparent;border:none;color:var(--green);font-family:inherit;font-size:1.2rem;font-weight:800;outline:none;padding:0}
 .sal-actions{display:flex;gap:6px;margin-top:12px}
 .sal-btn-edit{flex:1;padding:8px;border:1px solid var(--border);background:none;border-radius:8px;color:var(--text-muted);font-family:inherit;font-size:.8rem;font-weight:600;cursor:pointer;transition:all .15s}
 .sal-btn-edit:hover{border-color:var(--green);color:var(--green);background:rgba(108,255,78,.06)}
-.sal-btn-save{flex:1;padding:8px;border:none;background:var(--grad-brand);border-radius:8px;color:#0D0D0D;font-family:inherit;font-size:.8rem;font-weight:700;cursor:pointer;display:none;transition:opacity .15s}
-.sal-btn-save:hover{opacity:.85}
-.sal-btn-cancel{padding:8px 12px;border:1px solid var(--border);background:none;border-radius:8px;color:var(--text-muted);font-family:inherit;font-size:.8rem;cursor:pointer;display:none;transition:all .15s}
-.sal-btn-cancel:hover{border-color:var(--pink);color:var(--pink)}
+/* Modal salário */
+.sal-modal-ov{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;z-index:950;padding:16px;opacity:0;pointer-events:none;transition:opacity .2s}
+.sal-modal-ov.open{opacity:1;pointer-events:all}
+.sal-modal-box{background:var(--surface);border:1px solid var(--border-hover);border-radius:20px;padding:28px;width:100%;max-width:420px;box-shadow:var(--shadow-lg);transform:translateY(16px);transition:transform .3s cubic-bezier(.16,1,.3,1)}
+.sal-modal-ov.open .sal-modal-box{transform:translateY(0)}
 .sal-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px}
 .sal-sum-item{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;text-align:center;position:relative;overflow:hidden}
 .sal-sum-item::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px}
@@ -238,6 +238,32 @@
 </div>
 
 </main>
+</div>
+
+<!-- Modal Editar Salário -->
+<div class="sal-modal-ov" id="sal-modal-ov">
+  <div class="sal-modal-box">
+    <div class="mh" style="margin-bottom:20px">
+      <div>
+        <h3>Editar Salário Fixo</h3>
+        <p id="sal-modal-nome" style="font-size:.85rem;color:var(--text-muted);margin-top:3px"></p>
+      </div>
+      <button class="xl" id="sal-modal-close"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <input type="hidden" id="sal-modal-uid">
+    <div class="input-group">
+      <label class="input-label">Salário Fixo Mensal (R$)</label>
+      <input id="sal-modal-valor" class="input" type="number" min="0" step="0.01" placeholder="Ex: 2500,00">
+      <p style="font-size:.75rem;color:var(--text-muted);margin-top:6px">Cadastre uma vez — vale automaticamente para todos os meses.</p>
+    </div>
+    <div id="sal-modal-alert" class="alert" style="display:none;margin-top:14px"></div>
+    <div class="mf" style="margin-top:20px">
+      <button class="btn btn-secondary" id="sal-modal-cancelar">Cancelar</button>
+      <button class="btn btn-primary" id="sal-modal-salvar">
+        <span id="sal-modal-salvar-txt">Salvar Salário</span>
+      </button>
+    </div>
+  </div>
 </div>
 
 <!-- Modal criar/editar regra -->

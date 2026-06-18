@@ -394,6 +394,7 @@ async function carregarSalarios() {
   const r = await Auth.api('GET', '/comissoes/salarios');
   if (!r?.ok) { Toast.show('Erro ao carregar salários.', 'error'); return; }
   _salarios = r.data.dados || [];
+  console.log('SALARIO_LIST_SUCCESS count=' + _salarios.length);
   renderSalarios();
 }
 
@@ -408,12 +409,12 @@ function renderSalarios() {
   const total = _salarios.reduce((s, u) => s + (u.salario_fixo || 0), 0);
   const comSalario = _salarios.filter(u => (u.salario_fixo || 0) > 0);
   const media = comSalario.length ? total / comSalario.length : 0;
-  document.getElementById('sal-total').textContent  = fmtR(total);
-  document.getElementById('sal-count').textContent  = comSalario.length + ' de ' + _salarios.length;
-  document.getElementById('sal-media').textContent  = fmtR(media);
+  document.getElementById('sal-total').textContent = fmtR(total);
+  document.getElementById('sal-count').textContent = comSalario.length + ' de ' + _salarios.length;
+  document.getElementById('sal-media').textContent = fmtR(media);
 
   const ROLE_LABEL = { SUPER_ADMIN: 'Super Admin', GESTOR: 'Gestor', VENDEDOR: 'Vendedor' };
-  const canEdit = _usuario.role !== 'VENDEDOR';
+  const canEdit = _usuario && _usuario.role !== 'VENDEDOR';
 
   grid.innerHTML = _salarios.map(u => {
     const initials = (u.nome || '?').slice(0, 2).toUpperCase();
@@ -428,62 +429,93 @@ function renderSalarios() {
         </div>
         <span class="sal-role-badge ${u.role}">${ROLE_LABEL[u.role] || u.role}</span>
       </div>
-      <div class="sal-field" id="sal-field-${u.id}">
+      <div class="sal-field">
         <div class="sal-field-label">Salário Fixo Mensal</div>
         <div class="sal-field-value" id="sal-val-${u.id}">${fmtR(sal)}</div>
-        <input class="sal-field-input" id="sal-inp-${u.id}" type="number" min="0" step="0.01" value="${sal}" placeholder="0,00">
       </div>
       ${canEdit ? `
       <div class="sal-actions">
-        <button class="sal-btn-edit" id="sal-edit-${u.id}" onclick="salModoEditar('${u.id}')">✎ Editar Salário</button>
-        <button class="sal-btn-save" id="sal-save-${u.id}" onclick="salSalvar('${u.id}')">✓ Salvar</button>
-        <button class="sal-btn-cancel" id="sal-cancel-${u.id}" onclick="salCancelar('${u.id}', ${sal})">Cancelar</button>
+        <button class="sal-btn-edit" data-uid="${u.id}" data-nome="${(u.nome||'').replace(/"/g,'&quot;')}" data-sal="${sal}">✎ Editar Salário</button>
       </div>` : ''}
     </div>`;
   }).join('');
+
+  // Bind via event delegation
+  grid.querySelectorAll('.sal-btn-edit').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const uid  = btn.dataset.uid;
+      const nome = btn.dataset.nome;
+      const sal  = parseFloat(btn.dataset.sal) || 0;
+      abrirModalSalario(uid, nome, sal);
+    });
+  });
 }
 
-window.salModoEditar = function salModoEditar(uid) {
-  document.getElementById(`sal-val-${uid}`).style.display    = 'none';
-  document.getElementById(`sal-inp-${uid}`).style.display    = 'block';   // sobrepõe CSS display:none
-  document.getElementById(`sal-edit-${uid}`).style.display   = 'none';
-  document.getElementById(`sal-save-${uid}`).style.display   = 'block';   // sobrepõe CSS display:none
-  document.getElementById(`sal-cancel-${uid}`).style.display = 'block';   // sobrepõe CSS display:none
-  const inp = document.getElementById(`sal-inp-${uid}`);
-  inp.focus(); inp.select();
-  inp.addEventListener('keydown', e => {
-    if (e.key === 'Enter') salSalvar(uid);
-    if (e.key === 'Escape') salCancelar(uid, parseFloat(inp.defaultValue) || 0);
-  }, { once: false });
-};
+// ── Modal de edição de salário ────────────────────────────────────────────────
+function abrirModalSalario(uid, nome, valorAtual) {
+  document.getElementById('sal-modal-uid').value   = uid;
+  document.getElementById('sal-modal-nome').textContent = nome;
+  const inp = document.getElementById('sal-modal-valor');
+  inp.value = valorAtual || '';
+  document.getElementById('sal-modal-alert').style.display = 'none';
+  document.getElementById('sal-modal-salvar-txt').textContent = 'Salvar Salário';
+  document.getElementById('sal-modal-salvar').disabled = false;
+  document.getElementById('sal-modal-ov').classList.add('open');
+  setTimeout(() => inp.focus(), 100);
+}
 
-window.salCancelar = function salCancelar(uid, valorOriginal) {
-  document.getElementById(`sal-val-${uid}`).style.display    = 'block';  // restaura valor
-  document.getElementById(`sal-inp-${uid}`).style.display    = 'none';   // esconde input
-  document.getElementById(`sal-edit-${uid}`).style.display   = 'block';  // restaura botão editar
-  document.getElementById(`sal-save-${uid}`).style.display   = 'none';
-  document.getElementById(`sal-cancel-${uid}`).style.display = 'none';
-  document.getElementById(`sal-inp-${uid}`).value = valorOriginal;
-};
+function fecharModalSalario() {
+  document.getElementById('sal-modal-ov').classList.remove('open');
+}
 
-window.salSalvar = async function salSalvar(uid) {
-  const inp = document.getElementById(`sal-inp-${uid}`);
-  const novoVal = parseFloat(inp.value) || 0;
-  const btn = document.getElementById(`sal-save-${uid}`);
-  btn.textContent = 'Salvando...'; btn.disabled = true;
-  const r = await Auth.api('PATCH', `/comissoes/salario/${uid}`, { salario_fixo: novoVal });
-  btn.textContent = '✓ Salvar'; btn.disabled = false;
+async function salvarModalSalario() {
+  const uid    = document.getElementById('sal-modal-uid').value;
+  const valor  = parseFloat(document.getElementById('sal-modal-valor').value);
+  const alertEl = document.getElementById('sal-modal-alert');
+  alertEl.style.display = 'none';
+
+  if (isNaN(valor) || valor < 0) {
+    alertEl.className = 'alert alert-error';
+    alertEl.textContent = 'Informe um valor válido (zero ou maior).';
+    alertEl.style.display = '';
+    return;
+  }
+
+  const btnTxt = document.getElementById('sal-modal-salvar-txt');
+  const btn    = document.getElementById('sal-modal-salvar');
+  btnTxt.textContent = 'Salvando...';
+  btn.disabled = true;
+
+  const r = await Auth.api('PATCH', `/comissoes/salario/${uid}`, { salario_fixo: valor });
+
+  btnTxt.textContent = 'Salvar Salário';
+  btn.disabled = false;
+
   if (r?.ok) {
     Toast.show('Salário atualizado com sucesso!', 'success');
-    // Atualiza objeto local e re-renderiza
     const u = _salarios.find(x => x.id === uid);
-    if (u) u.salario_fixo = novoVal;
+    if (u) u.salario_fixo = valor;
+    fecharModalSalario();
     renderSalarios();
   } else {
-    Toast.show(r?.data?.erro || 'Erro ao salvar salário.', 'error');
-    salCancelar(uid, novoVal);
+    alertEl.className = 'alert alert-error';
+    alertEl.textContent = r?.data?.erro || 'Erro ao salvar. Tente novamente.';
+    alertEl.style.display = '';
   }
-};
+}
+
+function bindSalarioModal() {
+  document.getElementById('sal-modal-close').addEventListener('click', fecharModalSalario);
+  document.getElementById('sal-modal-cancelar').addEventListener('click', fecharModalSalario);
+  document.getElementById('sal-modal-salvar').addEventListener('click', salvarModalSalario);
+  document.getElementById('sal-modal-ov').addEventListener('click', e => {
+    if (e.target === document.getElementById('sal-modal-ov')) fecharModalSalario();
+  });
+  document.getElementById('sal-modal-valor').addEventListener('keydown', e => {
+    if (e.key === 'Enter') salvarModalSalario();
+    if (e.key === 'Escape') fecharModalSalario();
+  });
+}
 
 function bindEvents() {
   document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -492,7 +524,6 @@ function bindEvents() {
       document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
       btn.classList.add('active');
       document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-      // Carrega salários ao abrir a aba
       if (btn.dataset.tab === 'salario' && _usuario.role !== 'VENDEDOR') carregarSalarios();
     });
   });
@@ -516,7 +547,8 @@ function bindEvents() {
     const tabBtn = document.getElementById('tab-btn-salario');
     if (tabBtn) tabBtn.style.display = 'none';
   }
+
+  bindSalarioModal();
 }
 
 init();
-
