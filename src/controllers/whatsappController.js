@@ -424,6 +424,29 @@ async function enviarMensagem(req, res) {
 
       const msg = { ...nova, vendedor_nome: req.usuario.nome };
       console.log('SUPA_INSERT_OK', { msgId, status: msg.status, evoMsgId });
+
+      // ── Solução 3: Armazena mapeamento LID → telefone ───────────────────────
+      // A Evolution v1.8.6 com Multi-Device retorna @lid no key.remoteJid.
+      // Salvamos em dados_extras para que o webhook resolva respostas futuras.
+      const _evoRemoteJid = evoRes?.dados?.key?.remoteJid || '';
+      if (evoOk && _evoRemoteJid.endsWith('@lid')) {
+        const _lid = _evoRemoteJid.split('@')[0];
+        console.log('LID_DETECTADO_NO_ENVIO:', { lid: _lid, conversaId: id, telefone: telNormalizado });
+        sb.from('conversas_whatsapp').select('dados_extras').eq('id', id).single()
+          .then(({ data: _cv }) => {
+            const _ex = (() => { try { return JSON.parse(_cv?.dados_extras || '{}'); } catch { return {}; } })();
+            if (!_ex.lid || _ex.lid !== _lid) {
+              _ex.lid = _lid;
+              _ex.lid_telefone = telNormalizado;
+              return sb.from('conversas_whatsapp')
+                .update({ dados_extras: JSON.stringify(_ex), atualizado_em: new Date().toISOString() })
+                .eq('id', id)
+                .then(() => console.log('LID_MAPEADO_SUCESSO (Supabase):', { lid: _lid, conversaId: id }));
+            }
+          })
+          .catch(e => console.warn('LID_MAPEAMENTO_WARN (nao critico):', e.message));
+      }
+
       req.log({ acao: 'WHATSAPP_SEND', entidade: 'conversas_whatsapp', entidade_id: id, depois: { mensagem: mensagem?.slice(0, 100), tipo, evo_ok: evoOk, evoMsgId } });
       return res.status(201).json({ sucesso: true, dados: msg });
     }
@@ -443,6 +466,23 @@ async function enviarMensagem(req, res) {
     db.prepare(`UPDATE conversas_whatsapp SET ultima_msg_em = ?, atualizado_em = ?, status = 'ABERTA' WHERE id = ?`).run(agora, agora, id);
     if (conversa.lead_id)
       db.prepare(`UPDATE leads SET atualizado_em = ? WHERE id = ?`).run(agora, conversa.lead_id);
+
+    // ── Solução 3: Armazena mapeamento LID → telefone (SQLite) ──────────────
+    const _evoRemoteJidSql = evoRes?.dados?.key?.remoteJid || '';
+    if (evoOk && _evoRemoteJidSql.endsWith('@lid')) {
+      const _lidSql = _evoRemoteJidSql.split('@')[0];
+      try {
+        const _cvSql = db.prepare('SELECT dados_extras FROM conversas_whatsapp WHERE id=?').get(id);
+        const _exSql = (() => { try { return JSON.parse(_cvSql?.dados_extras || '{}'); } catch { return {}; } })();
+        if (!_exSql.lid || _exSql.lid !== _lidSql) {
+          _exSql.lid = _lidSql;
+          _exSql.lid_telefone = telNormalizado;
+          db.prepare('UPDATE conversas_whatsapp SET dados_extras=?, atualizado_em=? WHERE id=?')
+            .run(JSON.stringify(_exSql), new Date().toISOString(), id);
+          console.log('LID_MAPEADO_SUCESSO (SQLite):', { lid: _lidSql, conversaId: id });
+        }
+      } catch(e) { console.warn('LID_MAPEAMENTO_WARN SQLite (nao critico):', e.message); }
+    }
 
     req.log({ acao: 'WHATSAPP_SEND', entidade: 'conversas_whatsapp', entidade_id: id, depois: { mensagem: mensagem?.slice(0, 100), tipo, evo_ok: evoOk } });
     const msg = db.prepare(`SELECT m.*, u.nome AS vendedor_nome FROM mensagens_whatsapp m LEFT JOIN usuarios u ON m.vendedor_id = u.id WHERE m.id = ?`).get(msgId);
