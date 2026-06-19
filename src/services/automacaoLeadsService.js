@@ -78,147 +78,267 @@ async function registrarHistorico(sb, leadId, mensagem) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Helper: registra evento rico na tabela logs (timeline) + audit_logs
+// ─────────────────────────────────────────────────────────────────────────────
+async function registrarTimelineEvento({ sb, isSupa, sqlite, leadId, acao, titulo, descricao, antes, depois }) {
+  const id    = crypto.randomBytes(16).toString('hex');
+  const agora = new Date().toISOString();
+  console.log('TIMELINE_CREATE_START', { leadId, acao });
+  try {
+    if (isSupa && sb) {
+      await sb.from('logs').insert({
+        id, acao, entidade: 'leads', entidade_id: leadId,
+        antes: antes || null, depois: depois || null,
+        descricao, criado_em: agora, origem_acao: 'automacao',
+      }).catch(()=>{});
+      await sb.from('audit_logs').insert({
+        id: crypto.randomBytes(16).toString('hex'),
+        acao, entidade: 'leads', entidade_id: leadId,
+        descricao, criado_em: agora, origem: 'automacao',
+      }).catch(()=>{});
+      console.log('TIMELINE_CREATE_SUCCESS', { leadId, acao });
+    } else if (sqlite) {
+      try {
+        sqlite.prepare(`
+          INSERT INTO logs (id, usuario_id, usuario_nome, usuario_role, acao, entidade, entidade_id, dados_antes, dados_depois, ip_address, user_agent, criado_em)
+          VALUES (?,NULL,'Sistema','AUTOMACAO',?,?,?,?,?,NULL,NULL,?)
+        `).run(id, acao, 'leads', leadId,
+          antes ? JSON.stringify(antes) : null,
+          depois ? JSON.stringify(depois) : null,
+          agora
+        );
+        console.log('TIMELINE_CREATE_SUCCESS', { leadId, acao });
+      } catch(eSql) { console.warn('TIMELINE_CREATE_ERROR', { leadId, acao, err: eSql.message }); }
+    }
+  } catch(e) { console.error('TIMELINE_CREATE_ERROR', { leadId, acao, err: e.message }); }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Módulo 1: Automação de Leads Parados
 // ─────────────────────────────────────────────────────────────────────────────
 async function processarLeadsParados() {
-  const { sb, isSupa } = getProvider();
-  if (!isSupa) {
-    console.log('[AUTOMACAO_LEADS_PARADOS] Apenas disponível com Supabase — ignorando.');
-    return;
-  }
-
+  const { sb, isSupa, sqlite } = getProvider();
   const executadoEm = new Date().toISOString();
-  console.log('AUTOMACAO_LEADS_PARADOS_INICIO', { executadoEm });
+  console.log('AUTOMACAO_SEM_RESPOSTA_START', { executadoEm, provider: isSupa ? 'supabase' : 'sqlite' });
 
   try {
-    // 1. Carrega todas as etapas para resolução por nome
-    const { data: todasEtapas = [] } = await sb.from('etapas').select('id, nome, funil_id');
-
-    const resolverEtapa = (nomeAlvo) => {
-      const norm = normalizar(nomeAlvo);
-      return todasEtapas.find(e => normalizar(e.nome) === norm) || null;
-    };
-
-    // 2. Busca leads ativos com etapa_atualizada_em preenchida
-    const { data: leads = [], error: errLeads } = await sb
-      .from('leads')
-      .select('id, nome, etapa_id, funil_id, responsavel_id, tags, etapa_atualizada_em, status')
-      .eq('status', 'ativo')
-      .not('etapa_id', 'is', null)
-      .not('etapa_atualizada_em', 'is', null);
-
-    if (errLeads) throw errLeads;
-
-    const agora = Date.now();
-    let movimentados = 0;
-
-    for (const lead of leads) {
-      // Ignora etapas finais
-      const etapaAtual = todasEtapas.find(e => e.id === lead.etapa_id);
-      if (!etapaAtual) continue;
-      const nomeEtapaAtual = normalizar(etapaAtual.nome);
-      if (ETAPAS_FINAIS_EXCLUIR.some(ef => normalizar(ef) === nomeEtapaAtual)) continue;
-
-      // Calcula dias parado
-      const entradaEm = new Date(lead.etapa_atualizada_em).getTime();
-      const diasParado = (agora - entradaEm) / MS_DIA;
-
-      console.log('AUTOMACAO_LEAD_ANALISADO', {
-        leadId: lead.id,
-        nome: lead.nome,
-        etapaAtual: etapaAtual.nome,
-        dataEntradaEtapa: lead.etapa_atualizada_em,
-        diasParado: Math.floor(diasParado),
-      });
-
-      if (diasParado < DIAS_PARADO) continue;
-
-      // ── Regra 3: Reincidência → Perdido ──────────────────────────────────
-      const jaTagSemResposta = temTag(lead, TAG_SEM_RESPOSTA);
-      const jaTagEsfriou     = temTag(lead, TAG_ESFRIOU);
-      if (
-        (jaTagSemResposta || jaTagEsfriou) &&
-        (ETAPAS_DESQUALIFICAR.some(e => normalizar(e) === nomeEtapaAtual) ||
-         ETAPAS_FOLLOWUP.some(e => normalizar(e) === nomeEtapaAtual))
-      ) {
-        const etapaDestino = resolverEtapa('Perdido');
-        if (!etapaDestino) {
-          console.warn('AUTOMACAO_ETAPA_DESTINO_NAO_ENCONTRADA', { leadId: lead.id, etapaDestino: 'Perdido' });
-          continue;
-        }
-        const novasTags = adicionarTag(lead.tags, TAG_PERDIDO_INATIVO);
-        await sb.from('leads').update({
-          etapa_id: etapaDestino.id,
-          status: 'perdido',
-          tags: novasTags,
-          etapa_atualizada_em: new Date().toISOString(),
-          atualizado_em: new Date().toISOString(),
-        }).eq('id', lead.id);
-        const msg = `Lead movido automaticamente para Perdido após inatividade recorrente por mais de ${DIAS_PARADO} dias.`;
-        await registrarHistorico(sb, lead.id, msg);
-        console.log('AUTOMACAO_LEAD_MOVIMENTADO', {
-          leadId: lead.id, etapaOrigem: etapaAtual.nome, etapaDestino: 'Perdido',
-          tagAplicada: TAG_PERDIDO_INATIVO, vendedorResponsavel: lead.responsavel_id,
-        });
-        movimentados++;
-        continue;
-      }
-
-      // ── Regra 1: Contato Realizado → Desqualificado ───────────────────────
-      if (ETAPAS_DESQUALIFICAR.some(e => normalizar(e) === nomeEtapaAtual)) {
-        const etapaDestino = resolverEtapa('Desqualificado');
-        if (!etapaDestino) {
-          console.warn('AUTOMACAO_ETAPA_DESTINO_NAO_ENCONTRADA', { leadId: lead.id, etapaDestino: 'Desqualificado' });
-          continue;
-        }
-        const novasTags = adicionarTag(lead.tags, TAG_SEM_RESPOSTA);
-        await sb.from('leads').update({
-          etapa_id: etapaDestino.id,
-          status: 'perdido',
-          tags: novasTags,
-          etapa_atualizada_em: new Date().toISOString(),
-          atualizado_em: new Date().toISOString(),
-        }).eq('id', lead.id);
-        const msg = `Lead movido automaticamente para Desqualificado após ${DIAS_PARADO} dias parado em ${etapaAtual.nome}. Tag aplicada: ${TAG_SEM_RESPOSTA}.`;
-        await registrarHistorico(sb, lead.id, msg);
-        console.log('AUTOMACAO_LEAD_MOVIMENTADO', {
-          leadId: lead.id, etapaOrigem: etapaAtual.nome, etapaDestino: 'Desqualificado',
-          tagAplicada: TAG_SEM_RESPOSTA, vendedorResponsavel: lead.responsavel_id,
-        });
-        movimentados++;
-        continue;
-      }
-
-      // ── Regra 2: Tratativa / Orçamento / Amostra → Follow-up ─────────────
-      if (ETAPAS_FOLLOWUP.some(e => normalizar(e) === nomeEtapaAtual)) {
-        const etapaDestino = resolverEtapa('Follow-up');
-        if (!etapaDestino) {
-          console.warn('AUTOMACAO_ETAPA_DESTINO_NAO_ENCONTRADA', { leadId: lead.id, etapaDestino: 'Follow-up' });
-          continue;
-        }
-        const novasTags = adicionarTag(lead.tags, TAG_ESFRIOU);
-        await sb.from('leads').update({
-          etapa_id: etapaDestino.id,
-          status: 'ativo',
-          tags: novasTags,
-          etapa_atualizada_em: new Date().toISOString(),
-          atualizado_em: new Date().toISOString(),
-        }).eq('id', lead.id);
-        const msg = `Lead movido automaticamente para Follow-up após ${DIAS_PARADO} dias parado na etapa ${etapaAtual.nome}. Tag aplicada: ${TAG_ESFRIOU}.`;
-        await registrarHistorico(sb, lead.id, msg);
-        console.log('AUTOMACAO_LEAD_MOVIMENTADO', {
-          leadId: lead.id, etapaOrigem: etapaAtual.nome, etapaDestino: 'Follow-up',
-          tagAplicada: TAG_ESFRIOU, vendedorResponsavel: lead.responsavel_id,
-        });
-        movimentados++;
-      }
+    if (isSupa) {
+      await _processarParados_Supa(sb);
+    } else if (sqlite) {
+      _processarParados_SQLite(sqlite);
+    } else {
+      console.log('[AUTOMACAO_LEADS_PARADOS] Nenhum provider disponível.');
     }
-
-    console.log('AUTOMACAO_LEADS_PARADOS_FIM', { executadoEm, leadsAnalisados: leads.length, movimentados });
   } catch (error) {
-    console.error('AUTOMACAO_LEADS_PARADOS_ERRO', { error: error.message, stack: error.stack });
+    console.error('AUTOMACAO_SEM_RESPOSTA_ERROR', { error: error.message });
   }
 }
+
+// ── Supabase ──────────────────────────────────────────────────────────────────
+async function _processarParados_Supa(sb) {
+  const { data: todasEtapas = [] } = await sb.from('etapas').select('id, nome, pipeline_id');
+
+  const resolverEtapa = (nomeAlvo) => {
+    const norm = normalizar(nomeAlvo);
+    return todasEtapas.find(e => normalizar(e.nome) === norm) || null;
+  };
+
+  const { data: leads = [], error: errLeads } = await sb
+    .from('leads')
+    .select('id, nome, etapa_id, funil_id, responsavel_id, tags, etapa_atualizada_em, criado_em, status')
+    .in('status', ['ABERTO', 'ativo'])
+    .not('etapa_id', 'is', null);
+
+  if (errLeads) throw errLeads;
+
+  const agora = Date.now();
+  let movimentados = 0;
+
+  for (const lead of leads) {
+    const etapaAtual = todasEtapas.find(e => e.id === lead.etapa_id);
+    if (!etapaAtual) continue;
+    const nomeEtapaAtual = normalizar(etapaAtual.nome);
+
+    // Ignora etapas finais
+    if (ETAPAS_FINAIS_EXCLUIR.some(ef => normalizar(ef) === nomeEtapaAtual)) continue;
+
+    // Usa etapa_atualizada_em com fallback para criado_em
+    const dataRef = lead.etapa_atualizada_em || lead.criado_em;
+    const diasParado = (agora - new Date(dataRef).getTime()) / MS_DIA;
+
+    console.log('AUTOMACAO_SEM_RESPOSTA_LEAD_ANALISADO', {
+      leadId: lead.id, etapaAtual: etapaAtual.nome,
+      diasParado: Math.round(diasParado * 10) / 10,
+      dataRef,
+    });
+
+    if (diasParado < DIAS_PARADO) {
+      console.log('AUTOMACAO_SEM_RESPOSTA_SKIP', { leadId: lead.id, motivo: `${Math.round(diasParado)}d < ${DIAS_PARADO}d` });
+      continue;
+    }
+
+    // ── Reincidência → Perdidos ───────────────────────────────────────────────
+    const jaTagSemResposta = temTag(lead, TAG_SEM_RESPOSTA);
+    const jaTagEsfriou     = temTag(lead, TAG_ESFRIOU);
+    if (
+      (jaTagSemResposta || jaTagEsfriou) &&
+      (ETAPAS_DESQUALIFICAR.some(e => normalizar(e) === nomeEtapaAtual) ||
+       ETAPAS_FOLLOWUP.some(e => normalizar(e) === nomeEtapaAtual))
+    ) {
+      const etapaDestino = resolverEtapa('Perdidos') || resolverEtapa('Perdido');
+      if (!etapaDestino) { console.warn('AUTOMACAO_SEM_RESPOSTA_SKIP', { leadId: lead.id, motivo: 'Etapa Perdidos não encontrada' }); continue; }
+      const novasTags = adicionarTag(lead.tags, TAG_PERDIDO_INATIVO);
+      const now = new Date().toISOString();
+      await sb.from('leads').update({
+        etapa_id: etapaDestino.id, status: 'PERDIDO', motivo_perda: 'Inatividade recorrente',
+        perdido_motivo: 'Inatividade recorrente', perdido_em: now,
+        tags: novasTags, etapa_atualizada_em: now, atualizado_em: now,
+      }).eq('id', lead.id);
+      await registrarTimelineEvento({ sb, isSupa: true, sqlite: null, leadId: lead.id,
+        acao: 'LEAD_PERDIDO',
+        titulo: 'Lead marcado como perdido automaticamente',
+        descricao: `Lead permaneceu parado por mais de ${DIAS_PARADO} dias após já ter sido tagueado. Motivo: Inatividade recorrente.`,
+        antes: { etapa_nome: etapaAtual.nome },
+        depois: { etapa_nome: etapaDestino.nome, motivo_perda: 'Inatividade recorrente', origem_acao: 'automacao' },
+      });
+      console.log('AUTOMACAO_SEM_RESPOSTA_LEAD_MOVIDO', { leadId: lead.id, de: etapaAtual.nome, para: etapaDestino.nome });
+      movimentados++; continue;
+    }
+
+    // ── Contato Realizado → Lead Desqualificado ───────────────────────────────
+    if (ETAPAS_DESQUALIFICAR.some(e => normalizar(e) === nomeEtapaAtual)) {
+      const etapaDestino = resolverEtapa('Lead Desqualificado') || resolverEtapa('Desqualificado');
+      if (!etapaDestino) { console.warn('AUTOMACAO_SEM_RESPOSTA_SKIP', { leadId: lead.id, motivo: 'Etapa Lead Desqualificado não encontrada' }); continue; }
+      const novasTags = adicionarTag(lead.tags, TAG_SEM_RESPOSTA);
+      const now = new Date().toISOString();
+      await sb.from('leads').update({
+        etapa_id: etapaDestino.id, status: 'PERDIDO',
+        motivo_perda: 'Não respondeu', perdido_motivo: 'Não respondeu', perdido_em: now,
+        tags: novasTags, etapa_atualizada_em: now, atualizado_em: now,
+      }).eq('id', lead.id);
+      await registrarTimelineEvento({ sb, isSupa: true, sqlite: null, leadId: lead.id,
+        acao: 'AUTOMACAO_SEM_RESPOSTA',
+        titulo: 'Lead desqualificado automaticamente',
+        descricao: `Lead permaneceu ${Math.ceil(diasParado)} dia(s) em "${etapaAtual.nome}" sem resposta e foi movido para "${etapaDestino.nome}". Motivo: Não respondeu.`,
+        antes: { etapa_nome: etapaAtual.nome, etapa_id: lead.etapa_id },
+        depois: { etapa_nome: etapaDestino.nome, etapa_id: etapaDestino.id, motivo: 'Não respondeu', origem_acao: 'automacao' },
+      });
+      console.log('AUTOMACAO_SEM_RESPOSTA_LEAD_MOVIDO', { leadId: lead.id, de: etapaAtual.nome, para: etapaDestino.nome, diasParado: Math.ceil(diasParado) });
+      movimentados++; continue;
+    }
+
+    // ── Tratativa / Orçamento / Amostra → Follow-Up ───────────────────────────
+    if (ETAPAS_FOLLOWUP.some(e => normalizar(e) === nomeEtapaAtual)) {
+      const etapaDestino = resolverEtapa('Follow-Up') || resolverEtapa('Follow-up');
+      if (!etapaDestino) { console.warn('AUTOMACAO_SEM_RESPOSTA_SKIP', { leadId: lead.id, motivo: 'Etapa Follow-Up não encontrada' }); continue; }
+      const novasTags = adicionarTag(lead.tags, TAG_ESFRIOU);
+      const now = new Date().toISOString();
+      await sb.from('leads').update({
+        etapa_id: etapaDestino.id, status: 'ABERTO',
+        tags: novasTags, etapa_atualizada_em: now, atualizado_em: now,
+      }).eq('id', lead.id);
+      await registrarTimelineEvento({ sb, isSupa: true, sqlite: null, leadId: lead.id,
+        acao: 'AUTOMACAO_SEM_RESPOSTA',
+        titulo: 'Lead movido para Follow-Up automaticamente',
+        descricao: `Lead parado ${Math.ceil(diasParado)} dia(s) em "${etapaAtual.nome}". Movido para Follow-Up.`,
+        antes: { etapa_nome: etapaAtual.nome },
+        depois: { etapa_nome: etapaDestino.nome, origem_acao: 'automacao' },
+      });
+      console.log('AUTOMACAO_SEM_RESPOSTA_LEAD_MOVIDO', { leadId: lead.id, de: etapaAtual.nome, para: etapaDestino.nome });
+      movimentados++;
+    }
+  }
+
+  console.log('AUTOMACAO_SEM_RESPOSTA_FIM', { leadsAnalisados: leads.length, movimentados });
+}
+
+// ── SQLite ────────────────────────────────────────────────────────────────────
+function _processarParados_SQLite(sqlite) {
+  const agora = Date.now();
+  let movimentados = 0;
+
+  // Busca leads ativos
+  const leads = sqlite.prepare(`
+    SELECT l.*, e.nome as etapa_nome
+    FROM leads l
+    LEFT JOIN etapas e ON l.etapa_id = e.id
+    WHERE l.status IN ('ABERTO','ativo')
+      AND l.etapa_id IS NOT NULL
+  `).all();
+
+  for (const lead of leads) {
+    const nomeEtapaAtual = normalizar(lead.etapa_nome || '');
+    if (!nomeEtapaAtual) continue;
+    if (ETAPAS_FINAIS_EXCLUIR.some(ef => normalizar(ef) === nomeEtapaAtual)) continue;
+
+    const dataRef = lead.etapa_atualizada_em || lead.criado_em;
+    const diasParado = (agora - new Date(dataRef).getTime()) / MS_DIA;
+
+    console.log('AUTOMACAO_SEM_RESPOSTA_LEAD_ANALISADO', {
+      leadId: lead.id, etapaAtual: lead.etapa_nome,
+      diasParado: Math.round(diasParado * 10) / 10,
+    });
+
+    if (diasParado < DIAS_PARADO) {
+      console.log('AUTOMACAO_SEM_RESPOSTA_SKIP', { leadId: lead.id, motivo: `${Math.round(diasParado)}d < ${DIAS_PARADO}d` });
+      continue;
+    }
+
+    // Resolve etapa destino
+    let etapaDestNome, statusDestino, motivo;
+    const jaTagSemResposta = temTag(lead, TAG_SEM_RESPOSTA);
+
+    if (ETAPAS_DESQUALIFICAR.some(e => normalizar(e) === nomeEtapaAtual)) {
+      if (jaTagSemResposta) {
+        etapaDestNome = 'Perdidos'; statusDestino = 'PERDIDO'; motivo = 'Inatividade recorrente';
+      } else {
+        etapaDestNome = 'Lead Desqualificado'; statusDestino = 'PERDIDO'; motivo = 'Não respondeu';
+      }
+    } else if (ETAPAS_FOLLOWUP.some(e => normalizar(e) === nomeEtapaAtual)) {
+      etapaDestNome = 'Follow-Up'; statusDestino = 'ABERTO'; motivo = null;
+    } else continue;
+
+    // Resolve etapa destino no banco
+    const etapaDestRow = sqlite.prepare(`SELECT id, nome FROM etapas WHERE nome=? LIMIT 1`).get(etapaDestNome)
+      || sqlite.prepare(`SELECT id, nome FROM etapas WHERE nome LIKE ? LIMIT 1`).get(`%${etapaDestNome}%`);
+    if (!etapaDestRow) {
+      console.warn('AUTOMACAO_SEM_RESPOSTA_SKIP', { leadId: lead.id, motivo: `Etapa "${etapaDestNome}" não encontrada` });
+      continue;
+    }
+
+    const now = new Date().toISOString();
+    const novasTags = adicionarTag(lead.tags, motivo === 'Não respondeu' ? TAG_SEM_RESPOSTA : TAG_PERDIDO_INATIVO);
+
+    sqlite.prepare(`
+      UPDATE leads SET etapa_id=?, status=?, motivo_perda=?, perdido_motivo=?,
+        tags=?, etapa_atualizada_em=?, atualizado_em=?
+      WHERE id=?
+    `).run(
+      etapaDestRow.id, statusDestino, motivo||null, motivo||null,
+      JSON.stringify(novasTags), now, now, lead.id
+    );
+
+    // Registra na timeline (logs)
+    const logId = crypto.randomBytes(16).toString('hex');
+    try {
+      sqlite.prepare(`
+        INSERT INTO logs (id, usuario_id, usuario_nome, usuario_role, acao, entidade, entidade_id, dados_antes, dados_depois, ip_address, user_agent, criado_em)
+        VALUES (?,NULL,'Sistema','AUTOMACAO','AUTOMACAO_SEM_RESPOSTA','leads',?,?,?,NULL,NULL,?)
+      `).run(logId, lead.id,
+        JSON.stringify({ etapa_nome: lead.etapa_nome, etapa_id: lead.etapa_id }),
+        JSON.stringify({ etapa_nome: etapaDestRow.nome, etapa_id: etapaDestRow.id, motivo: motivo||'automação', origem_acao: 'automacao' }),
+        now
+      );
+    } catch(eLg) { console.warn('TIMELINE_CREATE_ERROR', { leadId: lead.id, err: eLg.message }); }
+
+    console.log('AUTOMACAO_SEM_RESPOSTA_LEAD_MOVIDO', { leadId: lead.id, de: lead.etapa_nome, para: etapaDestRow.nome });
+    movimentados++;
+  }
+
+  console.log('AUTOMACAO_SEM_RESPOSTA_FIM', { leadsAnalisados: leads.length, movimentados });
+}
+
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Módulo 2: SLA Contato 1 — Primeira mensagem automática

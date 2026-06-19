@@ -49,27 +49,78 @@ function _parseSafe(v) {
 }
 
 function formatarLog(l, etapaMap = {}) {
-  const d = _parseSafe(l.depois);
-  const a = _parseSafe(l.antes);
+  const d = _parseSafe(l.depois || l.dados_depois);
+  const a = _parseSafe(l.antes  || l.dados_antes);
+  const origemAuto = (l.origem_acao || '').toLowerCase().includes('autom') || (l.acao||'').startsWith('AUTOMACAO');
+  const badge = origemAuto ? ' 🤖' : '';
   let icone = '📋', titulo = l.acao || '', conteudo = '';
+
   switch ((l.acao || '').toUpperCase()) {
     case 'CREATE':
       icone = '🌱'; titulo = 'Lead criado';
-      conteudo = 'Lead registrado no CRM.';
+      conteudo = [
+        d.funil_nome  ? `Funil: ${d.funil_nome}` : '',
+        d.origem      ? `Origem: ${d.origem}` : '',
+        d.responsavel_nome ? `Responsável: ${d.responsavel_nome}` : '',
+      ].filter(Boolean).join(' · ') || 'Lead registrado no CRM.';
       break;
     case 'MOVER':
     case 'UPDATE_ETAPA': {
-      icone = '➡️'; titulo = 'Etapa alterada';
-      const eAntes  = etapaMap[a.etapa_id]  || '';
-      const eDepois = etapaMap[d.etapa_id]  || '';
+      icone = '➡️'; titulo = 'Etapa alterada' + badge;
+      const eAntes  = a.etapa_nome || etapaMap[a.etapa_id] || '';
+      const eDepois = d.etapa_nome || etapaMap[d.etapa_id] || '';
       const stStr   = d.status ? ` · Status: ${d.status}` : '';
+      const userStr = (l.usuario_nome && l.usuario_nome !== 'Sistema') ? ` por ${l.usuario_nome}` : '';
       conteudo = eAntes && eDepois && eAntes !== eDepois
-        ? `Movido de "${eAntes}" para "${eDepois}"${stStr}`
+        ? `Movido de "${eAntes}" para "${eDepois}"${stStr}${userStr}`
         : eDepois
-          ? `Movido para "${eDepois}"${stStr}`
-          : `Etapa atualizada${stStr}`;
+          ? `Movido para "${eDepois}"${stStr}${userStr}`
+          : `Etapa atualizada${stStr}${userStr}`;
       break;
     }
+    case 'MOVER_FUNIL':
+    case 'UPDATE_FUNIL':
+      icone = '🔀'; titulo = 'Funil alterado';
+      conteudo = a.funil_nome && d.funil_nome
+        ? `Funil alterado de "${a.funil_nome}" para "${d.funil_nome}".`
+        : d.funil_nome ? `Funil: ${d.funil_nome}` : 'Funil alterado.';
+      break;
+    case 'UPDATE_RESPONSAVEL':
+    case 'RESPONSAVEL_ALTERADO':
+      icone = '👤'; titulo = 'Responsável alterado';
+      conteudo = a.responsavel_nome && d.responsavel_nome
+        ? `Responsável: "${a.responsavel_nome}" → "${d.responsavel_nome}".`
+        : d.responsavel_nome ? `Responsável: ${d.responsavel_nome}` : 'Responsável alterado.';
+      break;
+    case 'DESQUALIFICAR':
+    case 'LEAD_DESQUALIFICADO':
+      icone = '🚫'; titulo = 'Lead desqualificado' + badge;
+      conteudo = d.motivo
+        ? `Motivo: "${d.motivo}". ${d.etapa_anterior ? `Etapa anterior: ${d.etapa_anterior}.` : ''}`
+        : 'Lead movido para Lead Desqualificado.';
+      break;
+    case 'LEAD_PERDIDO':
+    case 'PERDIDO':
+      icone = '❌'; titulo = 'Lead marcado como perdido';
+      conteudo = d.motivo_perda || d.perdido_motivo
+        ? `Motivo: "${d.motivo_perda || d.perdido_motivo}".`
+        : 'Lead marcado como perdido.';
+      break;
+    case 'AUTOMACAO_SEM_RESPOSTA':
+    case 'AUTOMACAO':
+      icone = '🤖'; titulo = 'Ação automática';
+      conteudo = l.descricao || d.descricao || 'Automação executada pelo sistema.';
+      break;
+    case 'LAYOUT_VIRTUAL_ENTRADA':
+      icone = '🖥️'; titulo = 'Layout Virtual — entrada na etapa';
+      conteudo = `Lead entrou na etapa Layout Virtual. Data de entrada registrada.`;
+      break;
+    case 'LAYOUT_VIRTUAL_APROVADO':
+      icone = '✅'; titulo = 'Layout Virtual aprovado';
+      conteudo = d.layout_virtual_aprovado_em
+        ? `Layout aprovado em ${new Date(d.layout_virtual_aprovado_em).toLocaleDateString('pt-BR')}.`
+        : 'Layout Virtual aprovado. Lead liberado para Amostra Física.';
+      break;
     case 'TAG_ADD':
       icone = '🏷️'; titulo = 'Tag adicionada';
       conteudo = d.tag ? `Tag "${d.tag}" adicionada.` : 'Tag adicionada.';
@@ -78,27 +129,64 @@ function formatarLog(l, etapaMap = {}) {
       icone = '🗑️'; titulo = 'Tag removida';
       conteudo = d.tag ? `Tag "${d.tag}" removida.` : 'Tag removida.';
       break;
+    case 'ADD_NOTA':
+      icone = '📝'; titulo = 'Nota adicionada';
+      conteudo = d.conteudo ? `"${String(d.conteudo).slice(0, 120)}${d.conteudo.length > 120 ? '…' : ''}"` : '';
+      break;
+    case 'ATIVIDADE_CRIADA':
+      icone = '📅'; titulo = 'Atividade criada';
+      conteudo = [
+        d.tipo ? `Tipo: ${d.tipo}` : '',
+        d.descricao ? String(d.descricao).slice(0,80) : '',
+        d.data_prevista ? `Prevista: ${new Date(d.data_prevista).toLocaleDateString('pt-BR')}` : '',
+      ].filter(Boolean).join(' · ');
+      break;
+    case 'ATIVIDADE_CONCLUIDA':
+      icone = '✔️'; titulo = 'Atividade concluída';
+      conteudo = [
+        d.tipo ? `Tipo: ${d.tipo}` : '',
+        d.concluida_em ? `Concluída em: ${new Date(d.concluida_em).toLocaleDateString('pt-BR')}` : '',
+      ].filter(Boolean).join(' · ');
+      break;
+    case 'ATIVIDADE_ADIADA':
+      icone = '⏩'; titulo = 'Atividade adiada';
+      conteudo = a.data_prevista && d.data_prevista
+        ? `Data: ${new Date(a.data_prevista).toLocaleDateString('pt-BR')} → ${new Date(d.data_prevista).toLocaleDateString('pt-BR')}`
+        : 'Data da atividade adiada.';
+      break;
+    case 'VENDA_REGISTRADA':
+    case 'VENDA_ATUALIZADA':
+      icone = '💰'; titulo = 'Venda registrada';
+      conteudo = d.valor_venda
+        ? `Valor: ${Number(d.valor_venda).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}.`
+        : 'Venda atualizada.';
+      break;
+    case 'PRODUCAO_ATUALIZADA':
+      icone = '🏭'; titulo = 'Produção atualizada';
+      conteudo = d.descricao || 'Dados de produção atualizados.';
+      break;
+    case 'ARQUIVO_ANEXADO':
+      icone = '📎'; titulo = 'Arquivo anexado';
+      conteudo = d.arquivo_nome ? `Arquivo: "${d.arquivo_nome}".` : 'Arquivo anexado ao lead.';
+      break;
     case 'CLONE':
       icone = '📋'; titulo = 'Lead clonado';
       conteudo = 'Lead criado como cópia de outro.';
       break;
     case 'DELETE':
       icone = '🗑️'; titulo = 'Lead excluído';
-      conteudo = 'Lead movido para a lixeira.';
+      conteudo = 'Lead removido do CRM.';
       break;
     case 'AUTOMACAO_MSG_ENVIADA':
     case 'SLA_CONTATO_1':
-      icone = '🤖'; titulo = 'Mensagem automática';
-      conteudo = 'Automação disparada pelo sistema.';
-      break;
-    case 'ADD_NOTA':
-      icone = '📝'; titulo = 'Nota adicionada';
-      conteudo = d.conteudo ? `"${String(d.conteudo).slice(0, 80)}${d.conteudo.length > 80 ? '…' : ''}"` : '';
+      icone = '🤖'; titulo = 'Mensagem automática enviada';
+      conteudo = l.descricao || 'SLA de contato disparado automaticamente.';
       break;
     default:
-      titulo = l.acao || '?';
-      conteudo = d.nome ? `"${d.nome}"` : JSON.stringify(d).slice(0, 80);
+      titulo = l.descricao ? (l.acao || '?') : (l.acao || '?');
+      conteudo = l.descricao || (d.nome ? `"${d.nome}"` : JSON.stringify(d).slice(0, 80));
   }
+
   return {
     id: l.id,
     tipo: 'LOG',
@@ -106,7 +194,8 @@ function formatarLog(l, etapaMap = {}) {
     icone,
     titulo,
     conteudo,
-    autor_nome: l.autor_nome || 'Sistema',
+    autor_nome: l.autor_nome || l.usuario_nome || 'Sistema',
+    origem_acao: origemAuto ? 'automação' : 'manual',
     criado_em: l.criado_em,
   };
 }
@@ -410,6 +499,18 @@ async function atualizar(req, res) {
 
       const { data, error } = await sb.from('leads').update(upd).eq('id', id).select().single();
       if (error) throw error;
+      // Log: mudança de responsável
+      if (upd.responsavel_id && upd.responsavel_id !== atual.responsavel_id) {
+        req.log({ acao:'UPDATE_RESPONSAVEL', entidade:'leads', entidade_id:id,
+          antes:{ responsavel_id: atual.responsavel_id },
+          depois:{ responsavel_id: upd.responsavel_id } });
+      }
+      // Log: mudança de funil
+      if (upd.funil_id && upd.funil_id !== atual.funil_id) {
+        req.log({ acao:'MOVER_FUNIL', entidade:'leads', entidade_id:id,
+          antes:{ funil_id: atual.funil_id },
+          depois:{ funil_id: upd.funil_id } });
+      }
       return res.json({ sucesso:true, dados: normalizeLead(data) });
     }
 
@@ -424,6 +525,12 @@ async function atualizar(req, res) {
     campos.atualizado_em = new Date().toISOString();
     const sets = Object.keys(campos).map(k=>`${k}=?`).join(',');
     sqlite.prepare(`UPDATE leads SET ${sets} WHERE id=?`).run(...Object.values(campos), id);
+    // Log: mudança de responsável
+    if (campos.responsavel_id && campos.responsavel_id !== atual.responsavel_id) {
+      req.log({ acao:'UPDATE_RESPONSAVEL', entidade:'leads', entidade_id:id,
+        antes:{ responsavel_id: atual.responsavel_id },
+        depois:{ responsavel_id: campos.responsavel_id } });
+    }
     return res.json({ sucesso:true, dados: sqlite.prepare('SELECT * FROM leads WHERE id=?').get(id) });
   } catch(e) {
     console.error('[leads.atualizar]', e.message);

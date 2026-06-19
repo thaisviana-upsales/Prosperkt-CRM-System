@@ -474,27 +474,36 @@ async function carregarHistorico(leadId) {
 function _renderTimeline(itens, leadId) {
   const tl = document.getElementById('lead-timeline');
   if (!tl) return;
-  if (!itens.length) {
+  // Filtra apenas itens com data válida, ordena do mais antigo ao mais recente
+  const sorted = [...itens].filter(m => m.criado_em || m.enviado_em)
+    .sort((a,b) => new Date(a.criado_em||a.enviado_em) - new Date(b.criado_em||b.enviado_em));
+  if (!sorted.length) {
     tl.innerHTML = '<p style="font-size:.72rem;color:var(--text-muted)">Nenhuma movimentação registrada ainda.</p>';
     return;
   }
-  tl.innerHTML = itens.map((m, i) => {
+  tl.innerHTML = sorted.map((m, i) => {
     const data    = new Date(m.criado_em || m.enviado_em);
     const dataStr = data.toLocaleDateString('pt-BR') + ' ' + data.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
-    const isLast  = i === itens.length - 1;
+    const isLast  = i === sorted.length - 1;
+    const isAuto  = m.origem_acao === 'automação' || m.origem_acao === 'automacao'
+      || (m.acao||'').startsWith('AUTOMACAO') || (m.acao||'') === 'SLA_CONTATO_1';
     const icone   = m.icone  || (m.tipo === 'NOTA' ? '📝' : '📋');
     const titulo  = m.titulo || (m.tipo === 'NOTA' ? 'Nota' : m.acao || 'Evento');
     const desc    = m.conteudo ? `<div style="font-size:.7rem;color:var(--text-muted);margin-top:2px">${m.conteudo}</div>` : '';
+    const autoBadge = isAuto
+      ? `<span style="background:#6C47FF22;color:#6C47FF;border:1px solid #6C47FF44;border-radius:6px;padding:1px 5px;font-size:.6rem;font-weight:700;margin-left:4px">🤖 automação</span>`
+      : '';
     let duracao = '';
     if (i > 0) {
-      const prev  = new Date(itens[i-1].criado_em || itens[i-1].enviado_em);
+      const prev  = new Date(sorted[i-1].criado_em || sorted[i-1].enviado_em);
       const diffH = Math.round((data - prev) / 3600000);
       if (diffH >= 0) duracao = diffH < 24 ? `${diffH}h` : `${Math.round(diffH/24)}d`;
     }
-    return `<div class="timeline-item">
+    const borderStyle = isAuto ? 'border-left:2px solid #6C47FF44;' : '';
+    return `<div class="timeline-item" style="${borderStyle}">
       <div class="timeline-dot${isLast?' current':''}">${icone}</div>
       <div class="timeline-body">
-        <div class="timeline-stage" style="font-size:.78rem;font-weight:600">${titulo}</div>
+        <div class="timeline-stage" style="font-size:.78rem;font-weight:600">${titulo}${autoBadge}</div>
         ${desc}
         <div class="timeline-meta">${dataStr} · ${m.autor_nome||'Sistema'}</div>
       </div>
@@ -502,6 +511,7 @@ function _renderTimeline(itens, leadId) {
     </div>`;
   }).join('');
 }
+
 
 function resetModal() {
   document.getElementById('ml-title').textContent = 'Novo Lead';
