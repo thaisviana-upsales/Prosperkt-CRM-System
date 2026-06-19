@@ -65,7 +65,14 @@ router.delete('/usuarios/:id',      autenticar, exigirSuperAdmin,     usuariosCt
 // LOGS DE AUDITORIA
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/logs',      autenticar, exigirRole('GESTOR'), logsCtrl.listar);
-router.get('/dashboard', autenticar, dashboardCtrl.resumo);
+router.get('/dashboard', autenticar, (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  console.log('[DASHBOARD_CACHE_BYPASS_API]', req.usuario?.id, new Date().toISOString());
+  next();
+}, dashboardCtrl.resumo);
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FUNIS

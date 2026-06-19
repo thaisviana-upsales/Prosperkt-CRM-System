@@ -382,17 +382,78 @@ async function resumo(req, res) {
 
     const taxa_conversao = kpis.total_leads > 0 ? ((kpis.total_ganhos/kpis.total_leads)*100).toFixed(1) : '0.0';
 
-    const primFunil = funil_id || db.prepare('SELECT id FROM funis WHERE ativo=1 LIMIT 1').get()?.id;
+    // ── Funil Visual (SQLite) — lê dinamicamente do banco, sem hardcode ─────────
+    console.log('[DASH_FUNIL_SELECTED]', funil_id || 'todos');
     let etapas = [];
-    if (primFunil) etapas = db.prepare(`SELECT e.id,e.nome,e.cor,e.ordem,e.is_ganho,e.is_perdido FROM etapas e JOIN pipelines p ON e.pipeline_id=p.id WHERE p.funil_id=? ORDER BY e.ordem`).all(primFunil);
+    if (funil_id) {
+      // Funil específico: carrega etapas do pipeline vinculado
+      const pipeRow = db.prepare(`SELECT id FROM pipelines WHERE funil_id=? LIMIT 1`).get(funil_id);
+      if (pipeRow) {
+        etapas = db.prepare(`SELECT e.id,e.nome,e.cor,e.ordem,e.is_ganho,e.is_perdido
+          FROM etapas e WHERE e.pipeline_id=? ORDER BY e.ordem`).all(pipeRow.id);
+      }
+      console.log('[DASH_ETAPAS_FETCHED]', funil_id, etapas.map(e=>e.nome));
+    } else {
+      // Todos os funis: consolida etapas de todos os pipelines ativos, dedup por nome
+      const pipes = db.prepare(`SELECT p.id FROM pipelines p JOIN funis f ON p.funil_id=f.id WHERE f.ativo=1`).all();
+      const pipeIds = pipes.map(p => p.id);
+      const todasEtapas = pipeIds.length
+        ? db.prepare(`SELECT e.id,e.nome,e.cor,e.ordem,e.is_ganho,e.is_perdido
+            FROM etapas e WHERE e.pipeline_id IN (${pipeIds.map(()=>'?').join(',')})
+            ORDER BY e.ordem`).all(...pipeIds)
+        : [];
+      // Dedup por nome (mantém a primeira ocorrência, agrega leads depois)
+      const seen = new Map();
+      todasEtapas.forEach(e => { if (!seen.has(e.nome)) seen.set(e.nome, e); });
+      etapas = Array.from(seen.values()).sort((a,b)=>a.ordem-b.ordem);
+      console.log('[DASH_ETAPAS_FETCHED]', 'todos', etapas.map(e=>e.nome));
+    }
+    console.log('[DASH_ETAPAS_SOURCE_DB] total etapas:', etapas.length);
 
-    const funil_visual = etapas.map((e,i) => {
-      const countRow = db.prepare(`SELECT COUNT(*) as c FROM leads l LEFT JOIN pipelines p ON l.pipeline_id=p.id WHERE l.etapa_id=?`).get(e.id);
+    // Conta leads por etapa (ou grupo de etapas com mesmo nome), respeitando filtro de data
+    const funil_visual = etapas.map((e, i) => {
+      // Coleta todos os ids de etapas com o mesmo nome (para consolidar funis diferentes)
+      let idsEtapa = [e.id];
+      if (!funil_id) {
+        const homonimasRows = db.prepare(`SELECT id FROM etapas WHERE nome=?`).all(e.nome);
+        idsEtapa = homonimasRows.map(r => r.id);
+      }
+      const placeholders = idsEtapa.map(() => '?').join(',');
+
+      // Filtro de período aplicado na contagem
+      let cntFilter = `l.etapa_id IN (${placeholders})`;
+      const cntParams = [...idsEtapa, ...baseParams];
+      const cntSql = `SELECT COUNT(*) as c FROM leads l
+        LEFT JOIN pipelines p ON l.pipeline_id=p.id
+        WHERE ${cntFilter}
+        ${funil_id ? 'AND p.funil_id=?' : ''}
+        ${baseFilter.replace(/^\s*AND /,'AND ')}`;
+      const cntFinalParams = funil_id ? [...idsEtapa, funil_id, ...baseParams] : [...idsEtapa, ...baseParams];
+      const countRow = db.prepare(cntSql).get(...cntFinalParams);
+
       const anterior = i > 0 ? etapas[i-1] : null;
       let taxa_entrada = null;
-      if (anterior) { const ac = db.prepare(`SELECT COUNT(*) as c FROM leads l WHERE l.etapa_id=?`).get(anterior.id); taxa_entrada = ac.c > 0 ? ((countRow.c/ac.c)*100).toFixed(0) : null; }
-      return { ...e, quantidade:countRow.c, taxa_entrada };
+      if (anterior) {
+        let idsAnt = [anterior.id];
+        if (!funil_id) {
+          const antRows = db.prepare(`SELECT id FROM etapas WHERE nome=?`).all(anterior.nome);
+          idsAnt = antRows.map(r => r.id);
+        }
+        const antPh = idsAnt.map(()=>'?').join(',');
+        const antSql = `SELECT COUNT(*) as c FROM leads l LEFT JOIN pipelines p ON l.pipeline_id=p.id
+          WHERE l.etapa_id IN (${antPh})
+          ${funil_id ? 'AND p.funil_id=?' : ''}
+          ${baseFilter.replace(/^\s*AND /,'AND ')}`;
+        const antParams = funil_id ? [...idsAnt, funil_id, ...baseParams] : [...idsAnt, ...baseParams];
+        const ac = db.prepare(antSql).get(...antParams);
+        taxa_entrada = ac.c > 0 ? ((countRow.c / ac.c) * 100).toFixed(0) : null;
+      }
+      const isG = e.is_ganho || /venda|vendas|ganho|fechad|fechamento/i.test(e.nome||'');
+      const isP = e.is_perdido || /perdid|desqualif/i.test(e.nome||'');
+      return { ...e, is_ganho:isG?1:0, is_perdido:isP?1:0, quantidade: countRow.c, taxa_entrada };
     });
+    console.log('[DASH_CONVERSAO_RENDER] etapas c/ leads:', funil_visual.map(e=>`${e.nome}:${e.quantidade}`));
+
 
     // Ranking: quando filtro é por fechamento, precisamos do total de leads (sem filtro de data)
     // para calcular taxa de conversão corretamente

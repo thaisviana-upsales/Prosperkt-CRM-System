@@ -160,10 +160,12 @@ const Auth = (() => {
     const opts = {
       method,
       credentials: 'include',
+      cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
     };
     if (token) opts.headers['Authorization'] = `Bearer ${token}`;
     if (body)  opts.body = JSON.stringify(body);
+
 
     let res, data;
     try {
