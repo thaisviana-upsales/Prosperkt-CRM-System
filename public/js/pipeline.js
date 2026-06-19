@@ -401,10 +401,12 @@ async function abrirLead(id) {
   popularSelProdutos(l.produto_id||''); // legado oculto — mantém compatibilidade
   _parcelas = l.parcelas_json ? (typeof l.parcelas_json==='string' ? JSON.parse(l.parcelas_json) : l.parcelas_json) : [];
   renderParcelas();
-  // Campos novos: data de fechamento, próxima compra, detalhes do pedido
+  // Campos novos: data de fechamento, previsão próxima compra, detalhes do pedido
   const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v||''; };
   setVal('fl-data-fechamento', l.data_fechamento);
-  setVal('fl-proxima-compra',  l.proxima_compra);
+  // Select de previsão de próxima compra (substitui fl-proxima-compra date)
+  const selPrev = document.getElementById('fl-previsao-proxima-compra');
+  if (selPrev) selPrev.value = l.previsao_proxima_compra || '';
   setVal('fl-obs-pedido', l.dados_extras?.obs_pedido || '');
   // Multi-produto: carrega do banco
   _leadIdAberto = id;
@@ -716,7 +718,7 @@ async function salvarLead() {
     produto_cor:          document.getElementById('fl-produto').selectedOptions[0]?.dataset?.cor||undefined,
     // Campos novos
     data_fechamento:  document.getElementById('fl-data-fechamento')?.value||undefined,
-    proxima_compra:   document.getElementById('fl-proxima-compra')?.value||undefined,
+    previsao_proxima_compra: document.getElementById('fl-previsao-proxima-compra')?.value||undefined,
     dados_extras: {
       obs_pedido:   document.getElementById('fl-obs-pedido')?.value||undefined,
       num_produtos: document.getElementById('fl-num-produtos')?.value||undefined,
@@ -758,6 +760,7 @@ async function salvarLead() {
             payload.produto_id          = document.getElementById('fl-produto').value||undefined;
             payload.produto_nome        = document.getElementById('fl-produto').selectedOptions[0]?.text||undefined;
             payload.produto_cor         = document.getElementById('fl-produto').selectedOptions[0]?.dataset?.cor||undefined;
+            payload.previsao_proxima_compra = document.getElementById('fl-previsao-proxima-compra')?.value || undefined;
           }
           await Auth.api('PATCH',`/leads/${id}/mover`,payload);
         }

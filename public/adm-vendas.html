@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0D0D0D">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="PROSPEKT CRM">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<title>Adm. de Vendas — PROSPEKT CRM</title>
+<meta name="description" content="Gerenciamento pós-venda operacional do PROSPEKT CRM.">
+<link rel="stylesheet" href="/css/design-system.css">
+<link rel="stylesheet" href="/css/mobile.css">
+<style>
+.av-board{display:flex;gap:12px;overflow-x:auto;padding-bottom:12px;min-height:calc(100vh - 220px)}
+.av-col{flex:0 0 220px;display:flex;flex-direction:column;gap:8px}
+.av-col-hd{padding:10px 14px;border-radius:12px 12px 0 0;display:flex;align-items:center;gap:8px;font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em}
+.av-col-body{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:0 0 12px 12px;padding:8px;display:flex;flex-direction:column;gap:7px;min-height:120px}
+.av-card{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;transition:all .18s;position:relative;overflow:hidden}
+.av-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;opacity:0;transition:opacity .15s}
+.av-card:hover{border-color:var(--border-hover);transform:translateY(-1px);box-shadow:0 4px 16px rgba(0,0,0,.3)}
+.av-card:hover::before{opacity:1}
+.av-card-nome{font-size:.82rem;font-weight:700;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.av-card-sub{font-size:.68rem;color:var(--text-muted);margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.av-card-val{font-size:.78rem;font-weight:700;color:var(--green)}
+.av-card-data{font-size:.65rem;color:var(--text-muted);margin-top:4px}
+.av-etapa-badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em}
+.av-empty{text-align:center;padding:28px 12px;color:var(--text-muted);font-size:.72rem}
+.av-fbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:12px}
+.av-fsel{background:var(--surface-2);border:1px solid var(--border);border-radius:7px;color:var(--text-primary);font-family:inherit;font-size:.8rem;padding:6px 10px;outline:none;cursor:pointer}
+.av-fsel:focus{border-color:var(--green)}
+/* Modal */
+.av-ov{position:fixed;inset:0;background:rgba(0,0,0,.85);backdrop-filter:blur(12px);z-index:800;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:.22s}
+.av-ov.open{opacity:1;pointer-events:all}
+.av-box{background:var(--surface);border:1px solid var(--border);border-radius:20px;width:min(700px,96vw);max-height:90vh;overflow-y:auto;transform:scale(.95);transition:.22s}
+.av-ov.open .av-box{transform:scale(1)}
+.av-modal-hd{padding:20px 24px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px}
+.av-modal-body{padding:20px 24px;display:flex;flex-direction:column;gap:14px}
+.av-modal-ft{padding:14px 24px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end}
+/* Histórico */
+.av-hist{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.av-hist-item{display:flex;gap:10px;font-size:.78rem;padding:8px 12px;background:var(--surface-2);border-radius:9px;border:1px solid var(--border)}
+.av-hist-meta{font-size:.65rem;color:var(--text-muted);margin-top:2px}
+/* Etapa selector */
+.av-etapa-sel{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px}
+.av-etapa-btn{padding:5px 12px;border-radius:20px;font-size:.72rem;font-weight:700;cursor:pointer;border:2px solid transparent;transition:all .15s;font-family:inherit;background:var(--surface-2);color:var(--text-muted)}
+.av-etapa-btn:hover,.av-etapa-btn.active{color:#fff;border-color:transparent}
+</style>
+</head>
+<body>
+<div class="app-layout">
+  <div id="sidebar-container"></div>
+  <main class="main-content animate-fade" style="padding:20px 24px">
+
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px">
+      <div style="display:flex;align-items:center;gap:14px">
+        <div style="width:46px;height:46px;border-radius:13px;background:linear-gradient(135deg,#1a3a6b,#3B8BFF);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 4px 16px rgba(59,139,255,.3)">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        </div>
+        <div>
+          <h1 class="page-title" style="font-size:1.3rem;margin:0 0 2px">Administração de Vendas</h1>
+          <p class="page-subtitle" style="margin:0">Acompanhamento operacional do pós-venda</p>
+        </div>
+      </div>
+      <button class="btn btn-primary btn-sm" id="btn-nova-venda">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Nova Venda
+      </button>
+    </div>
+
+    <!-- Stats -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:16px" id="av-stats"></div>
+
+    <!-- Filtros -->
+    <div class="av-fbar">
+      <div style="display:flex;flex-direction:column;gap:2px">
+        <span style="font-size:.6rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em">Responsável</span>
+        <select class="av-fsel" id="f-resp"><option value="">Todos</option></select>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:2px">
+        <span style="font-size:.6rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em">Etapa</span>
+        <select class="av-fsel" id="f-etapa">
+          <option value="">Todas</option>
+          <option value="acompanhamento">Acompanhamento</option>
+          <option value="compras">Compras</option>
+          <option value="producao">Produção</option>
+          <option value="manuseio">Manuseio</option>
+          <option value="transporte">Transporte</option>
+          <option value="concluido">Concluído</option>
+        </select>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:2px">
+        <span style="font-size:.6rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em">Status</span>
+        <select class="av-fsel" id="f-status">
+          <option value="ativo">Ativos</option>
+          <option value="">Todos</option>
+          <option value="concluido">Concluídos</option>
+          <option value="cancelado">Cancelados</option>
+        </select>
+      </div>
+      <button class="btn btn-secondary btn-sm" id="btn-refresh" style="margin-top:16px">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        Atualizar
+      </button>
+    </div>
+
+    <!-- Board Kanban -->
+    <div class="av-board" id="av-board"></div>
+
+  </main>
+</div>
+
+<!-- Modal detalhe/edição -->
+<div class="av-ov" id="av-modal-ov">
+  <div class="av-box">
+    <div class="av-modal-hd">
+      <div style="width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,#1a3a6b,#3B8BFF);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/></svg>
+      </div>
+      <div style="flex:1">
+        <div id="av-modal-nome" style="font-size:.95rem;font-weight:800">—</div>
+        <div id="av-modal-sub" style="font-size:.7rem;color:var(--text-muted)"></div>
+      </div>
+      <button id="av-btn-close" style="background:none;border:none;color:var(--text-muted);cursor:pointer;padding:6px;border-radius:8px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="av-modal-body">
+      <input type="hidden" id="av-id">
+      <!-- Etapa atual -->
+      <div>
+        <div style="font-size:.7rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Etapa Atual</div>
+        <div class="av-etapa-sel" id="av-etapa-btns"></div>
+      </div>
+      <!-- Info grid -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Valor da Venda</label>
+          <input class="form-input" id="av-valor" type="number" step="0.01" placeholder="0,00">
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Data de Entrega Prevista</label>
+          <input class="form-input" id="av-entrega" type="date">
+        </div>
+      </div>
+      <div class="form-group" style="margin:0">
+        <label class="form-label">Observações</label>
+        <textarea class="form-input" id="av-obs" rows="3" placeholder="Detalhes do pedido, notas operacionais..."></textarea>
+      </div>
+      <!-- Histórico/Timeline -->
+      <div>
+        <div style="font-size:.7rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Histórico</div>
+        <div id="av-hist-list" class="av-hist"></div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <input class="form-input" id="av-nova-nota" placeholder="Adicionar nota..." style="font-size:.8rem">
+          <button class="btn btn-secondary btn-sm" id="av-btn-nota">Adicionar</button>
+        </div>
+      </div>
+      <div id="av-alert" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="av-modal-ft">
+      <button class="btn btn-secondary" id="av-btn-cancelar">Fechar</button>
+      <button class="btn btn-primary" id="av-btn-salvar">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>
+        Salvar
+      </button>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+<script src="/js/auth.js"></script>
+<script src="/js/toast.js"></script>
+<script src="/js/avatar.js"></script>
+<script src="/js/sidebar.js"></script>
+<script>
+const ETAPAS = [
+  { key:'acompanhamento', label:'Acompanhamento do Pedido', cor:'#3B8BFF' },
+  { key:'compras',        label:'Compras / Chegada de Materiais', cor:'#FFB627' },
+  { key:'producao',       label:'Produção', cor:'#6C47FF' },
+  { key:'manuseio',       label:'Manuseio', cor:'#FF8C00' },
+  { key:'transporte',     label:'Transporte', cor:'#25D366' },
+  { key:'concluido',      label:'Venda Concluída', cor:'#6CFF4E' },
+];
+
+let _vendas = [], _usuario = null, _usuarios = [];
+let _aberto = null;
+
+async function init() {
+  _usuario = await Sidebar.init('adm-vendas', 'VENDEDOR');
+  if (!_usuario) return;
+  await carregarUsuarios();
+  popularSelResp();
+  await carregar();
+  bindEvents();
+}
+
+async function carregarUsuarios() {
+  const r = await Auth.api('GET','/usuarios');
+  _usuarios = (r?.data?.dados||[]).filter(u=>u.ativo);
+}
+
+function popularSelResp() {
+  const sel = document.getElementById('f-resp');
+  if (_usuario.role === 'VENDEDOR') { sel.closest('div').style.display='none'; return; }
+  sel.innerHTML = '<option value="">Todos</option>' +
+    _usuarios.map(u=>`<option value="${u.id}">${u.nome}</option>`).join('');
+}
+
+async function carregar() {
+  const etapa  = document.getElementById('f-etapa').value;
+  const status = document.getElementById('f-status').value;
+  const resp   = document.getElementById('f-resp').value;
+  const params = new URLSearchParams();
+  if (etapa)  params.set('etapa', etapa);
+  if (status) params.set('status', status);
+  if (resp)   params.set('responsavel_id', resp);
+  const r = await Auth.api('GET', `/adm-vendas?${params}`);
+  _vendas = r?.data?.dados || [];
+  renderStats();
+  renderBoard();
+}
+
+function renderStats() {
+  const total    = _vendas.length;
+  const concl    = _vendas.filter(v=>v.etapa==='concluido').length;
+  const fat      = _vendas.reduce((s,v)=>s+Number(v.valor_venda||0),0);
+  const emProd   = _vendas.filter(v=>v.etapa==='producao').length;
+  document.getElementById('av-stats').innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
+      <div style="font-size:.6rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Total Ativos</div>
+      <div style="font-size:1.6rem;font-weight:800">${total}</div>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
+      <div style="font-size:.6rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Faturamento</div>
+      <div style="font-size:1.6rem;font-weight:800;color:var(--green)">${fat.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</div>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
+      <div style="font-size:.6rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Concluídos</div>
+      <div style="font-size:1.6rem;font-weight:800;color:#6CFF4E">${concl}</div>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
+      <div style="font-size:.6rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Em Produção</div>
+      <div style="font-size:1.6rem;font-weight:800;color:#6C47FF">${emProd}</div>
+    </div>`;
+}
+
+function renderBoard() {
+  const board = document.getElementById('av-board');
+  const filtroEtapa = document.getElementById('f-etapa').value;
+  const colsToShow = filtroEtapa ? ETAPAS.filter(e=>e.key===filtroEtapa) : ETAPAS;
+  board.innerHTML = colsToShow.map(et => {
+    const cards = _vendas.filter(v=>v.etapa===et.key);
+    return `<div class="av-col">
+      <div class="av-col-hd" style="background:${et.cor}22;color:${et.cor};border:1px solid ${et.cor}44">
+        <span style="width:8px;height:8px;border-radius:50%;background:${et.cor};flex-shrink:0"></span>
+        ${et.label}
+        <span style="margin-left:auto;background:${et.cor}33;border-radius:20px;padding:2px 8px;font-size:.68rem">${cards.length}</span>
+      </div>
+      <div class="av-col-body">
+        ${cards.length ? cards.map(v=>renderCard(v,et)).join('') :
+          `<div class="av-empty">Nenhum pedido</div>`}
+      </div>
+    </div>`;
+  }).join('');
+  board.querySelectorAll('.av-card').forEach(c=>c.addEventListener('click',()=>abrirVenda(c.dataset.id)));
+}
+
+function renderCard(v, et) {
+  const resp = _usuarios.find(u=>u.id===v.responsavel_id);
+  const fat  = Number(v.valor_venda||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+  const data = v.data_venda ? new Date(v.data_venda+'T12:00:00').toLocaleDateString('pt-BR') : '';
+  return `<div class="av-card" data-id="${v.id}" style="--card-cor:${et.cor}">
+    <style>.av-card[data-id="${v.id}"]::before{background:${et.cor}}</style>
+    <div class="av-card-nome">${v.nome}</div>
+    <div class="av-card-sub">${v.empresa||v.produto_nome||'—'}</div>
+    <div class="av-card-val">${fat}</div>
+    ${data?`<div class="av-card-data">Venda: ${data}</div>`:''}
+    ${resp?`<div class="av-card-data" style="margin-top:2px">👤 ${resp.nome}</div>`:''}
+  </div>`;
+}
+
+async function abrirVenda(id) {
+  const v = _vendas.find(x=>x.id===id);
+  if (!v) return;
+  _aberto = v;
+  document.getElementById('av-id').value = v.id;
+  document.getElementById('av-modal-nome').textContent = v.nome;
+  document.getElementById('av-modal-sub').textContent  = [v.empresa, v.produto_nome].filter(Boolean).join(' · ');
+  document.getElementById('av-valor').value   = v.valor_venda||'';
+  document.getElementById('av-entrega').value = v.data_entrega_prevista||'';
+  document.getElementById('av-obs').value     = v.observacoes||'';
+  // Etapa buttons
+  const btns = document.getElementById('av-etapa-btns');
+  btns.innerHTML = ETAPAS.map(et=>`
+    <button class="av-etapa-btn${v.etapa===et.key?' active':''}" data-etapa="${et.key}"
+      style="${v.etapa===et.key?`background:${et.cor};border-color:${et.cor}`:''}"
+      onclick="selecionarEtapa(this,'${et.key}','${et.cor}')">${et.label}</button>`).join('');
+  // Histórico
+  await carregarHistoricoModal(id);
+  document.getElementById('av-modal-ov').classList.add('open');
+}
+
+function selecionarEtapa(btn, etapa, cor) {
+  document.querySelectorAll('.av-etapa-btn').forEach(b=>{
+    b.classList.remove('active');
+    b.style.background='';
+    b.style.borderColor='';
+    b.style.color='';
+  });
+  btn.classList.add('active');
+  btn.style.background=cor;
+  btn.style.borderColor=cor;
+  btn.style.color='#fff';
+}
+
+async function carregarHistoricoModal(id) {
+  const hist = document.getElementById('av-hist-list');
+  hist.innerHTML = '<div style="font-size:.75rem;color:var(--text-muted)">Carregando...</div>';
+  const r = await Auth.api('GET', `/adm-vendas/${id}/historico`);
+  const itens = r?.data?.dados || [];
+  if (!itens.length) { hist.innerHTML='<div style="font-size:.75rem;color:var(--text-muted)">Sem histórico ainda.</div>'; return; }
+  hist.innerHTML = itens.map(h=>{
+    const data = new Date(h.criado_em).toLocaleString('pt-BR');
+    return `<div class="av-hist-item">
+      <div>
+        <div>${h.conteudo}</div>
+        <div class="av-hist-meta">${h.usuario_nome||'Sistema'} · ${data}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function salvarVenda() {
+  const id    = document.getElementById('av-id').value;
+  const etapa = document.querySelector('.av-etapa-btn.active')?.dataset?.etapa;
+  const alertEl = document.getElementById('av-alert');
+  alertEl.style.display='none';
+  const payload = {
+    etapa:                  etapa||undefined,
+    valor_venda:            parseFloat(document.getElementById('av-valor').value)||undefined,
+    data_entrega_prevista:  document.getElementById('av-entrega').value||undefined,
+    observacoes:            document.getElementById('av-obs').value.trim()||undefined,
+  };
+  const r = await Auth.api('PATCH', `/adm-vendas/${id}`, payload);
+  if (r?.ok) {
+    Toast.show('Salvo!','success');
+    fecharModal();
+    await carregar();
+  } else {
+    alertEl.textContent=r?.data?.erro||'Erro ao salvar.';
+    alertEl.style.display='';
+  }
+}
+
+async function adicionarNota() {
+  const id  = document.getElementById('av-id').value;
+  const txt = document.getElementById('av-nova-nota').value.trim();
+  if (!id||!txt) return;
+  const r = await Auth.api('POST', `/adm-vendas/${id}/historico`, { conteudo: txt });
+  if (r?.ok) {
+    document.getElementById('av-nova-nota').value='';
+    await carregarHistoricoModal(id);
+    Toast.show('Nota adicionada.','success');
+  } else Toast.show(r?.data?.erro||'Erro.','error');
+}
+
+function fecharModal() {
+  document.getElementById('av-modal-ov').classList.remove('open');
+  _aberto=null;
+}
+
+function bindEvents() {
+  document.getElementById('btn-refresh').addEventListener('click', carregar);
+  document.getElementById('f-etapa').addEventListener('change', carregar);
+  document.getElementById('f-status').addEventListener('change', carregar);
+  document.getElementById('f-resp').addEventListener('change', carregar);
+  document.getElementById('av-btn-close').addEventListener('click', fecharModal);
+  document.getElementById('av-btn-cancelar').addEventListener('click', fecharModal);
+  document.getElementById('av-btn-salvar').addEventListener('click', salvarVenda);
+  document.getElementById('av-btn-nota').addEventListener('click', adicionarNota);
+  document.getElementById('av-modal-ov').addEventListener('click', e=>{
+    if(e.target===document.getElementById('av-modal-ov')) fecharModal();
+  });
+  document.getElementById('btn-nova-venda').addEventListener('click', ()=>{
+    Toast.show('Vendas são criadas automaticamente ao marcar um lead como ganho na Pipeline.','info');
+  });
+}
+
+init();
+</script>
+<script src="/js/mobile-nav.js"></script>
+</body>
+</html>

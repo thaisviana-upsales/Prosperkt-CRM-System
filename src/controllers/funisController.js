@@ -17,6 +17,24 @@ const ETAPAS_PADRAO = [
   { nome:'Perdidos',                      ordem:7, cor:'#FF3B5C', probabilidade:0,   is_ganho:0, is_perdido:1 },
 ];
 
+// Etapas específicas para Carteira Recorrente
+const ETAPAS_CARTEIRA_RECORRENTE = [
+  { nome:'Previsão Carteira 15-30 dias',  ordem:1,  cor:'#6CFF4E', probabilidade:10,  is_ganho:0, is_perdido:0 },
+  { nome:'Previsão Carteira 30-60 dias',  ordem:2,  cor:'#5BE89E', probabilidade:10,  is_ganho:0, is_perdido:0 },
+  { nome:'Previsão Carteira 60-90 dias',  ordem:3,  cor:'#3B8BFF', probabilidade:15,  is_ganho:0, is_perdido:0 },
+  { nome:'Previsão Carteira 3 - 6 meses', ordem:4,  cor:'#6C47FF', probabilidade:20,  is_ganho:0, is_perdido:0 },
+  { nome:'Previsão Carteira 6 - 9 meses', ordem:5,  cor:'#9B59B6', probabilidade:20,  is_ganho:0, is_perdido:0 },
+  { nome:'Previsão Carteira 9 - 18 meses',ordem:6,  cor:'#FFB627', probabilidade:25,  is_ganho:0, is_perdido:0 },
+  { nome:'Previsão Carteira +18 meses',   ordem:7,  cor:'#F5A623', probabilidade:25,  is_ganho:0, is_perdido:0 },
+  { nome:'Orçamento Enviado',             ordem:8,  cor:'#3B8BFF', probabilidade:55,  is_ganho:0, is_perdido:0 },
+  { nome:'Orçamento Aprovado',            ordem:9,  cor:'#5BE89E', probabilidade:70,  is_ganho:0, is_perdido:0 },
+  { nome:'Layout Virtual',                ordem:10, cor:'#6CFF4E', probabilidade:75,  is_ganho:0, is_perdido:0 },
+  { nome:'Amostra Física',                ordem:11, cor:'#FFB627', probabilidade:80,  is_ganho:0, is_perdido:0 },
+  { nome:'Amostra Aprovada',              ordem:12, cor:'#F5A623', probabilidade:90,  is_ganho:0, is_perdido:0 },
+  { nome:'Follow-Up',                     ordem:13, cor:'#FF8C00', probabilidade:50,  is_ganho:0, is_perdido:0 },
+  { nome:'Vendas',                        ordem:14, cor:'#6CFF4E', probabilidade:100, is_ganho:1, is_perdido:0 },
+];
+
 const FUNIS_SEED = [
   { nome:'Indicação',           cor:'#6CFF4E' },
   { nome:'Instagram',           cor:'#E10098' },
@@ -34,37 +52,90 @@ async function seedFunis() {
   try {
     if (isSupa) {
       const { data: existing } = await sb.from('funis').select('id').limit(1);
-      if (existing?.length) return;
-      // Supabase: cria funil → pipeline → etapas (via pipeline_id)
-      for (const [idx, f] of FUNIS_SEED.entries()) {
-        const funilId    = crypto.randomBytes(16).toString('hex');
-        const pipelineId = crypto.randomBytes(16).toString('hex');
-        await sb.from('funis').insert({ id:funilId, nome:f.nome, cor:f.cor, ativo:1, ordem:idx });
-        await sb.from('pipelines').insert({ id:pipelineId, funil_id:funilId, nome:`Pipeline - ${f.nome}`, ordem:idx, ativo:1 });
-        for (const e of ETAPAS_PADRAO) {
-          await sb.from('etapas').insert({ id:crypto.randomBytes(16).toString('hex'), pipeline_id:pipelineId, nome:e.nome, cor:e.cor, ordem:e.ordem, is_ganho:e.is_ganho, is_perdido:e.is_perdido, probabilidade:e.probabilidade });
+      if (!existing?.length) {
+        // Cria todos os funis iniciais
+        for (const [idx, f] of FUNIS_SEED.entries()) {
+          const funilId    = crypto.randomBytes(16).toString('hex');
+          const pipelineId = crypto.randomBytes(16).toString('hex');
+          await sb.from('funis').insert({ id:funilId, nome:f.nome, cor:f.cor, ativo:1, ordem:idx });
+          await sb.from('pipelines').insert({ id:pipelineId, funil_id:funilId, nome:`Pipeline - ${f.nome}`, ordem:idx, ativo:1 });
+          const etapas = f.nome === 'Carteira Recorrente' ? ETAPAS_CARTEIRA_RECORRENTE : ETAPAS_PADRAO;
+          for (const e of etapas) {
+            await sb.from('etapas').insert({ id:crypto.randomBytes(16).toString('hex'), pipeline_id:pipelineId, nome:e.nome, cor:e.cor, ordem:e.ordem, is_ganho:e.is_ganho, is_perdido:e.is_perdido, probabilidade:e.probabilidade });
+          }
         }
+        console.log('[Seed] Funis criados no Supabase.');
       }
-      console.log('[Seed] Funis criados no Supabase.');
+      // Garante etapas corretas da Carteira Recorrente em instâncias existentes
+      await _seedEtapasCarteiraRecorrente_Supa(sb).catch(e => console.warn('[seedEtapas Supa]', e.message));
       return;
     }
     // SQLite
     const { getDb } = require('../database/db');
     const db = getDb();
     const count = db.prepare("SELECT COUNT(*) as c FROM funis").get().c;
-    if (count > 0) return;
-    const adminId = db.prepare("SELECT id FROM usuarios WHERE role='SUPER_ADMIN' LIMIT 1").get()?.id;
-    FUNIS_SEED.forEach((f, idx) => {
-      const funilId = crypto.randomBytes(16).toString('hex');
-      const pipelineId = crypto.randomBytes(16).toString('hex');
-      db.prepare(`INSERT INTO funis (id,nome,cor,ativo,criado_por) VALUES (?,?,?,1,?)`).run(funilId,f.nome,f.cor,adminId);
-      db.prepare(`INSERT INTO pipelines (id,funil_id,nome,ordem,ativo,criado_por) VALUES (?,?,?,?,1,?)`).run(pipelineId,funilId,`Pipeline - ${f.nome}`,idx,adminId);
-      ETAPAS_PADRAO.forEach(e => {
-        db.prepare(`INSERT INTO etapas (id,pipeline_id,nome,cor,ordem,is_ganho,is_perdido,probabilidade,criado_por) VALUES (?,?,?,?,?,?,?,?,?)`).run(crypto.randomBytes(16).toString('hex'),pipelineId,e.nome,e.cor,e.ordem,e.is_ganho,e.is_perdido,e.probabilidade,adminId);
+    if (count === 0) {
+      const adminId = db.prepare("SELECT id FROM usuarios WHERE role='SUPER_ADMIN' LIMIT 1").get()?.id;
+      FUNIS_SEED.forEach((f, idx) => {
+        const funilId = crypto.randomBytes(16).toString('hex');
+        const pipelineId = crypto.randomBytes(16).toString('hex');
+        db.prepare(`INSERT INTO funis (id,nome,cor,ativo,criado_por) VALUES (?,?,?,1,?)`).run(funilId,f.nome,f.cor,adminId);
+        db.prepare(`INSERT INTO pipelines (id,funil_id,nome,ordem,ativo,criado_por) VALUES (?,?,?,?,1,?)`).run(pipelineId,funilId,`Pipeline - ${f.nome}`,idx,adminId);
+        const etapas = f.nome === 'Carteira Recorrente' ? ETAPAS_CARTEIRA_RECORRENTE : ETAPAS_PADRAO;
+        etapas.forEach(e => {
+          db.prepare(`INSERT INTO etapas (id,pipeline_id,nome,cor,ordem,is_ganho,is_perdido,probabilidade,criado_por) VALUES (?,?,?,?,?,?,?,?,?)`).run(crypto.randomBytes(16).toString('hex'),pipelineId,e.nome,e.cor,e.ordem,e.is_ganho,e.is_perdido,e.probabilidade,adminId);
+        });
       });
-    });
+    }
+    // Garante etapas corretas da Carteira Recorrente em instâncias existentes
+    try { _seedEtapasCarteiraRecorrente_SQLite(db); } catch(e) { console.warn('[seedEtapas SQLite]', e.message); }
   } catch(e) { console.error('[seedFunis]', e.message); }
 }
+
+// Garante as 14 etapas da Carteira Recorrente — sem duplicar (SQLite)
+function _seedEtapasCarteiraRecorrente_SQLite(db) {
+  const funilCart = db.prepare(`SELECT id FROM funis WHERE nome LIKE '%Carteira Recorrente%' AND ativo=1 LIMIT 1`).get();
+  if (!funilCart) return;
+  let pipe = db.prepare(`SELECT id FROM pipelines WHERE funil_id=? LIMIT 1`).get(funilCart.id);
+  if (!pipe) {
+    const pipeId = crypto.randomBytes(16).toString('hex');
+    const adminId = db.prepare("SELECT id FROM usuarios WHERE role='SUPER_ADMIN' LIMIT 1").get()?.id;
+    db.prepare(`INSERT INTO pipelines (id,funil_id,nome,ordem,ativo,criado_por) VALUES (?,?,'Pipeline - Carteira Recorrente',0,1,?)`).run(pipeId, funilCart.id, adminId);
+    pipe = { id: pipeId };
+  }
+  for (const e of ETAPAS_CARTEIRA_RECORRENTE) {
+    const existe = db.prepare(`SELECT id FROM etapas WHERE pipeline_id=? AND nome=? LIMIT 1`).get(pipe.id, e.nome);
+    if (!existe) {
+      db.prepare(`INSERT INTO etapas (id,pipeline_id,nome,cor,ordem,is_ganho,is_perdido,probabilidade) VALUES (?,?,?,?,?,?,?,?)`).run(crypto.randomBytes(16).toString('hex'),pipe.id,e.nome,e.cor,e.ordem,e.is_ganho,e.is_perdido,e.probabilidade);
+    }
+  }
+  console.log('[Seed] Etapas Carteira Recorrente verificadas (SQLite).');
+}
+
+// Garante as 14 etapas da Carteira Recorrente — sem duplicar (Supabase)
+async function _seedEtapasCarteiraRecorrente_Supa(sb) {
+  const { data: funisCart } = await sb.from('funis').select('id').ilike('nome','%Carteira Recorrente%').eq('ativo',1).limit(1);
+  if (!funisCart?.length) return;
+  const funilId = funisCart[0].id;
+  const { data: pipes } = await sb.from('pipelines').select('id').eq('funil_id', funilId).limit(1);
+  let pipeId;
+  if (!pipes?.length) {
+    pipeId = crypto.randomBytes(16).toString('hex');
+    await sb.from('pipelines').insert({ id:pipeId, funil_id:funilId, nome:'Pipeline - Carteira Recorrente', ordem:0, ativo:1 });
+  } else {
+    pipeId = pipes[0].id;
+  }
+  const { data: etapasExist } = await sb.from('etapas').select('nome').eq('pipeline_id', pipeId);
+  const nomesExist = new Set((etapasExist||[]).map(e => e.nome));
+  for (const e of ETAPAS_CARTEIRA_RECORRENTE) {
+    if (!nomesExist.has(e.nome)) {
+      await sb.from('etapas').insert({ id:crypto.randomBytes(16).toString('hex'), pipeline_id:pipeId, nome:e.nome, cor:e.cor, ordem:e.ordem, is_ganho:e.is_ganho, is_perdido:e.is_perdido, probabilidade:e.probabilidade });
+    }
+  }
+  console.log('[Seed] Etapas Carteira Recorrente verificadas (Supabase).');
+}
+
+
 
 // GET /api/funis  (?somente_ativos=true para áreas operacionais)
 async function listar(req, res) {

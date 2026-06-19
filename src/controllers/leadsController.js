@@ -12,6 +12,35 @@ function getAutomacaoSvc() {
   return _automacaoSvc;
 }
 
+// admVendas — importação lazy para evitar dependência circular
+let _admVendasCtrl = null;
+function getAdmVendasCtrl() {
+  if (!_admVendasCtrl) _admVendasCtrl = require('./admVendasController');
+  return _admVendasCtrl;
+}
+
+// Mapa de previsão → etapa de Carteira Recorrente
+const PREVISAO_ETAPA_CARTEIRA = {
+  '15-30 dias':  'Previsão Carteira 15-30 dias',
+  '30-60 dias':  'Previsão Carteira 30-60 dias',
+  '60-90 dias':  'Previsão Carteira 60-90 dias',
+  '3 - 6 meses': 'Previsão Carteira 3 - 6 meses',
+  '6 - 9 meses': 'Previsão Carteira 6 - 9 meses',
+  '9 - 18 meses':'Previsão Carteira 9 - 18 meses',
+  '+18 meses':   'Previsão Carteira +18 meses',
+};
+
+// Dias de deslocamento para calcular data_prevista_proxima_compra
+const PREVISAO_DIAS = {
+  '15-30 dias':  15,
+  '30-60 dias':  30,
+  '60-90 dias':  60,
+  '3 - 6 meses': 90,
+  '6 - 9 meses': 180,
+  '9 - 18 meses':270,
+  '+18 meses':   540,
+};
+
 // ── Helper: formata log de auditoria em texto legível ──────────────────────────
 function _parseSafe(v) {
   if (!v) return {};
@@ -350,6 +379,9 @@ async function atualizar(req, res) {
 
       const allow = [
         'nome','email','telefone','empresa','cargo','valor','origem','data_fechamento',
+        'observacoes','motivo_perda','dados_extras','valor_venda','forma_pagamento',
+        'quantidade_parcelas','parcelas_json','produto_id','produto_nome','produto_cor',
+        'previsao_proxima_compra',
         'motivo_perda','observacoes','funil_id','etapa_id','pipeline_id',
         // campos comerciais da venda
         'valor_venda','forma_pagamento','quantidade_parcelas','parcelas_json',
@@ -386,7 +418,7 @@ async function atualizar(req, res) {
     if (!atual) return res.status(404).json({ sucesso:false, erro:'Lead não encontrado.' });
     if (req.usuario.role==='VENDEDOR' && atual.responsavel_id !== req.usuario.id) return res.status(403).json({ sucesso:false, erro:'Acesso negado.' });
     const campos = {};
-    ['nome','email','telefone','empresa','cargo','valor','origem','data_fechamento','motivo_perda','dados_extras'].forEach(k => { if (req.body[k] !== undefined) campos[k] = req.body[k]; });
+    ['nome','email','telefone','empresa','cargo','valor','origem','data_fechamento','motivo_perda','dados_extras','previsao_proxima_compra'].forEach(k => { if (req.body[k] !== undefined) campos[k] = req.body[k]; });
     if (req.body.tags !== undefined) campos.tags = JSON.stringify(req.body.tags);
     if (req.body.responsavel_id && req.usuario.role !== 'VENDEDOR') campos.responsavel_id = req.body.responsavel_id;
     campos.atualizado_em = new Date().toISOString();
@@ -396,6 +428,120 @@ async function atualizar(req, res) {
   } catch(e) {
     console.error('[leads.atualizar]', e.message);
     return res.status(500).json({ sucesso:false, erro:e.message });
+  }
+}
+
+// ── Clona lead ganho para o funil Carteira Recorrente ────────────────────────
+// Idempotência: cria apenas se não existir clone ativo para o mesmo lead + previsão
+async function _clonarParaCarteiraRecorrente(sb, isSupa, sqlite, leadData, previsao, usuarioId) {
+  try {
+    const nomeEtapa = PREVISAO_ETAPA_CARTEIRA[previsao];
+    if (!nomeEtapa) {
+      console.warn('[CARTEIRA_RECORRENTE] Previsão desconhecida:', previsao);
+      return;
+    }
+
+    const crypto = require('crypto');
+    const agr = new Date().toISOString();
+    const leadOrigId = leadData.id;
+
+    if (isSupa && sb) {
+      // Verifica se já existe clone ativo com a mesma previsão
+      const { data: dupCheck } = await sb.from('leads')
+        .select('id')
+        .eq('lead_original_id', leadOrigId)
+        .eq('previsao_proxima_compra', previsao)
+        .eq('tipo_clone', 'carteira_recorrente')
+        .neq('status', 'PERDIDO')
+        .limit(1);
+      if (dupCheck?.length) {
+        console.log('[CARTEIRA_RECORRENTE] Clone já existe, ignorando.', dupCheck[0].id);
+        return;
+      }
+
+      // Busca funil Carteira Recorrente
+      const { data: funisCarteiraList } = await sb.from('funis')
+        .select('id')
+        .ilike('nome', '%Carteira Recorrente%')
+        .eq('ativo', 1)
+        .limit(1);
+      const funilCartId = funisCarteiraList?.[0]?.id;
+      if (!funilCartId) {
+        console.warn('[CARTEIRA_RECORRENTE] Funil "Carteira Recorrente" não encontrado.');
+        return;
+      }
+
+      // Busca pipeline do funil
+      const { data: pipes } = await sb.from('pipelines').select('id').eq('funil_id', funilCartId).limit(1);
+      const pipeId = pipes?.[0]?.id;
+
+      // Busca etapa pela nome
+      let etapaId = null;
+      if (pipeId) {
+        const { data: etapas } = await sb.from('etapas').select('id,nome').eq('pipeline_id', pipeId);
+        const etapaEnc = (etapas || []).find(e => e.nome === nomeEtapa);
+        etapaId = etapaEnc?.id || null;
+      }
+
+      const novoId = crypto.randomBytes(16).toString('hex');
+      await sb.from('leads').insert({
+        id: novoId,
+        nome: leadData.nome,
+        empresa: leadData.empresa || null,
+        email: leadData.email || null,
+        telefone: leadData.telefone || null,
+        responsavel_id: leadData.responsavel_id || null,
+        funil_id: funilCartId,
+        pipeline_id: pipeId || null,
+        etapa_id: etapaId || null,
+        status: 'ABERTO',
+        valor: 0,
+        previsao_proxima_compra: previsao,
+        tipo_clone: 'carteira_recorrente',
+        lead_original_id: leadOrigId,
+        criado_em: agr,
+        atualizado_em: agr,
+      });
+      console.log(`[CARTEIRA_RECORRENTE] ✅ Clone criado: ${novoId} | Etapa: ${nomeEtapa}`);
+    } else if (sqlite) {
+      const { getDb } = require('../database/db');
+      const db = getDb();
+
+      // Idempotência SQLite
+      const dup = db.prepare(
+        `SELECT id FROM leads WHERE lead_original_id=? AND previsao_proxima_compra=? AND tipo_clone='carteira_recorrente' AND status!='PERDIDO' LIMIT 1`
+      ).get(leadOrigId, previsao);
+      if (dup) {
+        console.log('[CARTEIRA_RECORRENTE] Clone já existe (SQLite):', dup.id);
+        return;
+      }
+
+      // Busca funil
+      const funilCart = db.prepare(`SELECT id FROM funis WHERE nome LIKE '%Carteira Recorrente%' AND ativo=1 LIMIT 1`).get();
+      if (!funilCart) {
+        console.warn('[CARTEIRA_RECORRENTE] Funil não encontrado (SQLite).');
+        return;
+      }
+      const pipeRec = db.prepare(`SELECT id FROM pipelines WHERE funil_id=? LIMIT 1`).get(funilCart.id);
+      let etapaCR = null;
+      if (pipeRec) {
+        etapaCR = db.prepare(`SELECT id FROM etapas WHERE pipeline_id=? AND nome=? LIMIT 1`).get(pipeRec.id, nomeEtapa);
+      }
+
+      const novoId = crypto.randomBytes(16).toString('hex');
+      db.prepare(`
+        INSERT INTO leads (id,nome,empresa,email,telefone,responsavel_id,funil_id,pipeline_id,etapa_id,status,
+          valor,previsao_proxima_compra,tipo_clone,lead_original_id,criado_em,atualizado_em)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `).run(
+        novoId, leadData.nome, leadData.empresa||null, leadData.email||null, leadData.telefone||null,
+        leadData.responsavel_id||null, funilCart.id, pipeRec?.id||null, etapaCR?.id||null, 'ABERTO',
+        0, previsao, 'carteira_recorrente', leadOrigId, agr, agr
+      );
+      console.log(`[CARTEIRA_RECORRENTE] ✅ Clone criado (SQLite): ${novoId} | Etapa: ${nomeEtapa}`);
+    }
+  } catch(e) {
+    console.error('[CARTEIRA_RECORRENTE] Erro ao clonar:', e.message);
   }
 }
 
@@ -434,6 +580,9 @@ async function mover(req, res) {
         const pid = req.body.produto_id ?? lead.produto_id;
         const pnm = req.body.produto_nome ?? lead.produto_nome;
         if (!pid && !pnm)                            faltando.push('Produto Adquirido');
+        // Previsão de próxima compra — obrigatória ao ganhar venda
+        const previsao = req.body.previsao_proxima_compra ?? lead.previsao_proxima_compra;
+        if (!previsao)                               faltando.push('Previsão de Próxima Compra');
         if (faltando.length > 0)
           return res.status(400).json({
             sucesso: false,
@@ -453,6 +602,7 @@ async function mover(req, res) {
       if (isGanho && !lead.ganho_em) upd.ganho_em = agora;
       if (isPerdido && motivo_perda) { upd.perdido_em = agora; upd.perdido_motivo = motivo_perda; upd.motivo_perda = motivo_perda; }
       // Salva campos comerciais ao mover para ganho
+      const previsaoProxima = req.body.previsao_proxima_compra ?? lead.previsao_proxima_compra ?? null;
       if (isGanho) {
         if (req.body.valor_venda  !== undefined) upd.valor_venda       = req.body.valor_venda;
         if (req.body.forma_pagamento)            upd.forma_pagamento   = req.body.forma_pagamento;
@@ -461,6 +611,17 @@ async function mover(req, res) {
         if (req.body.produto_id)                 upd.produto_id        = req.body.produto_id;
         if (req.body.produto_nome)               upd.produto_nome      = req.body.produto_nome;
         if (req.body.produto_cor)                upd.produto_cor       = req.body.produto_cor;
+        if (previsaoProxima)                     upd.previsao_proxima_compra = previsaoProxima;
+        // Calcula data_prevista_proxima_compra e alerta 7 dias antes
+        if (previsaoProxima && PREVISAO_DIAS[previsaoProxima]) {
+          const dppc = new Date();
+          dppc.setDate(dppc.getDate() + PREVISAO_DIAS[previsaoProxima]);
+          upd.data_prevista_proxima_compra = dppc.toISOString().slice(0,10);
+          const alerta = new Date(dppc);
+          alerta.setDate(alerta.getDate() - 7);
+          upd.alerta_recompra_em = alerta.toISOString().slice(0,10);
+          upd.alerta_recompra_enviado = 0;
+        }
       }
 
       const { data, error } = await sb.from('leads').update(upd).eq('id', id).select().single();
@@ -475,6 +636,27 @@ async function mover(req, res) {
       }
 
       req.log({ acao:'MOVER', entidade:'leads', entidade_id:id, antes:{ etapa_id:lead.etapa_id, status:lead.status }, depois:{ etapa_id, status:novoStatus } });
+
+      // ── Pós-ganho: clonagem Adm Vendas + Carteira Recorrente ──────────────────
+      if (isGanho) {
+        const leadGanho = { ...lead, ...upd };
+        // 1. Clone para Administração de Vendas
+        try {
+          console.log('[ADM_VENDAS_CLONE_TRIGGER_START] lead:', id);
+          const admRes = await getAdmVendasCtrl().clonarDeLeadGanho(leadGanho, lead.responsavel_id, sb, isSupa, null);
+          if (admRes.criado) console.log('[ADM_VENDAS_CLONE_TRIGGER_SUCCESS] card:', admRes.id);
+          else if (!admRes.sucesso) console.warn('[ADM_VENDAS_CLONE_TRIGGER_ERROR]', admRes.erro);
+          else console.log('[ADM_VENDAS_CLONE_TRIGGER_SKIP_DUPLICATE] card:', admRes.id);
+        } catch(eAdm) { console.error('[ADM_VENDAS_CLONE_TRIGGER_ERROR]', eAdm.message); }
+
+        // 2. Clone para Carteira Recorrente (loop de recompra)
+        if (previsaoProxima) {
+          try {
+            await _clonarParaCarteiraRecorrente(sb, isSupa, null, leadGanho, previsaoProxima, req.usuario?.id);
+          } catch(eCr) { console.error('[CARTEIRA_RECORRENTE_CLONE_ERROR]', eCr.message); }
+        }
+      }
+
       return res.json({ sucesso:true, dados: normalizeLead(data) });
     }
 
@@ -495,6 +677,20 @@ async function mover(req, res) {
     if (etapa.is_ganho && !lead.data_fechamento) extras.data_fechamento = agora.slice(0,10);
     if (etapa.is_perdido && motivo_perda) extras.motivo_perda = motivo_perda;
     extras.etapa_atualizada_em = agora; // rastreia entrada na etapa
+    // Previsão de próxima compra (Carteira Recorrente)
+    const previsaoProxSql = req.body.previsao_proxima_compra ?? lead.previsao_proxima_compra ?? null;
+    if (etapa.is_ganho && previsaoProxSql) {
+      extras.previsao_proxima_compra = previsaoProxSql;
+      if (PREVISAO_DIAS[previsaoProxSql]) {
+        const dppc = new Date();
+        dppc.setDate(dppc.getDate() + PREVISAO_DIAS[previsaoProxSql]);
+        extras.data_prevista_proxima_compra = dppc.toISOString().slice(0,10);
+        const alerta = new Date(dppc);
+        alerta.setDate(alerta.getDate() - 7);
+        extras.alerta_recompra_em = alerta.toISOString().slice(0,10);
+        extras.alerta_recompra_enviado = 0;
+      }
+    }
     const extraSets = Object.keys(extras).map(k=>`${k}=?`).join(',');
     sqlite.prepare(`UPDATE leads SET etapa_id=?, pipeline_id=COALESCE(?,pipeline_id), status=?, atualizado_em=?${extraSets?','+extraSets:''} WHERE id=?`).run(etapa_id, pipeline_id||null, novoStatus, agora, ...Object.values(extras), id);
 
@@ -504,6 +700,29 @@ async function mover(req, res) {
     if (etapa.is_ganho && lead.responsavel_id && valorVendaGanhoSql > 0) {
       try { calcularComissaoSQLite(sqlite, lead, id, pipeline_id, agora, req); } catch(e) { console.error('[COMISSAO_AUTO]', e.message); }
     }
+
+    // ── Pós-ganho: clonagem Adm Vendas + Carteira Recorrente ──────────────────
+    if (etapa.is_ganho) {
+      const { getDb } = require('../database/db');
+      const db = getDb();
+      const leadAtual = db.prepare('SELECT * FROM leads WHERE id=?').get(id);
+      // 1. Clone para Administração de Vendas
+      try {
+        console.log('[ADM_VENDAS_CLONE_TRIGGER_START] lead:', id);
+        const admRes = await getAdmVendasCtrl().clonarDeLeadGanho(leadAtual || lead, lead.responsavel_id, null, false, sqlite);
+        if (admRes.criado) console.log('[ADM_VENDAS_CLONE_TRIGGER_SUCCESS] card:', admRes.id);
+        else if (!admRes.sucesso) console.warn('[ADM_VENDAS_CLONE_TRIGGER_ERROR]', admRes.erro);
+        else console.log('[ADM_VENDAS_CLONE_TRIGGER_SKIP_DUPLICATE] card:', admRes.id);
+      } catch(eAdm) { console.error('[ADM_VENDAS_CLONE_TRIGGER_ERROR]', eAdm.message); }
+
+      // 2. Clone para Carteira Recorrente
+      if (previsaoProxSql) {
+        try {
+          await _clonarParaCarteiraRecorrente(null, false, sqlite, leadAtual || lead, previsaoProxSql, req.usuario?.id);
+        } catch(eCr) { console.error('[CARTEIRA_RECORRENTE_CLONE_ERROR]', eCr.message); }
+      }
+    }
+
     return res.json({ sucesso:true, dados: sqlite.prepare('SELECT * FROM leads WHERE id=?').get(id) });
   } catch(e) {
     console.error('[leads.mover]', e.message);

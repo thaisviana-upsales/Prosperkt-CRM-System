@@ -236,7 +236,19 @@
 
       <div class="fr-compact" style="margin-top:4px">
         <div class="input-group-sm"><label class="lbl-sm">Data de fechamento</label><input id="fl-data-fechamento" class="input input-sm date-input" type="date"></div>
-        <div class="input-group-sm"><label class="lbl-sm">Próxima compra prevista</label><input id="fl-proxima-compra" class="input input-sm date-input" type="date"></div>
+        <div class="input-group-sm">
+          <label class="lbl-sm">Previsão de Próxima Compra <span style="color:var(--green);font-size:.65rem" id="previsao-obrig-lbl">(obrigatório p/ ganho)</span></label>
+          <select id="fl-previsao-proxima-compra" class="input input-sm">
+            <option value="">— Selecione —</option>
+            <option value="15-30 dias">15-30 dias</option>
+            <option value="30-60 dias">30-60 dias</option>
+            <option value="60-90 dias">60-90 dias</option>
+            <option value="3 - 6 meses">3 - 6 meses</option>
+            <option value="6 - 9 meses">6 - 9 meses</option>
+            <option value="9 - 18 meses">9 - 18 meses</option>
+            <option value="+18 meses">+18 meses</option>
+          </select>
+        </div>
       </div>
 
       <!-- Produtos -->

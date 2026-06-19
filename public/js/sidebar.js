@@ -11,6 +11,8 @@ const Sidebar = (() => {
       icon:`<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>` },
     { id:'pipeline', href:'/pipeline.html', label:'Pipeline / CRM', roles:['SUPER_ADMIN','GESTOR','VENDEDOR'],
       icon:`<path d="M4 6h16M4 10h16M4 14h16M4 18h16"/>` },
+    { id:'adm-vendas', href:'/adm-vendas.html', label:'Adm. de Vendas', roles:['SUPER_ADMIN','GESTOR','VENDEDOR'],
+      icon:`<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>` },
     { id:'funis', href:'/funis.html', label:'Funis', roles:['SUPER_ADMIN','GESTOR'],
       icon:`<path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/>` },
     { id:'whatsapp', href:'/whatsapp.html', label:'Conversas', roles:['SUPER_ADMIN','GESTOR','VENDEDOR'],

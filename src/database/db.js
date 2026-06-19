@@ -391,6 +391,16 @@ function initSchema(db) {
       criado_em  TEXT NOT NULL DEFAULT (datetime('now'))
     )`,
     `CREATE INDEX IF NOT EXISTS idx_admvh_venda ON adm_vendas_historico(adm_venda_id)`,
+
+    // ── Carteira Recorrente — campos em leads ────────────────────────────────
+    `ALTER TABLE leads ADD COLUMN previsao_proxima_compra TEXT`,
+    `ALTER TABLE leads ADD COLUMN data_prevista_proxima_compra TEXT`,
+    `ALTER TABLE leads ADD COLUMN alerta_recompra_em TEXT`,
+    `ALTER TABLE leads ADD COLUMN alerta_recompra_enviado INTEGER DEFAULT 0`,
+    `ALTER TABLE leads ADD COLUMN tipo_clone TEXT`,
+    `ALTER TABLE leads ADD COLUMN lead_original_id TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_leads_clone ON leads(tipo_clone, lead_original_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_leads_alerta ON leads(alerta_recompra_em, alerta_recompra_enviado)`,
   ];
   migrations.forEach(sql => { try { db.exec(sql); } catch(_){} });
 

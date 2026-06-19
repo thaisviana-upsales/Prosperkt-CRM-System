@@ -28,6 +28,7 @@ const importacaoCtrl     = require('../controllers/importacaoLeadsController');
 const atividadesCtrl     = require('../controllers/atividadesController');
 const producaoCtrl       = require('../controllers/producaoController');
 const arquivosCtrl       = require('../controllers/arquivosController');
+const admVendasCtrl      = require('../controllers/admVendasController');
 
 // Seed funis iniciais (só roda se vazio)
 funisCtrl.seedFunis();
@@ -134,6 +135,17 @@ router.get   ('/leads/:id/arquivos',              autenticar, arquivosCtrl.lista
 router.post  ('/leads/:id/arquivos',              autenticar, arquivosCtrl.upload.single('arquivo'), arquivosCtrl.enviar, arquivosCtrl.handleUploadError);
 router.post  ('/leads/:id/arquivos/:arqId/producao', autenticar, arquivosCtrl.salvarEmProducao);
 router.delete('/leads/:id/arquivos/:arqId',       autenticar, arquivosCtrl.excluir);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMINISTRAÇÃO DE VENDAS (pós-venda operacional)
+// ─────────────────────────────────────────────────────────────────────────────
+router.get   ('/adm-vendas',                  autenticar, admVendasCtrl.listar);
+router.get   ('/adm-vendas/:id',              autenticar, admVendasCtrl.buscarPorId);
+router.post  ('/adm-vendas',                  autenticar, admVendasCtrl.criar);
+router.patch ('/adm-vendas/:id',              autenticar, admVendasCtrl.atualizar);
+router.patch ('/adm-vendas/:id/etapa',        autenticar, admVendasCtrl.moverEtapa);
+router.get   ('/adm-vendas/:id/historico',    autenticar, admVendasCtrl.historico);
+router.post  ('/adm-vendas/:id/historico',    autenticar, admVendasCtrl.adicionarNota);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // METAS
