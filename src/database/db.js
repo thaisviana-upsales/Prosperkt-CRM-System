@@ -346,6 +346,51 @@ function initSchema(db) {
     )`,
     // Salário fixo por vendedor
     `ALTER TABLE usuarios ADD COLUMN salario_fixo REAL DEFAULT 0`,
+
+    // ── Administração de Vendas ──────────────────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS adm_vendas (
+      id              TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      lead_original_id TEXT REFERENCES leads(id) ON DELETE SET NULL,
+      nome            TEXT NOT NULL,
+      empresa         TEXT,
+      email           TEXT,
+      telefone        TEXT,
+      responsavel_id  TEXT REFERENCES usuarios(id),
+      funil_id        TEXT REFERENCES funis(id),
+      valor_venda     REAL DEFAULT 0,
+      forma_pagamento TEXT,
+      quantidade_parcelas INTEGER DEFAULT 1,
+      parcelas_json   TEXT,
+      produto_id      TEXT,
+      produto_nome    TEXT,
+      produto_cor     TEXT,
+      origem          TEXT,
+      tags            TEXT,
+      dados_extras    TEXT,
+      observacoes     TEXT,
+      data_venda      TEXT,
+      data_entrega_prevista TEXT,
+      etapa           TEXT NOT NULL DEFAULT 'acompanhamento'
+                      CHECK(etapa IN ('acompanhamento','compras','producao','manuseio','transporte','concluido')),
+      status          TEXT NOT NULL DEFAULT 'ativo'
+                      CHECK(status IN ('ativo','concluido','cancelado')),
+      criado_em       TEXT NOT NULL DEFAULT (datetime('now')),
+      atualizado_em   TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_admv_lead_orig  ON adm_vendas(lead_original_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_admv_responsavel ON adm_vendas(responsavel_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_admv_etapa       ON adm_vendas(etapa)`,
+    `CREATE INDEX IF NOT EXISTS idx_admv_status      ON adm_vendas(status)`,
+    `CREATE TABLE IF NOT EXISTS adm_vendas_historico (
+      id         TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      adm_venda_id TEXT NOT NULL REFERENCES adm_vendas(id) ON DELETE CASCADE,
+      usuario_id TEXT REFERENCES usuarios(id),
+      tipo       TEXT NOT NULL DEFAULT 'NOTA'
+                 CHECK(tipo IN ('NOTA','SISTEMA','ETAPA','ARQUIVO')),
+      conteudo   TEXT NOT NULL,
+      criado_em  TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_admvh_venda ON adm_vendas_historico(adm_venda_id)`,
   ];
   migrations.forEach(sql => { try { db.exec(sql); } catch(_){} });
 
