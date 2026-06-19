@@ -312,9 +312,24 @@ async function moverLead(etapaId) {
       abrirSecaoComercial();
       return;
     }
+    // Previsão obrigatória — abre modal se não preenchida
+    if (!leadObj?.previsao_proxima_compra) {
+      Toast.show('Para concluir a venda, informe a previsão de próxima compra deste cliente.','error');
+      await abrirLead(leadIdLocal);
+      showTab('venda');
+      // Destaca o campo
+      const prevEl = document.getElementById('fl-previsao-proxima-compra');
+      if (prevEl) {
+        prevEl.style.outline='2px solid var(--pink,#FF3B5C)';
+        prevEl.scrollIntoView({ behavior:'smooth', block:'center' });
+        setTimeout(() => { prevEl.style.outline=''; }, 3000);
+      }
+      return;
+    }
     await _executarMover(leadIdLocal, etapaId, pidLocal, etapaDest, null);
     return;
   }
+
 
   if (isPerdido) {
     // Captura o ID e pid em variáveis locais ANTES de zerá-los,
@@ -669,6 +684,7 @@ async function salvarLead() {
     const email = document.getElementById('fl-email').value.trim();
     const vv    = parseFloat(document.getElementById('fl-valor-venda').value)||0;
     const fp    = document.getElementById('fl-forma-pgto').value;
+    const prev  = document.getElementById('fl-previsao-proxima-compra')?.value;
     // Multi-produto: valida lista de produtos
     const prodAtivos = _leadProdutos.filter(p => !p._removido);
     const faltando=[];
@@ -696,6 +712,22 @@ async function salvarLead() {
       alertEl.textContent=`Para registrar a venda, preencha: ${faltando.join(', ')}.`;
       alertEl.style.display='';
       abrirSecaoComercial();
+      return;
+    }
+    // ── Previsão de próxima compra — OBRIGATÓRIA para ganho ───────
+    if (!prev) {
+      alertEl.className='alert alert-error';
+      alertEl.textContent='Para concluir a venda, informe a previsão de próxima compra deste cliente.';
+      alertEl.style.display='';
+      // Destaca o campo visualmente e faz scroll até ele
+      const prevEl = document.getElementById('fl-previsao-proxima-compra');
+      if (prevEl) {
+        prevEl.style.outline='2px solid var(--pink,#FF3B5C)';
+        prevEl.style.borderColor='var(--pink,#FF3B5C)';
+        prevEl.scrollIntoView({ behavior:'smooth', block:'center' });
+        setTimeout(() => { prevEl.style.outline=''; prevEl.style.borderColor=''; }, 3000);
+      }
+      showTab('venda');
       return;
     }
   }
@@ -787,7 +819,23 @@ async function salvarLead() {
             payload.produto_nome        = document.getElementById('fl-produto').selectedOptions[0]?.text||undefined;
             payload.produto_cor         = document.getElementById('fl-produto').selectedOptions[0]?.dataset?.cor||undefined;
             payload.previsao_proxima_compra = document.getElementById('fl-previsao-proxima-compra')?.value || undefined;
+            // ── Previsão obrigatória p/ ganho ────────────────────────────
+            if (!payload.previsao_proxima_compra) {
+              alertEl.className='alert alert-error';
+              alertEl.textContent='Para concluir a venda, informe a previsão de próxima compra deste cliente.';
+              alertEl.style.display='';
+              const prevEl = document.getElementById('fl-previsao-proxima-compra');
+              if (prevEl) {
+                prevEl.style.outline='2px solid var(--pink,#FF3B5C)';
+                prevEl.style.borderColor='var(--pink,#FF3B5C)';
+                prevEl.scrollIntoView({ behavior:'smooth', block:'center' });
+                setTimeout(() => { prevEl.style.outline=''; prevEl.style.borderColor=''; }, 3000);
+              }
+              showTab('venda');
+              return;
+            }
           }
+
           // Layout Virtual: envia aprovacao se preenchida
           const lvaEl = document.getElementById('fl-layout-virtual-aprovado-em');
           if (lvaEl?.value) payload.layout_virtual_aprovado_em = lvaEl.value;
