@@ -401,6 +401,10 @@ function initSchema(db) {
     `ALTER TABLE leads ADD COLUMN lead_original_id TEXT`,
     `CREATE INDEX IF NOT EXISTS idx_leads_clone ON leads(tipo_clone, lead_original_id)`,
     `CREATE INDEX IF NOT EXISTS idx_leads_alerta ON leads(alerta_recompra_em, alerta_recompra_enviado)`,
+
+    // ── Layout Virtual — campo de aprovação ──────────────────────────────────
+    `ALTER TABLE leads ADD COLUMN layout_virtual_aprovado_em TEXT`,
+    `ALTER TABLE leads ADD COLUMN layout_virtual_entrada_em TEXT`,
   ];
   migrations.forEach(sql => { try { db.exec(sql); } catch(_){} });
 

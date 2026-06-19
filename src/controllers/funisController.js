@@ -8,13 +8,18 @@ const crypto = require('crypto');
 const { getProvider } = require('../database/dbProvider');
 
 const ETAPAS_PADRAO = [
-  { nome:'Lead Recebido',                 ordem:1, cor:'#6CFF4E', probabilidade:10,  is_ganho:0, is_perdido:0 },
-  { nome:'Contato Realizado',             ordem:2, cor:'#3B8BFF', probabilidade:25,  is_ganho:0, is_perdido:0 },
-  { nome:'Lead Desqualificado',           ordem:3, cor:'#FF3B5C', probabilidade:5,   is_ganho:0, is_perdido:1 },
-  { nome:'Em Tratativa',                  ordem:4, cor:'#FFB627', probabilidade:40,  is_ganho:0, is_perdido:0 },
-  { nome:'Orçamento Enviado',             ordem:5, cor:'#6C47FF', probabilidade:60,  is_ganho:0, is_perdido:0 },
-  { nome:'Vendas',                        ordem:6, cor:'#6CFF4E', probabilidade:100, is_ganho:1, is_perdido:0 },
-  { nome:'Perdidos',                      ordem:7, cor:'#FF3B5C', probabilidade:0,   is_ganho:0, is_perdido:1 },
+  { nome:'Lead Recebido',       ordem:1,  cor:'#6CFF4E', probabilidade:10,  is_ganho:0, is_perdido:0 },
+  { nome:'Contato Realizado',   ordem:2,  cor:'#3B8BFF', probabilidade:25,  is_ganho:0, is_perdido:0 },
+  { nome:'Lead Desqualificado', ordem:3,  cor:'#FF3B5C', probabilidade:5,   is_ganho:0, is_perdido:1 },
+  { nome:'Em Tratativa',        ordem:4,  cor:'#FFB627', probabilidade:40,  is_ganho:0, is_perdido:0 },
+  { nome:'Orçamento Enviado',   ordem:5,  cor:'#6C47FF', probabilidade:55,  is_ganho:0, is_perdido:0 },
+  { nome:'Orçamento Aprovado',  ordem:6,  cor:'#5BE89E', probabilidade:70,  is_ganho:0, is_perdido:0 },
+  { nome:'Layout Virtual',      ordem:7,  cor:'#9B59B6', probabilidade:75,  is_ganho:0, is_perdido:0 },
+  { nome:'Amostra Física',      ordem:8,  cor:'#FFB627', probabilidade:80,  is_ganho:0, is_perdido:0 },
+  { nome:'Amostra Aprovada',    ordem:9,  cor:'#F5A623', probabilidade:90,  is_ganho:0, is_perdido:0 },
+  { nome:'Follow-Up',           ordem:10, cor:'#FF8C00', probabilidade:50,  is_ganho:0, is_perdido:0 },
+  { nome:'Vendas',              ordem:11, cor:'#6CFF4E', probabilidade:100, is_ganho:1, is_perdido:0 },
+  { nome:'Perdidos',            ordem:12, cor:'#FF3B5C', probabilidade:0,   is_ganho:0, is_perdido:1 },
 ];
 
 // Etapas específicas para Carteira Recorrente
@@ -68,6 +73,8 @@ async function seedFunis() {
       }
       // Garante etapas corretas da Carteira Recorrente em instâncias existentes
       await _seedEtapasCarteiraRecorrente_Supa(sb).catch(e => console.warn('[seedEtapas Supa]', e.message));
+      // Garante etapas padrão (incl. Layout Virtual) em todos os funis comerciais
+      await _seedEtapasPadrao_Supa(sb).catch(e => console.warn('[seedEtapasPadrao Supa]', e.message));
       return;
     }
     // SQLite
@@ -89,6 +96,8 @@ async function seedFunis() {
     }
     // Garante etapas corretas da Carteira Recorrente em instâncias existentes
     try { _seedEtapasCarteiraRecorrente_SQLite(db); } catch(e) { console.warn('[seedEtapas SQLite]', e.message); }
+    // Garante etapas padrão (incl. Layout Virtual) em todos os funis comerciais
+    try { _seedEtapasPadrao_SQLite(db); } catch(e) { console.warn('[seedEtapasPadrao SQLite]', e.message); }
   } catch(e) { console.error('[seedFunis]', e.message); }
 }
 
@@ -135,7 +144,64 @@ async function _seedEtapasCarteiraRecorrente_Supa(sb) {
   console.log('[Seed] Etapas Carteira Recorrente verificadas (Supabase).');
 }
 
+// Garante as 12 etapas padrão (incl. Layout Virtual) em todos os funis comerciais — sem duplicar (SQLite)
+function _seedEtapasPadrao_SQLite(db) {
+  // Obtém todos os pipelines de funis que NÃO são Carteira Recorrente
+  const pipes = db.prepare(
+    `SELECT p.id FROM pipelines p JOIN funis f ON p.funil_id=f.id WHERE f.nome NOT LIKE '%Carteira Recorrente%' AND f.ativo=1`
+  ).all();
+  for (const pipe of pipes) {
+    const existentes = db.prepare(`SELECT nome FROM etapas WHERE pipeline_id=?`).all(pipe.id);
+    const nomesExist = new Set(existentes.map(e => e.nome));
+    for (const e of ETAPAS_PADRAO) {
+      if (!nomesExist.has(e.nome)) {
+        db.prepare(`INSERT INTO etapas (id,pipeline_id,nome,cor,ordem,is_ganho,is_perdido,probabilidade) VALUES (?,?,?,?,?,?,?,?)`)
+          .run(crypto.randomBytes(16).toString('hex'), pipe.id, e.nome, e.cor, e.ordem, e.is_ganho, e.is_perdido, e.probabilidade);
+        console.log(`[Seed] Etapa "${e.nome}" adicionada ao pipeline ${pipe.id}`);
+      }
+    }
+    // Corrige ordem das etapas existentes para respeitar a nova sequência
+    for (const e of ETAPAS_PADRAO) {
+      if (nomesExist.has(e.nome)) {
+        db.prepare(`UPDATE etapas SET ordem=?, cor=? WHERE pipeline_id=? AND nome=?`)
+          .run(e.ordem, e.cor, pipe.id, e.nome);
+      }
+    }
+  }
+  console.log('[Seed] Etapas padrão verificadas em todos os funis comerciais (SQLite).');
+}
 
+// Garante as 12 etapas padrão em todos os funis comerciais — sem duplicar (Supabase)
+async function _seedEtapasPadrao_Supa(sb) {
+  const { data: funisComerciais } = await sb.from('funis')
+    .select('id,nome').eq('ativo', 1);
+  const funisAlvo = (funisComerciais||[]).filter(f => !f.nome.includes('Carteira Recorrente'));
+  for (const funil of funisAlvo) {
+    const { data: pipes } = await sb.from('pipelines').select('id').eq('funil_id', funil.id).limit(1);
+    if (!pipes?.length) continue;
+    const pipeId = pipes[0].id;
+    const { data: etapasExist } = await sb.from('etapas').select('id,nome,ordem,cor').eq('pipeline_id', pipeId);
+    const nomesExist = new Set((etapasExist||[]).map(e => e.nome));
+    for (const e of ETAPAS_PADRAO) {
+      if (!nomesExist.has(e.nome)) {
+        await sb.from('etapas').insert({
+          id: crypto.randomBytes(16).toString('hex'),
+          pipeline_id: pipeId,
+          nome: e.nome, cor: e.cor, ordem: e.ordem,
+          is_ganho: e.is_ganho, is_perdido: e.is_perdido, probabilidade: e.probabilidade
+        });
+        console.log(`[Seed Supa] Etapa "${e.nome}" adicionada ao pipeline ${pipeId}`);
+      } else {
+        // Corrige ordem/cor das existentes
+        const existente = (etapasExist||[]).find(et => et.nome === e.nome);
+        if (existente && (existente.ordem !== e.ordem || existente.cor !== e.cor)) {
+          await sb.from('etapas').update({ ordem: e.ordem, cor: e.cor }).eq('id', existente.id);
+        }
+      }
+    }
+  }
+  console.log('[Seed Supa] Etapas padrão verificadas em todos os funis comerciais.');
+}
 
 // GET /api/funis  (?somente_ativos=true para áreas operacionais)
 async function listar(req, res) {

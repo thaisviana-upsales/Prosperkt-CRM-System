@@ -601,6 +601,37 @@ async function mover(req, res) {
       if (pipeline_id) upd.pipeline_id = pipeline_id;
       if (isGanho && !lead.ganho_em) upd.ganho_em = agora;
       if (isPerdido && motivo_perda) { upd.perdido_em = agora; upd.perdido_motivo = motivo_perda; upd.motivo_perda = motivo_perda; }
+      // ── Layout Virtual: entrada e saída ────────────────────────────────────
+      const isLayoutVirtual = /layout.?virtual/i.test(etapa.nome||'');
+      const isAmostrafisica  = /amostra.?física/i.test(etapa.nome||'');
+      const etapaAnterior   = lead.etapa_id ? ((await sb.from('etapas').select('nome').eq('id', lead.etapa_id).single())?.data?.nome||'') : '';
+      const vemDeLayoutVirtual = /layout.?virtual/i.test(etapaAnterior);
+
+      if (isLayoutVirtual) {
+        // Registra entrada na etapa Layout Virtual
+        upd.layout_virtual_entrada_em = agora;
+        // Limpa aprovação de execução anterior se o lead voltar para esta etapa
+        upd.layout_virtual_aprovado_em = null;
+      }
+
+      if (isAmostrafisica && vemDeLayoutVirtual) {
+        // Bloqueia se não houver aprovação do Layout Virtual
+        const aprovadoEm = req.body.layout_virtual_aprovado_em || lead.layout_virtual_aprovado_em;
+        if (!aprovadoEm) {
+          return res.status(400).json({
+            sucesso: false,
+            erro: 'Para mover para Amostra Física, confirme a aprovação do Layout Virtual preenchendo a data de aprovação.',
+            campos_faltando: ['layout_virtual_aprovado_em'],
+          });
+        }
+        upd.layout_virtual_aprovado_em = aprovadoEm;
+      }
+
+      // Salva data de aprovação se enviada manualmente
+      if (req.body.layout_virtual_aprovado_em && !isLayoutVirtual) {
+        upd.layout_virtual_aprovado_em = req.body.layout_virtual_aprovado_em;
+      }
+
       // Salva campos comerciais ao mover para ganho
       const previsaoProxima = req.body.previsao_proxima_compra ?? lead.previsao_proxima_compra ?? null;
       if (isGanho) {
@@ -635,7 +666,21 @@ async function mover(req, res) {
         calcularComissaoSupabase(sb, leadParaComissao, req).catch(e => console.error('[COMISSAO_AUTO]', e.message));
       }
 
-      req.log({ acao:'MOVER', entidade:'leads', entidade_id:id, antes:{ etapa_id:lead.etapa_id, status:lead.status }, depois:{ etapa_id, status:novoStatus } });
+      req.log({ acao:'MOVER', entidade:'leads', entidade_id:id,
+        antes:{ etapa_id:lead.etapa_id, status:lead.status, etapa_nome:etapaAnterior },
+        depois:{ etapa_id, status:novoStatus, etapa_nome:etapa.nome,
+          layout_virtual_entrada_em: isLayoutVirtual ? agora : undefined,
+          layout_virtual_aprovado_em: upd.layout_virtual_aprovado_em || undefined } });
+
+      // Log especial de etapas de Layout Virtual na timeline
+      if (isLayoutVirtual) {
+        req.log({ acao:'LAYOUT_VIRTUAL_ENTRADA', entidade:'leads', entidade_id:id,
+          depois:{ etapa_id, etapa_nome:etapa.nome, layout_virtual_entrada_em:agora, usuario:req.usuario?.nome||'Sistema' } });
+      }
+      if (isAmostrafisica && vemDeLayoutVirtual) {
+        req.log({ acao:'LAYOUT_VIRTUAL_APROVADO', entidade:'leads', entidade_id:id,
+          depois:{ layout_virtual_aprovado_em: upd.layout_virtual_aprovado_em, etapa_nome:etapa.nome, usuario:req.usuario?.nome||'Sistema' } });
+      }
 
       // ── Pós-ganho: clonagem Adm Vendas + Carteira Recorrente ──────────────────
       if (isGanho) {
@@ -677,6 +722,37 @@ async function mover(req, res) {
     if (etapa.is_ganho && !lead.data_fechamento) extras.data_fechamento = agora.slice(0,10);
     if (etapa.is_perdido && motivo_perda) extras.motivo_perda = motivo_perda;
     extras.etapa_atualizada_em = agora; // rastreia entrada na etapa
+
+    // ── Layout Virtual: entrada e saída (SQLite) ─────────────────────────
+    const isLayoutVirtualSql = /layout.?virtual/i.test(etapa.nome||'');
+    const isAmostrafisicaSql  = /amostra.?física/i.test(etapa.nome||'');
+    let etapaAnteriorNome = '';
+    if (lead.etapa_id) {
+      const etaAnt = sqlite.prepare('SELECT nome FROM etapas WHERE id=? LIMIT 1').get(lead.etapa_id);
+      etapaAnteriorNome = etaAnt?.nome || '';
+    }
+    const vemDeLayoutVirtualSql = /layout.?virtual/i.test(etapaAnteriorNome);
+
+    if (isLayoutVirtualSql) {
+      extras.layout_virtual_entrada_em = agora;
+      extras.layout_virtual_aprovado_em = null; // reseta aprovação ao re-entrar
+    }
+
+    if (isAmostrafisicaSql && vemDeLayoutVirtualSql) {
+      const aprovadoEm = req.body.layout_virtual_aprovado_em || lead.layout_virtual_aprovado_em;
+      if (!aprovadoEm) {
+        return res.status(400).json({
+          sucesso: false,
+          erro: 'Para mover para Amostra Física, confirme a aprovação do Layout Virtual preenchendo a data de aprovação.',
+          campos_faltando: ['layout_virtual_aprovado_em'],
+        });
+      }
+      extras.layout_virtual_aprovado_em = aprovadoEm;
+    }
+
+    if (req.body.layout_virtual_aprovado_em && !isLayoutVirtualSql) {
+      extras.layout_virtual_aprovado_em = req.body.layout_virtual_aprovado_em;
+    }
     // Previsão de próxima compra (Carteira Recorrente)
     const previsaoProxSql = req.body.previsao_proxima_compra ?? lead.previsao_proxima_compra ?? null;
     if (etapa.is_ganho && previsaoProxSql) {

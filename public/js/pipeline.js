@@ -280,6 +280,19 @@ async function moverLead(etapaId) {
   const isGanho = etapaDest?.is_ganho || etapaDest?.probabilidade>=100 ||
     /venda|vendas|ganho|fechad|fechamento/i.test(etapaDest?.nome||'');
 
+  // ── Travamento Layout Virtual → Amostra Física ──────────────────────────────
+  const isAmFisicaDest  = /amostra.?f/i.test(etapaDest?.nome||'');
+  const etapaOrigemObj  = _etapas.find(e=>e.id===_dragEtapaOrigem);
+  const vemDeLayoutVirt = /layout.?virtual/i.test(etapaOrigemObj?.nome||'');
+  if (isAmFisicaDest && vemDeLayoutVirt && !lead?.layout_virtual_aprovado_em) {
+    const leadIdLocal = _dragLeadId;
+    _dragLeadId=null; _dragEtapaOrigem=null;
+    Toast.show('Preencha a aprovação do Layout Virtual antes de mover para Amostra Física.','error');
+    await abrirLead(leadIdLocal);
+    showTab('venda');
+    return;
+  }
+
   if (isGanho) {
     const leadIdLocal = _dragLeadId;
     const pidLocal = pid;
@@ -408,6 +421,9 @@ async function abrirLead(id) {
   const selPrev = document.getElementById('fl-previsao-proxima-compra');
   if (selPrev) selPrev.value = l.previsao_proxima_compra || '';
   setVal('fl-obs-pedido', l.dados_extras?.obs_pedido || '');
+  // Layout Virtual
+  setVal('fl-layout-virtual-aprovado-em', l.layout_virtual_aprovado_em);
+  setVal('fl-layout-virtual-entrada-em',  l.layout_virtual_entrada_em);
   // Multi-produto: carrega do banco
   _leadIdAberto = id;
   await carregarProdutosLead(id, l);
@@ -761,6 +777,19 @@ async function salvarLead() {
             payload.produto_nome        = document.getElementById('fl-produto').selectedOptions[0]?.text||undefined;
             payload.produto_cor         = document.getElementById('fl-produto').selectedOptions[0]?.dataset?.cor||undefined;
             payload.previsao_proxima_compra = document.getElementById('fl-previsao-proxima-compra')?.value || undefined;
+          }
+          // Layout Virtual: envia aprovacao se preenchida
+          const lvaEl = document.getElementById('fl-layout-virtual-aprovado-em');
+          if (lvaEl?.value) payload.layout_virtual_aprovado_em = lvaEl.value;
+          // Validação frontend: Amostra Física requer Layout Virtual aprovado
+          const isAmFisica = /amostra.?f/i.test(etapaSel?.nome||'');
+          const etapaOrigNome = _leadEmEdicao?.etapa_nome || '';
+          const vemDeLayout   = /layout.?virtual/i.test(etapaOrigNome);
+          if (isAmFisica && vemDeLayout && !payload.layout_virtual_aprovado_em) {
+            alertEl.className='alert alert-error';
+            alertEl.textContent='Preencha a data de aprovação do Layout Virtual antes de mover para Amostra Física.';
+            alertEl.style.display='';
+            return;
           }
           await Auth.api('PATCH',`/leads/${id}/mover`,payload);
         }
