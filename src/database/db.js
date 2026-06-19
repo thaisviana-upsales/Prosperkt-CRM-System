@@ -405,6 +405,10 @@ function initSchema(db) {
     // ── Layout Virtual — campo de aprovação ──────────────────────────────────
     `ALTER TABLE leads ADD COLUMN layout_virtual_aprovado_em TEXT`,
     `ALTER TABLE leads ADD COLUMN layout_virtual_entrada_em TEXT`,
+
+    // ── Adm Vendas — data de entrada na etapa ────────────────────────────────
+    `ALTER TABLE adm_vendas ADD COLUMN etapa_atualizada_em TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_admv_etapa_atualizada_em ON adm_vendas(etapa_atualizada_em)`,
   ];
   migrations.forEach(sql => { try { db.exec(sql); } catch(_){} });
 

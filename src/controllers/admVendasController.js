@@ -36,7 +36,7 @@ function agora() {
 // ── GET /api/adm-vendas ───────────────────────────────────────────────────────
 async function listar(req, res) {
   const { sb, isSupa, sqlite } = getProvider();
-  const { etapa, responsavel_id, busca, status = 'ativo' } = req.query;
+  const { etapa, responsavel_id, busca, status = 'ativo', data_inicio, data_fim } = req.query;
   const usuario = req.usuario;
 
   try {
@@ -50,6 +50,9 @@ async function listar(req, res) {
       else if (responsavel_id)            q = q.eq('responsavel_id', responsavel_id);
       if (etapa)  q = q.eq('etapa', etapa);
       if (busca)  q = q.or(`nome.ilike.%${busca}%,empresa.ilike.%${busca}%,produto_nome.ilike.%${busca}%`);
+      // Filtro por data de entrada na etapa (usa etapa_atualizada_em; fallback para atualizado_em)
+      if (data_inicio) q = q.or(`etapa_atualizada_em.gte.${data_inicio},and(etapa_atualizada_em.is.null,atualizado_em.gte.${data_inicio})`);
+      if (data_fim)   q = q.or(`etapa_atualizada_em.lte.${data_fim}T23:59:59,and(etapa_atualizada_em.is.null,atualizado_em.lte.${data_fim}T23:59:59)`);
 
       const { data, error } = await q;
       if (error) throw error;
@@ -77,6 +80,15 @@ async function listar(req, res) {
       sql += ' AND (av.nome LIKE ? OR av.empresa LIKE ? OR av.produto_nome LIKE ?)';
       const q = `%${busca}%`; params.push(q, q, q);
     }
+    // Filtro por data de entrada na etapa (etapa_atualizada_em; fallback atualizado_em para antigos)
+    if (data_inicio) {
+      sql += ' AND (COALESCE(av.etapa_atualizada_em, av.atualizado_em) >= ?)';
+      params.push(data_inicio + 'T00:00:00');
+    }
+    if (data_fim) {
+      sql += ' AND (COALESCE(av.etapa_atualizada_em, av.atualizado_em) <= ?)';
+      params.push(data_fim + 'T23:59:59');
+    }
     sql += ' ORDER BY av.criado_em DESC';
 
     const itens = sqlite.prepare(sql).all(...params).map(v => ({
@@ -89,6 +101,7 @@ async function listar(req, res) {
     return res.status(500).json({ sucesso: false, erro: e.message });
   }
 }
+
 
 // ── GET /api/adm-vendas/:id ───────────────────────────────────────────────────
 async function buscarPorId(req, res) {
@@ -239,27 +252,32 @@ async function moverEtapa(req, res) {
     if (usuario.role === 'VENDEDOR' && atual.responsavel_id !== usuario.id)
       return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
 
+    const etapaAnterior = atual.etapa;
     const now = agora();
     const novoStatus = etapa === 'concluido' ? 'concluido' : 'ativo';
-    const upd = { etapa, status: novoStatus, atualizado_em: now };
+    const upd = { etapa, status: novoStatus, atualizado_em: now, etapa_atualizada_em: now };
 
     if (isSupa) {
       const { data, error } = await sb.from('adm_vendas').update(upd).eq('id', id).select().single();
       if (error) throw error;
     } else {
-      sqlite.prepare('UPDATE adm_vendas SET etapa=?, status=?, atualizado_em=? WHERE id=?').run(etapa, novoStatus, now, id);
+      sqlite.prepare('UPDATE adm_vendas SET etapa=?, status=?, atualizado_em=?, etapa_atualizada_em=? WHERE id=?')
+        .run(etapa, novoStatus, now, now, id);
     }
 
-    // Histórico de mudança de etapa
-    const msg = `Etapa alterada para: ${ETAPAS_LABELS[etapa]}`;
+    // Histórico de mudança de etapa — detalhado
+    const etapaAntLabel = ETAPAS_LABELS[etapaAnterior] || etapaAnterior;
+    const etapaNovaLabel = ETAPAS_LABELS[etapa] || etapa;
+    const msg = `Pedido movido de "${etapaAntLabel}" para "${etapaNovaLabel}". Responsável: ${usuario.nome||usuario.email||'Sistema'}. Data: ${new Date(now).toLocaleString('pt-BR')}.`;
     await _registrarHistorico(sb, isSupa, sqlite, id, usuario.id, 'ETAPA', msg);
 
-    return res.json({ sucesso: true, etapa, etapa_label: ETAPAS_LABELS[etapa], status: novoStatus });
+    return res.json({ sucesso: true, etapa, etapa_label: ETAPAS_LABELS[etapa], status: novoStatus, etapa_atualizada_em: now });
   } catch(e) {
     console.error('[admVendas.moverEtapa]', e.message);
     return res.status(500).json({ sucesso: false, erro: e.message });
   }
 }
+
 
 // ── GET /api/adm-vendas/:id/historico ─────────────────────────────────────────
 async function historico(req, res) {
