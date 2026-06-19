@@ -84,12 +84,12 @@
         <span style="font-size:.6rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em">Etapa</span>
         <select class="av-fsel" id="f-etapa">
           <option value="">Todas</option>
-          <option value="acompanhamento">Acompanhamento</option>
-          <option value="compras">Compras</option>
-          <option value="producao">Produção</option>
-          <option value="manuseio">Manuseio</option>
-          <option value="transporte">Transporte</option>
-          <option value="concluido">Concluído</option>
+          <option value="acompanhamento">📋 Acompanhamento</option>
+          <option value="compras">📦 Compras</option>
+          <option value="producao">⚙️ Produção</option>
+          <option value="manuseio">🧰 Manuseio</option>
+          <option value="transporte">🚚 Transporte</option>
+          <option value="concluido">✅ Concluído</option>
         </select>
       </div>
       <div style="display:flex;flex-direction:column;gap:2px">
@@ -101,10 +101,27 @@
           <option value="cancelado">Cancelados</option>
         </select>
       </div>
-      <button class="btn btn-secondary btn-sm" id="btn-refresh" style="margin-top:16px">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-        Atualizar
-      </button>
+      <div style="display:flex;flex-direction:column;gap:2px">
+        <span style="font-size:.6rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em">📍 Entrou na etapa — De</span>
+        <input type="date" class="av-fsel" id="f-inicio" style="padding:5px 8px">
+      </div>
+      <div style="display:flex;flex-direction:column;gap:2px">
+        <span style="font-size:.6rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em">Até</span>
+        <input type="date" class="av-fsel" id="f-fim" style="padding:5px 8px">
+      </div>
+      <div style="display:flex;flex-direction:column;gap:2px">
+        <span style="font-size:.6rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em">Busca</span>
+        <input type="text" class="av-fsel" id="f-busca" placeholder="Cliente / empresa..." style="padding:5px 8px;min-width:140px">
+      </div>
+      <div style="display:flex;gap:6px;align-items:flex-end">
+        <button class="btn btn-secondary btn-sm" id="btn-refresh">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          Atualizar
+        </button>
+        <button class="btn btn-sm" id="btn-limpar" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted)">
+          Limpar
+        </button>
+      </div>
     </div>
 
     <!-- Board Kanban -->
@@ -178,12 +195,12 @@
 <script src="/js/sidebar.js"></script>
 <script>
 const ETAPAS = [
-  { key:'acompanhamento', label:'Acompanhamento do Pedido', cor:'#3B8BFF' },
-  { key:'compras',        label:'Compras / Chegada de Materiais', cor:'#FFB627' },
-  { key:'producao',       label:'Produção', cor:'#6C47FF' },
-  { key:'manuseio',       label:'Manuseio', cor:'#FF8C00' },
-  { key:'transporte',     label:'Transporte', cor:'#25D366' },
-  { key:'concluido',      label:'Venda Concluída', cor:'#6CFF4E' },
+  { key:'acompanhamento', label:'Acompanhamento do Pedido',    cor:'#3B8BFF', icon:'📋' },
+  { key:'compras',        label:'Compras / Chegada de Materiais', cor:'#FFB627', icon:'📦' },
+  { key:'producao',       label:'Produção',                    cor:'#6C47FF', icon:'⚙️' },
+  { key:'manuseio',       label:'Manuseio',                    cor:'#FF8C00', icon:'🧰' },
+  { key:'transporte',     label:'Transporte',                  cor:'#25D366', icon:'🚚' },
+  { key:'concluido',      label:'Venda Concluída',             cor:'#6CFF4E', icon:'✅' },
 ];
 
 let _vendas = [], _usuario = null, _usuarios = [];
@@ -211,13 +228,19 @@ function popularSelResp() {
 }
 
 async function carregar() {
-  const etapa  = document.getElementById('f-etapa').value;
-  const status = document.getElementById('f-status').value;
-  const resp   = document.getElementById('f-resp').value;
+  const etapa    = document.getElementById('f-etapa').value;
+  const status   = document.getElementById('f-status').value;
+  const resp     = document.getElementById('f-resp').value;
+  const inicio   = document.getElementById('f-inicio').value;
+  const fim      = document.getElementById('f-fim').value;
+  const busca    = document.getElementById('f-busca').value.trim();
   const params = new URLSearchParams();
   if (etapa)  params.set('etapa', etapa);
   if (status) params.set('status', status);
   if (resp)   params.set('responsavel_id', resp);
+  if (inicio) params.set('data_inicio', inicio);
+  if (fim)    params.set('data_fim', fim);
+  if (busca)  params.set('busca', busca);
   const r = await Auth.api('GET', `/adm-vendas?${params}`);
   _vendas = r?.data?.dados || [];
   renderStats();
@@ -255,10 +278,10 @@ function renderBoard() {
   board.innerHTML = colsToShow.map(et => {
     const cards = _vendas.filter(v=>v.etapa===et.key);
     return `<div class="av-col">
-      <div class="av-col-hd" style="background:${et.cor}22;color:${et.cor};border:1px solid ${et.cor}44">
-        <span style="width:8px;height:8px;border-radius:50%;background:${et.cor};flex-shrink:0"></span>
-        ${et.label}
-        <span style="margin-left:auto;background:${et.cor}33;border-radius:20px;padding:2px 8px;font-size:.68rem">${cards.length}</span>
+      <div class="av-col-hd" style="background:${et.cor}18;color:${et.cor};border:1px solid ${et.cor}44;border-bottom:2px solid ${et.cor}">
+        <span style="font-size:1rem;flex-shrink:0;filter:drop-shadow(0 0 4px ${et.cor}66)">${et.icon}</span>
+        <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${et.label}</span>
+        <span style="margin-left:auto;background:${et.cor}33;border-radius:20px;padding:2px 8px;font-size:.68rem;flex-shrink:0">${cards.length}</span>
       </div>
       <div class="av-col-body">
         ${cards.length ? cards.map(v=>renderCard(v,et)).join('') :
@@ -273,12 +296,19 @@ function renderCard(v, et) {
   const resp = _usuarios.find(u=>u.id===v.responsavel_id);
   const fat  = Number(v.valor_venda||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
   const data = v.data_venda ? new Date(v.data_venda+'T12:00:00').toLocaleDateString('pt-BR') : '';
+  // Data de entrada na etapa atual
+  const entrou = v.etapa_atualizada_em
+    ? new Date(v.etapa_atualizada_em).toLocaleDateString('pt-BR') : '';
   return `<div class="av-card" data-id="${v.id}" style="--card-cor:${et.cor}">
     <style>.av-card[data-id="${v.id}"]::before{background:${et.cor}}</style>
-    <div class="av-card-nome">${v.nome}</div>
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+      <span style="font-size:.82rem">${et.icon}</span>
+      <div class="av-card-nome" style="margin:0">${v.nome}</div>
+    </div>
     <div class="av-card-sub">${v.empresa||v.produto_nome||'—'}</div>
     <div class="av-card-val">${fat}</div>
-    ${data?`<div class="av-card-data">Venda: ${data}</div>`:''}
+    ${data?`<div class="av-card-data">🗓 Venda: ${data}</div>`:''}
+    ${entrou?`<div class="av-card-data" style="color:var(--text-muted)">📍 Entrou aqui: ${entrou}</div>`:''}
     ${resp?`<div class="av-card-data" style="margin-top:2px">👤 ${resp.nome}</div>`:''}
   </div>`;
 }
@@ -298,7 +328,8 @@ async function abrirVenda(id) {
   btns.innerHTML = ETAPAS.map(et=>`
     <button class="av-etapa-btn${v.etapa===et.key?' active':''}" data-etapa="${et.key}"
       style="${v.etapa===et.key?`background:${et.cor};border-color:${et.cor}`:''}"
-      onclick="selecionarEtapa(this,'${et.key}','${et.cor}')">${et.label}</button>`).join('');
+      onclick="selecionarEtapa(this,'${et.key}','${et.cor}')"
+      title="Mover para ${et.label}">${et.icon} ${et.label}</button>`).join('');
   // Histórico
   await carregarHistoricoModal(id);
   document.getElementById('av-modal-ov').classList.add('open');
@@ -378,6 +409,17 @@ function bindEvents() {
   document.getElementById('f-etapa').addEventListener('change', carregar);
   document.getElementById('f-status').addEventListener('change', carregar);
   document.getElementById('f-resp').addEventListener('change', carregar);
+  document.getElementById('f-inicio').addEventListener('change', carregar);
+  document.getElementById('f-fim').addEventListener('change', carregar);
+  document.getElementById('btn-limpar').addEventListener('click', () => {
+    document.getElementById('f-etapa').value  = '';
+    document.getElementById('f-resp').value   = '';
+    document.getElementById('f-status').value = 'ativo';
+    document.getElementById('f-inicio').value = '';
+    document.getElementById('f-fim').value    = '';
+    document.getElementById('f-busca').value  = '';
+    carregar();
+  });
   document.getElementById('av-btn-close').addEventListener('click', fecharModal);
   document.getElementById('av-btn-cancelar').addEventListener('click', fecharModal);
   document.getElementById('av-btn-salvar').addEventListener('click', salvarVenda);
