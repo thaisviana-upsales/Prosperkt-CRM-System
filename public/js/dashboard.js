@@ -23,9 +23,10 @@ async function init() {
   }
 
   await carregar();
+  await carregarAlertasRecompra();
   bindEvents();
   // Auto-refresh a cada 60s
-  _autoTimer = setInterval(carregar, 60000);
+  _autoTimer = setInterval(() => { carregar(); carregarAlertasRecompra(); }, 60000);
 }
 
 async function carregarFunis() {
@@ -214,22 +215,32 @@ function renderRanking(ranking) {
 function renderPorFunil(lista) {
   const el = document.getElementById('por-funil');
   if (!lista?.length) { el.innerHTML = '<div class="empty">Nenhum dado disponível</div>'; return; }
-  const max = Math.max(...lista.map(f => f.faturamento), 1);
+  const maxFat = Math.max(...lista.map(f => f.faturamento), 1);
+  const totalGanhos = lista.reduce((s,f) => s + (f.ganhos||0), 0);
   el.innerHTML = lista.map(f => {
-    const pct = Math.round((f.faturamento / max) * 100);
+    const pct  = Math.round((f.faturamento / maxFat) * 100);
     const funil = _funis.find(x => x.id === f.id);
-    const cor = funil?.cor || f.cor || '#6CFF4E';
+    const cor  = funil?.cor || f.cor || '#6CFF4E';
+    const pctGanhos = totalGanhos > 0 ? ((f.ganhos||0)/totalGanhos*100).toFixed(0) : '0';
     return `<div class="funil-row">
       <div class="funil-dot" style="background:${cor}"></div>
-      <span class="funil-nome">${f.nome}</span>
-      <div style="flex:2;height:5px;background:var(--surface-2);border-radius:3px;overflow:hidden;margin:0 8px">
-        <div style="width:${pct}%;height:100%;background:${cor};border-radius:3px;transition:width .5s"></div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px">
+          <span class="funil-nome">${f.nome}</span>
+          <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
+            <span style="font-size:.65rem;color:var(--text-muted)">${f.ganhos||0} venda${(f.ganhos||0)!==1?'s':''}</span>
+            <span class="funil-val">${fmtR(f.faturamento)}</span>
+          </div>
+        </div>
+        <div style="height:5px;background:var(--surface-2);border-radius:3px;overflow:hidden">
+          <div style="width:${pct}%;height:100%;background:${cor};border-radius:3px;transition:width .5s"></div>
+        </div>
+        <div style="font-size:.6rem;color:var(--text-muted);margin-top:2px">${f.leads} lead${f.leads!==1?'s':''} · ${pctGanhos}% das vendas do período</div>
       </div>
-      <span class="funil-val">${fmtR(f.faturamento)}</span>
-      <span class="funil-leads">${f.leads} leads</span>
     </div>`;
   }).join('');
 }
+
 
 function renderTempoResposta(t) {
   const el = document.getElementById('resp-num');
@@ -262,6 +273,59 @@ function renderMetaPreview(k) {
   document.getElementById('mp-fat').textContent    = fmtR(k.faturamento);
   document.getElementById('mp-conv').textContent   = fmtPct(k.taxa_conversao);
 }
+
+// ─── Alertas de Recompra (Carteira Recorrente) ───────────────────────────────
+let _alertasRecompra = [];
+
+async function carregarAlertasRecompra() {
+  const r = await Auth.api('GET', '/leads/alertas-recompra').catch(() => null);
+  if (!r?.ok) return;
+  _alertasRecompra = r.data.dados || [];
+  renderAlertasRecompra();
+}
+
+function renderAlertasRecompra() {
+  const n = _alertasRecompra.length;
+  // Badge no menu/nav
+  const badge = document.getElementById('badge-alertas-recompra');
+  if (badge) { badge.textContent = n; badge.style.display = n > 0 ? '' : 'none'; }
+
+  const el = document.getElementById('alertas-recompra-list');
+  if (!el) return;
+  if (!n) {
+    el.innerHTML = '<div class="empty" style="font-size:.75rem">Nenhum alerta de recompra nos próximos 7 dias.</div>';
+    return;
+  }
+  el.innerHTML = _alertasRecompra.map(a => {
+    const dataStr = a.alerta_recompra_em
+      ? new Date(a.alerta_recompra_em + 'T00:00:00').toLocaleDateString('pt-BR') : '?';
+    const previsao = a.previsao_proxima_compra || '';
+    const visto   = a.alerta_recompra_enviado;
+    return `<div class="alerta-recompra-row${visto ? ' visto' : ''}" data-id="${a.id}">
+      <div class="ar-icon">🔄</div>
+      <div class="ar-info">
+        <div class="ar-nome">${escHtml(a.nome)}${a.empresa ? ' · '+escHtml(a.empresa) : ''}</div>
+        <div class="ar-meta">Previsão: <b>${escHtml(previsao)}</b> · Alerta: ${dataStr}</div>
+      </div>
+      <div class="ar-actions">
+        ${!visto ? `<button class="btn-sm" onclick="marcarAlertaVisto('${a.id}')" title="Marcar como visto">✔</button>` : '<span style="color:var(--text-muted);font-size:.7rem">visto</span>'}
+        <button class="btn-sm" onclick="abrirLeadAlerta('${a.id}')" title="Abrir lead">→</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function marcarAlertaVisto(leadId) {
+  await Auth.api('PATCH', `/leads/${leadId}/alerta-recompra-visto`);
+  _alertasRecompra = _alertasRecompra.map(a => a.id === leadId ? {...a, alerta_recompra_enviado: 1} : a);
+  renderAlertasRecompra();
+}
+
+function abrirLeadAlerta(leadId) {
+  // Abre pipeline com o lead destacado
+  window.open(`/pipeline.html?lead_id=${leadId}`, '_self');
+}
+
 
 // ─── Mensagens Pendentes ──────────────────────────────────────────────────────────────────
 let _pendentes = [];

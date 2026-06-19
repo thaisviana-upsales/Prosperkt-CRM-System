@@ -181,15 +181,27 @@
 .rank-conv   { font-size:.58rem; color:var(--text-muted); }
 
 /* ── Por funil ─────────────────────── */
-.funil-row  { display:flex; align-items:center; gap:9px; padding:6px 0; border-bottom:1px solid var(--border); }
+.funil-row  { display:flex; align-items:center; gap:10px; padding:7px 0; border-bottom:1px solid var(--border); }
 .funil-row:last-child { border-bottom:none; }
-.funil-dot  { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
-.funil-nome { font-size:.76rem; flex:1; }
+.funil-dot  { width:7px; height:7px; border-radius:50%; flex-shrink:0; margin-top:2px; }
+.funil-nome { font-size:.76rem; font-weight:600; flex:1; }
 .funil-val  { font-size:.76rem; font-weight:700; color:var(--green); }
 .funil-leads { font-size:.64rem; color:var(--text-muted); min-width:48px; text-align:right; }
 .resp-stat  { text-align:center; padding:14px 0; }
 .resp-num   { font-size:1.8rem; font-weight:800; color:var(--green); }
 .resp-label { font-size:.7rem; color:var(--text-muted); margin-top:3px; }
+
+/* ── Alertas de Recompra ───────────── */
+.alerta-recompra-row { display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid var(--border); }
+.alerta-recompra-row:last-child { border-bottom:none; }
+.alerta-recompra-row.visto { opacity:.5; }
+.ar-icon { font-size:1rem; flex-shrink:0; }
+.ar-info { flex:1; min-width:0; }
+.ar-nome { font-size:.76rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ar-meta { font-size:.64rem; color:var(--text-muted); margin-top:2px; }
+.ar-actions { display:flex; gap:4px; flex-shrink:0; }
+.btn-sm { background:var(--surface-2); border:1px solid var(--border); color:var(--text-secondary); border-radius:6px; padding:2px 7px; font-size:.72rem; cursor:pointer; transition:background .15s; }
+.btn-sm:hover { background:var(--surface-3,#333); }
 
 /* ── Sparkline ─────────────────────── */
 .sparkline-wrap { height:44px; display:flex; align-items:flex-end; gap:2px; }
@@ -338,9 +350,18 @@
   <div class="panel">
     <div class="panel-title">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-      Faturamento por Funil
+      Vendas por Funil
     </div>
     <div id="por-funil"><div class="empty">Nenhum dado</div></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title">
+      🔄 Alertas de Recompra
+      <span id="badge-alertas-recompra" style="background:#F5A623;color:#000;border-radius:99px;font-size:.65rem;padding:1px 6px;font-weight:700;display:none;margin-left:6px">0</span>
+    </div>
+    <div id="alertas-recompra-list" style="max-height:220px;overflow-y:auto">
+      <div class="empty" style="font-size:.75rem">Nenhum alerta de recompra nos próximos 7 dias.</div>
+    </div>
   </div>
   <div class="panel">
     <div class="panel-title">

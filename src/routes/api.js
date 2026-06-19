@@ -110,6 +110,8 @@ router.get   ('/leads/:id/historico',       autenticar, leadsCtrl.historico);
 router.post  ('/leads/:id/clonar',          autenticar, leadsCtrl.clonar);
 router.post  ('/leads/:id/tags',            autenticar, leadsCtrl.adicionarTag);
 router.delete('/leads/:id/tags/:tag',       autenticar, leadsCtrl.removerTag);
+router.get   ('/leads/alertas-recompra',    autenticar, leadsCtrl.alertasRecompra);
+router.patch ('/leads/:id/alerta-recompra-visto', autenticar, leadsCtrl.marcarAlertaVisto);
 
 // ── Lead Produtos (múltiplos produtos por venda) ──────────────────────────────
 router.get   ('/leads/:id/produtos',              autenticar, leadsCtrl.listarProdutosLead);

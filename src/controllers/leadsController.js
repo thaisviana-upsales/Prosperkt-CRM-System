@@ -551,19 +551,23 @@ async function _clonarParaCarteiraRecorrente(sb, isSupa, sqlite, leadData, previ
     const crypto = require('crypto');
     const agr = new Date().toISOString();
     const leadOrigId = leadData.id;
+    // Chave de idempotência: venda específica (lead + data do ganho)
+    // Isso permite novos ciclos em vendas futuras mas bloqueia duplicata da mesma venda
+    const ganhoEm = leadData.ganho_em || leadData.atualizado_em || agr;
+    const idempKey = `${leadOrigId}::${ganhoEm.slice(0,10)}`; // granularidade: dia
 
     if (isSupa && sb) {
-      // Verifica se já existe clone ativo com a mesma previsão
+      // Idempotência: mesmo lead + mesmo dia de ganho
       const { data: dupCheck } = await sb.from('leads')
         .select('id')
         .eq('lead_original_id', leadOrigId)
-        .eq('previsao_proxima_compra', previsao)
         .eq('tipo_clone', 'carteira_recorrente')
-        .neq('status', 'PERDIDO')
+        .gte('criado_em', ganhoEm.slice(0,10) + 'T00:00:00')
+        .lte('criado_em', ganhoEm.slice(0,10) + 'T23:59:59')
         .limit(1);
       if (dupCheck?.length) {
-        console.log('[CARTEIRA_RECORRENTE] Clone já existe, ignorando.', dupCheck[0].id);
-        return;
+        console.log('[CARTEIRA_RECORRENTE] Clone já existe para esta venda, ignorando.', dupCheck[0].id);
+        return { sucesso: false, criado: false, id: dupCheck[0].id, erro: 'Duplicata da mesma venda' };
       }
 
       // Busca funil Carteira Recorrente
@@ -606,21 +610,43 @@ async function _clonarParaCarteiraRecorrente(sb, isSupa, sqlite, leadData, previ
         previsao_proxima_compra: previsao,
         tipo_clone: 'carteira_recorrente',
         lead_original_id: leadOrigId,
+        etapa_atualizada_em: agr,
         criado_em: agr,
         atualizado_em: agr,
       });
+
+      // Timeline: log no CLONE
+      const logIdClone = crypto.randomBytes(16).toString('hex');
+      await sb.from('logs').insert({
+        id: logIdClone, acao: 'CREATE', entidade: 'leads', entidade_id: novoId,
+        descricao: `Card criado para acompanhamento de recompra com previsão "${previsao}".`,
+        depois: JSON.stringify({ funil: 'Carteira Recorrente', etapa: nomeEtapa, lead_original_id: leadOrigId, tipo_clone: 'carteira_recorrente', previsao }),
+        criado_em: agr, origem_acao: 'automacao',
+      }).catch(()=>{});
+
+      // Timeline: log no LEAD ORIGINAL
+      const logIdOrig = crypto.randomBytes(16).toString('hex');
+      await sb.from('logs').insert({
+        id: logIdOrig, acao: 'CLONE', entidade: 'leads', entidade_id: leadOrigId,
+        descricao: `Cliente enviado para Carteira Recorrente após venda ganha. Previsão: ${previsao}. Clone ID: ${novoId}.`,
+        depois: JSON.stringify({ clone_id: novoId, previsao, etapa_carteira: nomeEtapa }),
+        criado_em: agr, origem_acao: 'automacao',
+      }).catch(()=>{});
+
       console.log(`[CARTEIRA_RECORRENTE] ✅ Clone criado: ${novoId} | Etapa: ${nomeEtapa}`);
+      return { sucesso: true, criado: true, id: novoId };
     } else if (sqlite) {
       const { getDb } = require('../database/db');
       const db = getDb();
 
-      // Idempotência SQLite
+      // Idempotência SQLite: mesmo lead + mesmo dia de ganho
+      const diaGanho = ganhoEm.slice(0,10);
       const dup = db.prepare(
-        `SELECT id FROM leads WHERE lead_original_id=? AND previsao_proxima_compra=? AND tipo_clone='carteira_recorrente' AND status!='PERDIDO' LIMIT 1`
-      ).get(leadOrigId, previsao);
+        `SELECT id FROM leads WHERE lead_original_id=? AND tipo_clone='carteira_recorrente' AND criado_em>=? AND criado_em<=? LIMIT 1`
+      ).get(leadOrigId, diaGanho + 'T00:00:00', diaGanho + 'T23:59:59');
       if (dup) {
-        console.log('[CARTEIRA_RECORRENTE] Clone já existe (SQLite):', dup.id);
-        return;
+        console.log('[CARTEIRA_RECORRENTE] Clone já existe para esta venda (SQLite):', dup.id);
+        return { sucesso: false, criado: false, id: dup.id };
       }
 
       // Busca funil
@@ -638,19 +664,40 @@ async function _clonarParaCarteiraRecorrente(sb, isSupa, sqlite, leadData, previ
       const novoId = crypto.randomBytes(16).toString('hex');
       db.prepare(`
         INSERT INTO leads (id,nome,empresa,email,telefone,responsavel_id,funil_id,pipeline_id,etapa_id,status,
-          valor,previsao_proxima_compra,tipo_clone,lead_original_id,criado_em,atualizado_em)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          valor,previsao_proxima_compra,tipo_clone,lead_original_id,etapa_atualizada_em,criado_em,atualizado_em)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       `).run(
         novoId, leadData.nome, leadData.empresa||null, leadData.email||null, leadData.telefone||null,
         leadData.responsavel_id||null, funilCart.id, pipeRec?.id||null, etapaCR?.id||null, 'ABERTO',
-        0, previsao, 'carteira_recorrente', leadOrigId, agr, agr
+        0, previsao, 'carteira_recorrente', leadOrigId, agr, agr, agr
       );
+
+      // Timeline: log no CLONE
+      const logIdClone = crypto.randomBytes(16).toString('hex');
+      try {
+        db.prepare(`INSERT INTO logs (id,acao,entidade,entidade_id,dados_depois,criado_em) VALUES (?,?,?,?,?,?)`)
+          .run(logIdClone,'CREATE','leads',novoId,
+            JSON.stringify({ funil:'Carteira Recorrente', etapa:nomeEtapa, lead_original_id:leadOrigId, tipo_clone:'carteira_recorrente', previsao }),
+            agr);
+      } catch(eLg) { console.warn('[CARTEIRA_RECORRENTE] Timeline clone (SQLite):', eLg.message); }
+
+      // Timeline: log no LEAD ORIGINAL
+      const logIdOrig = crypto.randomBytes(16).toString('hex');
+      try {
+        db.prepare(`INSERT INTO logs (id,acao,entidade,entidade_id,dados_depois,criado_em) VALUES (?,?,?,?,?,?)`)
+          .run(logIdOrig,'CLONE','leads',leadOrigId,
+            JSON.stringify({ clone_id:novoId, previsao, etapa_carteira:nomeEtapa }),
+            agr);
+      } catch(eLg) { console.warn('[CARTEIRA_RECORRENTE] Timeline original (SQLite):', eLg.message); }
+
       console.log(`[CARTEIRA_RECORRENTE] ✅ Clone criado (SQLite): ${novoId} | Etapa: ${nomeEtapa}`);
+      return { sucesso: true, criado: true, id: novoId };
     }
   } catch(e) {
     console.error('[CARTEIRA_RECORRENTE] Erro ao clonar:', e.message);
   }
 }
+
 
 // ── PATCH /api/leads/:id/mover ────────────────────────────────────────────────
 async function mover(req, res) {
@@ -1410,4 +1457,64 @@ async function removerTag(req, res) {
   } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
 }
 
-module.exports = { listar, buscarPorId, criar, atualizar, mover, transferir, deletar, clonar, adicionarMensagem, historico, adicionarTag, removerTag, getDistribuicao, setDistribuicao, listarProdutosLead, adicionarProdutoLead, atualizarProdutoLead, removerProdutoLead };
+// ── GET /api/leads/alertas-recompra ─────────────────────────────────────────
+// Retorna leads da Carteira Recorrente com alerta_recompra_em nos próximos 7 dias
+async function alertasRecompra(req, res) {
+  const { sb, isSupa, sqlite } = getProvider();
+  try {
+    const hoje   = new Date().toISOString().slice(0,10);
+    const em7d   = new Date(); em7d.setDate(em7d.getDate() + 7);
+    const limite = em7d.toISOString().slice(0,10);
+    const isVendedor = req.usuario.role === 'VENDEDOR';
+
+    if (isSupa) {
+      let q = sb.from('leads')
+        .select('id,nome,empresa,responsavel_id,alerta_recompra_em,data_prevista_proxima_compra,previsao_proxima_compra,alerta_recompra_enviado,funil_id')
+        .eq('tipo_clone', 'carteira_recorrente')
+        .eq('status', 'ABERTO')
+        .gte('alerta_recompra_em', hoje)
+        .lte('alerta_recompra_em', limite)
+        .order('alerta_recompra_em');
+      if (isVendedor) q = q.eq('responsavel_id', req.usuario.id);
+      const { data, error } = await q;
+      if (error) throw error;
+      return res.json({ sucesso:true, dados: data || [] });
+    }
+
+    // SQLite
+    let sql = `SELECT id,nome,empresa,responsavel_id,alerta_recompra_em,data_prevista_proxima_compra,
+      previsao_proxima_compra,alerta_recompra_enviado,funil_id
+      FROM leads WHERE tipo_clone='carteira_recorrente' AND status='ABERTO'
+      AND alerta_recompra_em>=? AND alerta_recompra_em<=?`;
+    const params = [hoje, limite];
+    if (isVendedor) { sql += ' AND responsavel_id=?'; params.push(req.usuario.id); }
+    sql += ' ORDER BY alerta_recompra_em';
+    const dados = sqlite.prepare(sql).all(...params);
+    return res.json({ sucesso:true, dados });
+  } catch(e) {
+    console.error('[alertasRecompra]', e.message);
+    return res.status(500).json({ sucesso:false, erro:e.message });
+  }
+}
+
+// ── PATCH /api/leads/:id/alerta-recompra-visto ──────────────────────────────
+async function marcarAlertaVisto(req, res) {
+  const { sb, isSupa, sqlite } = getProvider();
+  const { id } = req.params;
+  try {
+    const agora = new Date().toISOString();
+    if (isSupa) {
+      await sb.from('leads').update({ alerta_recompra_enviado: 1, atualizado_em: agora }).eq('id', id);
+    } else {
+      sqlite.prepare('UPDATE leads SET alerta_recompra_enviado=1, atualizado_em=? WHERE id=?').run(agora, id);
+    }
+    req.log({ acao:'ALERTA_RECOMPRA_VISTO', entidade:'leads', entidade_id:id,
+      depois:{ alerta_recompra_enviado: 1 } });
+    return res.json({ sucesso:true });
+  } catch(e) {
+    return res.status(500).json({ sucesso:false, erro:e.message });
+  }
+}
+
+module.exports = { listar, buscarPorId, criar, atualizar, mover, transferir, deletar, clonar, adicionarMensagem, historico, adicionarTag, removerTag, getDistribuicao, setDistribuicao, listarProdutosLead, adicionarProdutoLead, atualizarProdutoLead, removerProdutoLead, alertasRecompra, marcarAlertaVisto };
+
