@@ -29,12 +29,23 @@ async function init() {
   _autoTimer = setInterval(() => { carregar(); carregarAlertasRecompra(); }, 60000);
 }
 
+// Helper: identifica funil Carteira Recorrente por nome (case-insensitive)
+function isCarteiraRecorrente(nome) {
+  return /carteira\s*recorrente/i.test((nome||'').trim());
+}
+
 async function carregarFunis() {
   const r = await Auth.api('GET', '/funis?somente_ativos=true');
   _funis = r?.data?.dados || [];
   const sel = document.getElementById('f-funil');
-  sel.innerHTML = '<option value="">Todos</option>' +
-    _funis.map(f => `<option value="${f.id}">${f.nome}</option>`).join('');
+  // Separa Carteira Recorrente do restante
+  const funisNovos   = _funis.filter(f => !isCarteiraRecorrente(f.nome));
+  const funisCarteira = _funis.filter(f =>  isCarteiraRecorrente(f.nome));
+  sel.innerHTML =
+    '<option value="">Todos - Novos</option>' +
+    funisNovos.map(f => `<option value="${f.id}">${f.nome}</option>`).join('') +
+    (funisCarteira.length ? '<option disabled>──────────────</option>' : '') +
+    funisCarteira.map(f => `<option value="${f.id}">${f.nome}</option>`).join('');
 }
 
 async function carregarUsuarios() {
@@ -52,15 +63,17 @@ async function carregarUsuarios() {
 function buildQuery() {
   const p = [];
   if (_filtros.funil)       p.push(`funil_id=${_filtros.funil}`);
+  else                      p.push('excluir_carteira=true'); // "Todos - Novos" exclui Carteira Recorrente
   if (_filtros.resp)        p.push(`responsavel_id=${_filtros.resp}`);
   if (_filtros.dataTipo)    p.push(`data_tipo=${_filtros.dataTipo}`);
   if (_filtros.dataPeriodo) p.push(`data_periodo=${_filtros.dataPeriodo}`);
   if (_filtros.dataInicio)  p.push(`data_inicio=${_filtros.dataInicio}`);
   if (_filtros.dataFim)     p.push(`data_fim=${_filtros.dataFim}`);
-  return p.length ? '?' + p.join('&') : '';
+  return '?' + p.join('&');
 }
 
 async function carregar() {
+  console.log('[DASHBOARD_FILTERS_APPLIED]', _filtros, { excluir_carteira: !_filtros.funil });
   const r = await Auth.api('GET', '/dashboard' + buildQuery());
   if (!r?.ok) { Toast.show('Erro ao carregar dashboard.', 'error'); return; }
   const d = r.data.dados;

@@ -282,10 +282,18 @@ function normalizeLead(l) {
 // ── GET /api/leads ────────────────────────────────────────────────────────────
 async function listar(req, res) {
   const { sb, isSupa, sqlite } = getProvider();
-  const { funil_id, etapa_id, responsavel_id, status, busca } = req.query;
+  const { funil_id, etapa_id, responsavel_id, status, busca, excluir_carteira } = req.query;
+  const excluiCarteira = excluir_carteira === 'true' && !funil_id;
 
   try {
     if (isSupa) {
+      // Resolve id da Carteira Recorrente se necessário
+      let carteiraFunilId = null;
+      if (excluiCarteira) {
+        const { data: cr } = await sb.from('funis').select('id').ilike('nome','%Carteira Recorrente%').limit(1);
+        carteiraFunilId = cr?.[0]?.id || null;
+      }
+
       let q = sb.from('leads').select(`
         *,
         responsavel:usuarios!responsavel_id(id,nome),
@@ -296,12 +304,11 @@ async function listar(req, res) {
       if (etapa_id)       q = q.eq('etapa_id', etapa_id);
       if (responsavel_id) q = q.eq('responsavel_id', responsavel_id);
       if (funil_id)       q = q.eq('funil_id', funil_id);
+      if (carteiraFunilId) q = q.neq('funil_id', carteiraFunilId);
       if (status)         q = q.eq('status', toSupaStatus(status));
       if (req.usuario.role === 'VENDEDOR') q = q.eq('responsavel_id', req.usuario.id);
       if (busca) q = q.or(`nome.ilike.%${busca}%,email.ilike.%${busca}%,telefone.ilike.%${busca}%,empresa.ilike.%${busca}%`);
-      // Exclui soft-deleted (apenas se coluna existir — silencioso)
       q = q.is('deleted_at', null);
-
       q = q.order('criado_em', { ascending: false });
 
       const { data, error } = await q;
@@ -319,6 +326,13 @@ async function listar(req, res) {
     }
 
     // SQLite
+    // Resolve Carteira Recorrente para exclusão
+    let carteiraFunilIdSql = null;
+    if (excluiCarteira) {
+      const cr = sqlite.prepare(`SELECT id FROM funis WHERE nome LIKE '%Carteira Recorrente%' LIMIT 1`).get();
+      carteiraFunilIdSql = cr?.id || null;
+    }
+
     let sql = `SELECT l.*, u.nome as responsavel_nome, e.nome as etapa_nome, e.cor as etapa_cor,
       f.nome as funil_nome, f.id as funil_id_real
       FROM leads l
@@ -328,11 +342,12 @@ async function listar(req, res) {
       LEFT JOIN funis f ON p.funil_id=f.id
       WHERE 1=1`;
     const params = [];
-    if (funil_id)       { sql += ' AND p.funil_id=?';       params.push(funil_id); }
-    if (etapa_id)       { sql += ' AND l.etapa_id=?';       params.push(etapa_id); }
-    if (status)         { sql += ' AND l.status=?';          params.push(status); }
-    if (responsavel_id) { sql += ' AND l.responsavel_id=?'; params.push(responsavel_id); }
-    if (req.usuario.role === 'VENDEDOR') { sql += ' AND l.responsavel_id=?'; params.push(req.usuario.id); }
+    if (funil_id)          { sql += ' AND p.funil_id=?';                                     params.push(funil_id); }
+    if (carteiraFunilIdSql){ sql += ' AND (p.funil_id IS NULL OR p.funil_id<>?)';            params.push(carteiraFunilIdSql); }
+    if (etapa_id)          { sql += ' AND l.etapa_id=?';                                     params.push(etapa_id); }
+    if (status)            { sql += ' AND l.status=?';                                       params.push(status); }
+    if (responsavel_id)    { sql += ' AND l.responsavel_id=?';                               params.push(responsavel_id); }
+    if (req.usuario.role === 'VENDEDOR') { sql += ' AND l.responsavel_id=?';                 params.push(req.usuario.id); }
     if (busca) { sql += ' AND (l.nome LIKE ? OR l.email LIKE ? OR l.telefone LIKE ? OR l.empresa LIKE ?)'; const q=`%${busca}%`; params.push(q,q,q,q); }
     sql += ' ORDER BY l.criado_em DESC';
     const leads = sqlite.prepare(sql).all(...params);
@@ -342,6 +357,7 @@ async function listar(req, res) {
     return res.status(500).json({ sucesso:false, erro:e.message });
   }
 }
+
 
 // ── GET /api/leads/:id ────────────────────────────────────────────────────────
 async function buscarPorId(req, res) {

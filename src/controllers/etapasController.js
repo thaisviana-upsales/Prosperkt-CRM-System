@@ -13,24 +13,48 @@ async function listar(req, res) {
   try {
     if (isSupa) {
       let pId = pipeline_id;
-      // Se vier funil_id, resolve o pipeline_id via tabela pipelines
       if (!pId && funil_id) {
         const { data: pipes } = await sb.from('pipelines').select('id').eq('funil_id', funil_id).order('criado_em').limit(1);
         pId = pipes?.[0]?.id || null;
       }
-      let q = sb.from('etapas').select('*');
+      // Inclui nome do funil para que o frontend possa filtrar Carteira Recorrente
+      let q = sb.from('etapas').select('*, pipeline:pipelines!pipeline_id(id, funil:funis!funil_id(id,nome))');
       if (pId) q = q.eq('pipeline_id', pId);
       q = q.order('ordem');
       const { data, error } = await q;
       if (error) throw error;
-      return res.json({ sucesso:true, dados:data||[], total:(data||[]).length });
+      const dados = (data||[]).map(e => ({
+        ...e,
+        funil_nome: e.pipeline?.funil?.nome || null,
+        pipeline: undefined,
+      }));
+      return res.json({ sucesso:true, dados, total:dados.length });
     }
     const { getDb } = require('../database/db');
     const db = getDb();
     let etapas;
-    if (funil_id)       etapas = db.prepare(`SELECT e.* FROM etapas e JOIN pipelines p ON e.pipeline_id=p.id WHERE p.funil_id=? ORDER BY e.ordem`).all(funil_id);
-    else if (pipeline_id) etapas = db.prepare(`SELECT * FROM etapas WHERE pipeline_id=? ORDER BY ordem`).all(pipeline_id);
-    else                etapas = db.prepare(`SELECT * FROM etapas ORDER BY ordem`).all();
+    if (funil_id) {
+      etapas = db.prepare(`
+        SELECT e.*, f.nome as funil_nome
+        FROM etapas e
+        JOIN pipelines p ON e.pipeline_id=p.id
+        JOIN funis f ON p.funil_id=f.id
+        WHERE p.funil_id=? ORDER BY e.ordem`).all(funil_id);
+    } else if (pipeline_id) {
+      etapas = db.prepare(`
+        SELECT e.*, f.nome as funil_nome
+        FROM etapas e
+        JOIN pipelines p ON e.pipeline_id=p.id
+        JOIN funis f ON p.funil_id=f.id
+        WHERE e.pipeline_id=? ORDER BY e.ordem`).all(pipeline_id);
+    } else {
+      etapas = db.prepare(`
+        SELECT e.*, f.nome as funil_nome
+        FROM etapas e
+        JOIN pipelines p ON e.pipeline_id=p.id
+        JOIN funis f ON p.funil_id=f.id
+        ORDER BY e.ordem`).all();
+    }
     return res.json({ sucesso:true, dados:etapas, total:etapas.length });
   } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
 }

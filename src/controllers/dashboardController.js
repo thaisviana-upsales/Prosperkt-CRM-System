@@ -91,10 +91,19 @@ function valorVenda(l) {
 // GET /api/dashboard
 async function resumo(req, res) {
   const { sb, isSupa, sqlite } = getProvider();
-  const { funil_id, responsavel_id, data_tipo, data_periodo, data_inicio, data_fim } = req.query;
+  const { funil_id, responsavel_id, data_tipo, data_periodo, data_inicio, data_fim, excluir_carteira } = req.query;
+  const excluiCarteira = excluir_carteira === 'true' && !funil_id;
 
   try {
     if (isSupa) {
+      // ── 0. Resolve id da Carteira Recorrente se necessário ───────────────────
+      let carteiraFunilId = null;
+      if (excluiCarteira) {
+        const { data: cr } = await sb.from('funis').select('id').ilike('nome','%Carteira Recorrente%').limit(1);
+        carteiraFunilId = cr?.[0]?.id || null;
+        console.log('[DASH_EXCLUIR_CARTEIRA] funil_id excluído:', carteiraFunilId);
+      }
+
       // ── 1. Carrega etapas para mapa ─────────────────────────────────────────
       let etapasQuery = sb.from('etapas').select('id,nome,cor,ordem,probabilidade,is_ganho,is_perdido,pipeline_id');
       const { data: todasEtapas } = await etapasQuery;
@@ -105,8 +114,9 @@ async function resumo(req, res) {
         'id,nome,status,valor,valor_venda,etapa_id,pipeline_id,funil_id,responsavel_id,' +
         'criado_em,atualizado_em,ganho_em,perdido_em,produto_id,produto_nome,forma_pagamento'
       );
-      if (funil_id)       q = q.eq('funil_id', funil_id);
-      if (responsavel_id) q = q.eq('responsavel_id', responsavel_id);
+      if (funil_id)           q = q.eq('funil_id', funil_id);
+      if (carteiraFunilId)    q = q.neq('funil_id', carteiraFunilId);
+      if (responsavel_id)     q = q.eq('responsavel_id', responsavel_id);
       if (req.usuario.role === 'VENDEDOR') q = q.eq('responsavel_id', req.usuario.id);
 
       // Filtro de data
@@ -353,11 +363,20 @@ async function resumo(req, res) {
     const { getDb } = require('../database/db');
     const db = getDb();
 
+    // Resolve Carteira Recorrente para exclusão (Todos - Novos)
+    let carteiraFunilIdSql = null;
+    if (excluiCarteira) {
+      const cr = db.prepare(`SELECT id FROM funis WHERE nome LIKE '%Carteira Recorrente%' LIMIT 1`).get();
+      carteiraFunilIdSql = cr?.id || null;
+      console.log('[DASH_EXCLUIR_CARTEIRA_SQL] excluindo funil_id:', carteiraFunilIdSql);
+    }
+
     const base = `FROM leads l LEFT JOIN pipelines p ON l.pipeline_id=p.id LEFT JOIN funis f ON p.funil_id=f.id LEFT JOIN usuarios u ON l.responsavel_id=u.id WHERE 1=1`;
     const baseParams = [];
     let baseFilter = '';
-    if (funil_id)       { baseFilter += ' AND p.funil_id=?';       baseParams.push(funil_id); }
-    if (responsavel_id) { baseFilter += ' AND l.responsavel_id=?'; baseParams.push(responsavel_id); }
+    if (funil_id)          { baseFilter += ' AND p.funil_id=?';         baseParams.push(funil_id); }
+    if (carteiraFunilIdSql){ baseFilter += ' AND (p.funil_id IS NULL OR p.funil_id<>?)'; baseParams.push(carteiraFunilIdSql); }
+    if (responsavel_id)    { baseFilter += ' AND l.responsavel_id=?';   baseParams.push(responsavel_id); }
     if (req.usuario.role === 'VENDEDOR') { baseFilter += ' AND l.responsavel_id=?'; baseParams.push(req.usuario.id); }
 
     const periodo = calcPeriodo(data_tipo, data_periodo, data_inicio, data_fim);

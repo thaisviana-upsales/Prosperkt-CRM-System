@@ -64,10 +64,20 @@ async function carregarProdutos() {
   _produtos = r?.data?.dados || [];
 }
 
+// Helper compartilhado
+function isCarteiraRecorrente(nome) {
+  return /carteira\s*recorrente/i.test((nome||'').trim());
+}
+
 function popularSelFunil() {
   const sel = document.getElementById('sel-funil');
-  sel.innerHTML = '<option value="">Todos</option>' +
-    _funis.map(f=>`<option value="${f.id}">${f.nome}</option>`).join('');
+  const funisNovos    = _funis.filter(f => !isCarteiraRecorrente(f.nome));
+  const funisCarteira = _funis.filter(f =>  isCarteiraRecorrente(f.nome));
+  sel.innerHTML =
+    '<option value="">Todos - Novos</option>' +
+    funisNovos.map(f=>`<option value="${f.id}">${f.nome}</option>`).join('') +
+    (funisCarteira.length ? '<option disabled>──────────────</option>' : '') +
+    funisCarteira.map(f=>`<option value="${f.id}">${f.nome}</option>`).join('');
   sel.value = _filtros.funil;
 }
 
@@ -104,18 +114,20 @@ async function aplicarFiltros() {
       _etapas = [];
     }
   } else {
-    document.getElementById('page-title').textContent = 'Pipeline — Todos os Funis';
-    document.getElementById('page-sub').textContent = 'Visão geral consolidada de todos os leads';
+    document.getElementById('page-title').textContent = 'Pipeline — Todos os Funis (Novos)';
+    document.getElementById('page-sub').textContent = 'Leads de novos funis comerciais (excluindo Carteira Recorrente)';
     _pipelineAtivo = null;
 
-    // Carrega TODAS as etapas de todos os pipelines (via /etapas sem filtro)
+    // Carrega TODAS as etapas de funis que NÃO são Carteira Recorrente
     const re = await Auth.api('GET', '/etapas');
     const todasEtapas = re?.data?.dados || [];
 
-    // Deduplica por nome (mantendo primeira ocorrência de cada nome, ordenado por ordem)
+    // Deduplica por nome, excluindo etapas de pipelines da Carteira Recorrente
     const seen = new Set();
     const etapasDedup = [];
     for (const e of todasEtapas.sort((a, b) => a.ordem - b.ordem)) {
+      // Exclui etapas cujo funil_nome é Carteira Recorrente
+      if (isCarteiraRecorrente(e.funil_nome || '')) continue;
       if (!_nomeParaIds[e.nome]) _nomeParaIds[e.nome] = [];
       _nomeParaIds[e.nome].push(e.id);
       if (!seen.has(e.nome)) {
@@ -148,6 +160,7 @@ function construirURL() {
   let url = '/leads?';
   const p = [];
   if (_filtros.funil)       p.push(`funil_id=${_filtros.funil}`);
+  else                      p.push('excluir_carteira=true'); // "Todos - Novos"
   if (_filtros.resp)        p.push(`responsavel_id=${_filtros.resp}`);
   if (_filtros.busca)       p.push(`busca=${encodeURIComponent(_filtros.busca)}`);
   if (_filtros.dataTipo) {
