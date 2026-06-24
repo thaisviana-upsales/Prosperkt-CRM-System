@@ -16,32 +16,47 @@ const evoSvc  = require('../services/evolutionApiService');
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-/**
- * Normaliza telefone de qualquer formato para apenas dígitos numéricos.
- * Exemplos aceitos:
- *   +55 (11) 97869-9663  →  5511978699663
- *   (11) 97869-9663      →  5511978699663
- *   11978699663          →  5511978699663  (adiciona 55 se 10-11 dígitos)
- *   5511978699663        →  5511978699663
- *   5511978699663@s.whatsapp.net  →  5511978699663
- */
-function normalizePhone(tel) {
-  if (!tel) return '';
-  // Remove sufixo WhatsApp JID (ex: 5511964634949:13@s.whatsapp.net)
-  let t = String(tel).split('@')[0];
-  // Remove sufixo de dispositivo WA (ex: :13, :2, :0) ANTES de extrair dígitos
-  t = t.split(':')[0];
-  // Remove tudo que não é dígito
-  t = t.replace(/\D/g, '');
-  // Remove DDI duplo: algumas versões da Evolution retornam 5555XXXXXXXXXXX
-  if (t.startsWith('5555') && t.length >= 14) {
-    t = t.slice(2); // remove os primeiros 55 extras
+function normalizePhoneBR(value) {
+  if (!value) return null;
+  let t = String(value).trim();
+  
+  // Se contiver letras no nome do contato / JID, rejeita
+  let username = t.split('@')[0].split(':')[0];
+  if (/[a-zA-Z]/.test(username)) {
+    return null;
   }
-  // Se 10 ou 11 dígitos (sem código de país), adiciona 55 (Brasil)
+  
+  // Remove sufixo do whatsapp
+  t = t.split('@')[0].split(':')[0];
+  
+  // Remove caracteres não numéricos
+  t = t.replace(/\D/g, '');
+  if (!t) return null;
+  
+  // Rejeita se for timestamp unix
+  const numVal = Number(t);
+  if ((t.length === 10 && numVal >= 1000000000 && numVal <= 2200000000) ||
+      (t.length === 13 && numVal >= 1000000000000 && numVal <= 2200000000000)) {
+    return null;
+  }
+  
+  // Se tiver 10 ou 11 dígitos, adiciona 55 (Brasil)
   if (t.length === 10 || t.length === 11) {
     t = '55' + t;
   }
-  return t;
+  
+  // Valida: se começar com 55 e tiver 12 ou 13 dígitos
+  // Ou se for qualquer outro número internacional válido (entre 10 e 15 dígitos)
+  const isValid = /^55\d{10,11}$/.test(t) || /^\d{10,15}$/.test(t);
+  if (isValid) {
+    return t;
+  }
+  
+  return null;
+}
+
+function normalizePhone(tel) {
+  return normalizePhoneBR(tel) || '';
 }
 
 /**
@@ -1959,8 +1974,35 @@ async function statusIntegracao(req, res) {
       ? secretValor.slice(0, 6) + '••••••••••••••••'
       : '';
 
+    const webhookUrl = (() => {
+      // 1. Tenta obter URL pública via obterWebhookUrl (usa WEBHOOK_URL / RAILWAY_PUBLIC_DOMAIN etc.)
+      const url = evoSvc.obterWebhookUrl();
+      if (url) return url;
+
+      // 2. Em produção, nunca usar localhost — usar domínio público fixo
+      const isProd = process.env.NODE_ENV === 'production' || !!process.env.RAILWAY_PUBLIC_DOMAIN;
+      if (isProd) {
+        const publicDomain = process.env.PUBLIC_APP_URL
+          || process.env.APP_URL
+          || process.env.BASE_URL
+          || 'https://prosperkt-crm-system-production.up.railway.app';
+        const base = publicDomain.replace(/\/$/, '');
+        console.log('[LOG] WHATSAPP_WEBHOOK_LOCALHOST_BLOCKED_IN_PROD: true');
+        return `${base}/api/whatsapp/webhook`;
+      }
+
+      // 3. Em desenvolvimento local, usar apenas o host da requisição (sem fallback localhost)
+      const reqHost = req ? req.get('host') : null;
+      if (!reqHost) return null;
+      return `${req.protocol}://${reqHost}/api/whatsapp/webhook`;
+    })();
+
+    // Log seguro da rota de webhook
+    console.log(`[LOG] WHATSAPP_WEBHOOK_ROUTE_OK: true | webhook_url: ${webhookUrl}`);
+
     return res.json({
       sucesso:            true,
+      webhook_url:        webhookUrl,
       msgs_24h:           msgs24,
       msgs_7d:            msgs7d,
       conversas_ativas:   convAtivas,
@@ -2021,6 +2063,9 @@ module.exports = {
 /** GET /api/whatsapp/evolution/status */
 async function evoInstanciaStatus(req, res) {
   try {
+    const instName = evoSvc.EVOLUTION_INSTANCE;
+    console.log(`[LOG] EVOLUTION_INSTANCE_STATUS_REQUEST | instanceName: ${instName}`);
+
     if (!evoSvc.isConfigured()) {
       return res.json({
         sucesso: true,
@@ -2035,17 +2080,45 @@ async function evoInstanciaStatus(req, res) {
       evoSvc.getInstanceInfo(),
     ]);
 
-    const estado = stateR.dados?.instance?.state || stateR.dados?.state || 'desconhecido';
+    const rawEstado = stateR.dados?.instance?.state || stateR.dados?.state || 'desconhecido';
+    let estado = 'unknown';
+    const rawEstadoLower = String(rawEstado).toLowerCase();
+    
+    if (rawEstadoLower === 'open' || rawEstadoLower === 'connected') {
+      estado = 'connected';
+    } else if (rawEstadoLower === 'connecting') {
+      estado = 'connecting';
+    } else if (rawEstadoLower === 'close' || rawEstadoLower === 'closed' || rawEstadoLower === 'disconnected') {
+      estado = 'disconnected';
+    } else {
+      console.log(`[LOG] EVOLUTION_UNKNOWN_STATUS_RECEIVED: ${rawEstado}`);
+    }
+
+    const owner = infoR.owner || null;
+    const profileName = infoR.profileName || null;
+    const profilePictureUrl = infoR.profilePictureUrl || null;
+
+    console.log(`[LOG] EVOLUTION_INSTANCE_STATUS_RESPONSE | instanceName: ${instName} | estado: ${estado} | owner: ${owner ? '***' + owner.slice(-4) : 'null'}`);
+
+    if (owner) {
+      console.log(`[LOG] EVOLUTION_CONNECTED_NUMBER_FOUND: true | owner: ***${owner.slice(-4)}`);
+      console.log(`[LOG] EVOLUTION_CONNECTED_NUMBER_SOURCE: evolution_api`);
+    } else {
+      console.log(`[LOG] EVOLUTION_CONNECTED_NUMBER_NOT_FOUND: true`);
+    }
+
+    const webhookUrl = evoSvc.obterWebhookUrl();
+    console.log(`[LOG] WHATSAPP_WEBHOOK_URL_SOURCE: ${webhookUrl ? 'ENV_WEBHOOK_URL_OR_RAILWAY' : 'NONE'}`);
+    console.log(`[LOG] WHATSAPP_WEBHOOK_URL_PRODUCTION: ${webhookUrl || 'N/A'}`);
 
     return res.json({
       sucesso:           true,
       configurada:       true,
-      instancia:         evoSvc.EVOLUTION_INSTANCE,
+      instancia:         instName,
       estado,
-      // Número real conectado (owner do WhatsApp)
-      owner:             infoR.owner             || null,
-      profileName:       infoR.profileName        || null,
-      profilePictureUrl: infoR.profilePictureUrl  || null,
+      owner,
+      profileName,
+      profilePictureUrl,
       dados:             stateR.dados,
       erro:              stateR.sucesso ? undefined : stateR.erro,
     });

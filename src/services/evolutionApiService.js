@@ -12,9 +12,47 @@
 const EVOLUTION_URL      = (process.env.EVOLUTION_API_URL  || '').replace(/\/$/, '');
 const EVOLUTION_KEY      = process.env.EVOLUTION_API_KEY   || '';
 // Aceita EVOLUTION_INSTANCE_NAME (padrão solicitado) ou EVOLUTION_INSTANCE (legado)
-const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE || 'prosperkt';
-// URL pública onde a Evolution API entregará os webhooks (ex: https://crm.homolog.com/api/whatsapp/webhook)
-const WEBHOOK_URL        = (process.env.WEBHOOK_URL || '').replace(/\/$/, '');
+const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || '';
+
+function obterWebhookUrl() {
+  let source = 'ENV_WEBHOOK_URL';
+  let url = process.env.WEBHOOK_URL;
+  
+  if (url) {
+    if (!url.endsWith('/api/whatsapp/webhook')) {
+      url = url.replace(/\/$/, '') + '/api/whatsapp/webhook';
+    }
+  } else {
+    const isProd = process.env.NODE_ENV === 'production' || !!process.env.RAILWAY_PUBLIC_DOMAIN;
+    if (isProd) {
+      source = 'PRODUCTION_FALLBACK';
+      const domain = process.env.RAILWAY_PUBLIC_DOMAIN || 
+                     process.env.PUBLIC_APP_URL || 
+                     process.env.APP_URL || 
+                     process.env.BASE_URL || 
+                     'prosperkt-crm-system-production.up.railway.app';
+      
+      let base = domain;
+      if (!base.startsWith('http://') && !base.startsWith('https://')) {
+        base = 'https://' + base;
+      }
+      url = base.replace(/\/$/, '') + '/api/whatsapp/webhook';
+      
+      if (url.includes('localhost') || url.includes('127.0.0.1')) {
+        console.log('[LOG] WHATSAPP_WEBHOOK_LOCALHOST_BLOCKED_IN_PROD: true');
+        url = 'https://prosperkt-crm-system-production.up.railway.app/api/whatsapp/webhook';
+      }
+    }
+  }
+
+  if (url) {
+    console.log(`[LOG] WHATSAPP_WEBHOOK_URL_SOURCE: ${source}`);
+    console.log(`[LOG] WHATSAPP_WEBHOOK_URL_ENV: ${process.env.WEBHOOK_URL || 'N/A'}`);
+    console.log(`[LOG] WHATSAPP_WEBHOOK_URL_PRODUCTION: ${url}`);
+  }
+  
+  return url || null;
+}
 
 function isConfigured() {
   return !!(EVOLUTION_URL && EVOLUTION_KEY);
@@ -99,15 +137,12 @@ async function criarInstancia() {
   }
 
   // ── 4. Cria a instância com payload mínimo ────────────────────────────────
-  // NUNCA incluir campo "token" — a Evolution gera automaticamente.
-  // EVOLUTION_API_KEY vai SOMENTE no header "apikey".
-  // Se WEBHOOK_URL estiver configurada, registra automaticamente o endpoint
-  // para que a Evolution API saiba onde entregar os eventos (necessário em homologação).
+  const webhookUrl = obterWebhookUrl();
   const payload = {
     instanceName: EVOLUTION_INSTANCE,
     qrcode:       true,
-    ...(WEBHOOK_URL ? {
-      webhook:        WEBHOOK_URL,
+    ...(webhookUrl ? {
+      webhook:        webhookUrl,
       webhook_by_events: false,
       events: [
         'MESSAGES_UPSERT',
@@ -165,11 +200,12 @@ async function listarInstancias() {
  * Chame este método sempre que o webhook URL mudar ou os eventos precisarem ser atualizados.
  */
 async function configurarWebhook() {
-  if (!WEBHOOK_URL) {
-    return { sucesso: false, erro: 'WEBHOOK_URL não configurada no .env' };
+  const webhookUrl = obterWebhookUrl();
+  if (!webhookUrl) {
+    return { sucesso: false, erro: 'WEBHOOK_URL não configurada no .env e sem fallback público disponível.' };
   }
   const payload = {
-    url: WEBHOOK_URL,
+    url: webhookUrl,
     webhook_by_events: false,
     events: [
       'MESSAGES_UPSERT',
@@ -283,4 +319,5 @@ module.exports = {
   enviarMidia,
   enviarAudio,
   EVOLUTION_INSTANCE,
+  obterWebhookUrl,
 };

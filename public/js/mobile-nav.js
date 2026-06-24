@@ -121,7 +121,7 @@
     sheet.setAttribute('role', 'dialog');
     sheet.setAttribute('aria-modal', 'true');
 
-    const usuario = window._usuario || JSON.parse(localStorage.getItem('usuario') || '{}');
+    const usuario = window._usuario || JSON.parse(sessionStorage.getItem('pkt_user') || '{}');
     const isSuperAdmin = usuario.role === 'SUPER_ADMIN';
     const isGestor = usuario.role === 'GESTOR' || isSuperAdmin;
 
@@ -322,6 +322,28 @@
     }
   }
 
+  // ── Desregistro do Service Worker (Desktop) ─────────────────────────────────
+  function desregistrarSW() {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(registrations => {
+        for (let registration of registrations) {
+          registration.unregister().then(success => {
+            if (success) console.log('[PWA] SW desregistrado com sucesso no desktop');
+          });
+        }
+      }).catch(err => console.warn('[PWA] Erro ao desregistrar SW no desktop:', err));
+    }
+    if ('caches' in window) {
+      caches.keys().then(keys => {
+        keys.forEach(k => {
+          caches.delete(k).then(() => {
+            console.log('[PWA] Cache deletado no desktop:', k);
+          });
+        });
+      }).catch(err => console.warn('[PWA] Erro ao limpar caches no desktop:', err));
+    }
+  }
+
   // ── Registro do Service Worker ──────────────────────────────────────────────
   function registrarSW() {
     if ('serviceWorker' in navigator) {
@@ -466,15 +488,16 @@
 
   // ── Init ────────────────────────────────────────────────────────────────────
   function init() {
-    registrarSW();
-    configurarBannerInstalacao();
-
     if (isMobile()) {
+      registrarSW();
+      configurarBannerInstalacao();
       criarBottomNav();
       criarMobileHeader();
       injetarBotaoVoltarWA();
       monitorarChatWA();
       configurarDicaIOS();
+    } else {
+      desregistrarSW();
     }
 
     // Re-checar no resize

@@ -47,9 +47,8 @@ function aplicarVisibilidadePorRole(usuario) {
   }
 }
 
-function setWebhookUrl() {
-  const base = window.location.origin;
-  const url  = `${base}/api/whatsapp/webhook`;
+function setWebhookUrl(customUrl) {
+  const url  = customUrl || `${window.location.origin}/api/whatsapp/webhook`;
   const el = $id('whook-url');
   if (el) {
     const btn = el.querySelector('button');
@@ -70,6 +69,9 @@ async function carregarStatus() {
     renderStatus(r.data);
     renderLogs(r.data.logs || []);
     renderSecret(r.data);
+    if (r.data.webhook_url) {
+      setWebhookUrl(r.data.webhook_url);
+    }
   } catch(e) {
     renderStatusErro();
     renderSecretErro(0);
@@ -80,8 +82,6 @@ function renderStatus(d) {
   const dot  = $id('sdot');
   const lbl  = $id('slabel');
   const sub  = $id('ssub');
-  const nCon = $id('num-val');
-  const nInf = $id('num-info');
 
   const ativo  = d.msgs_24h > 0;
   const semana = d.msgs_7d  > 0;
@@ -93,11 +93,6 @@ function renderStatus(d) {
     : semana
     ? `Última atividade: ${d.ultima_msg_em ? formatDate(d.ultima_msg_em) : '—'}`
     : 'Nenhuma mensagem recebida ainda. Configure o webhook no provedor.';
-
-  if (nCon) nCon.textContent = d.ultimo_telefone ? formatTel(d.ultimo_telefone) : '—';
-  if (nInf) nInf.textContent = d.ultimo_telefone
-    ? `Último número identificado — ${d.ultima_msg_em ? formatDate(d.ultima_msg_em) : ''}`
-    : 'Nenhum número ativo identificado';
 
   const s24 = $id('s24'); if (s24) s24.textContent = d.msgs_24h ?? '0';
   const sc  = $id('sconv'); if (sc) sc.textContent = d.conversas_ativas ?? '0';
@@ -214,14 +209,8 @@ async function carregarEvoStatus() {
     const perfil = d.profileName ? ` — ${d.profileName}` : '';
     if (nInf) nInf.textContent = `Número real conectado${perfil}`;
   } else {
-    const estado = (d.estado || '').toLowerCase();
-    if (estado === 'open') {
-      if (nCon) nCon.textContent = 'Conectado';
-      if (nInf) nInf.textContent = 'Número conectado, aguardando identificação';
-    } else {
-      if (nCon) nCon.textContent = '—';
-      if (nInf) nInf.textContent = 'Nenhum número conectado';
-    }
+    if (nCon) nCon.textContent = 'Número não confirmado pela Evolution';
+    if (nInf) nInf.textContent = 'Nenhum número ativo confirmado pela API';
   }
 
   // Foto do perfil (se disponível)
@@ -235,7 +224,7 @@ async function carregarEvoStatus() {
 
   // ── Status da conexão ───────────────────────────────────────────
   const estado = (d.estado || '').toLowerCase();
-  if (estado === 'open') {
+  if (estado === 'open' || estado === 'connected') {
     if (dot)   dot.className     = 'sdot g';
     if (label) label.textContent = '🟢 Conectado — Pronto para enviar e receber';
     if (sub)   sub.textContent   = 'WhatsApp conectado e funcionando via Evolution API.';
@@ -243,7 +232,7 @@ async function carregarEvoStatus() {
     if (dot)   dot.className     = 'sdot y';
     if (label) label.textContent = '🟡 Conectando...';
     if (sub)   sub.textContent   = 'Aguardando QR Code ser escaneado.';
-  } else if (estado === 'close' || estado === 'closed') {
+  } else if (estado === 'close' || estado === 'closed' || estado === 'disconnected') {
     if (dot)   dot.className     = 'sdot r';
     if (label) label.textContent = '🔴 Desconectado';
     if (sub)   sub.textContent   = 'Instância existe mas WhatsApp não está conectado. Clique em "Gerar QR Code".';

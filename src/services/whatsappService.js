@@ -11,9 +11,47 @@
 const crypto = require('crypto');
 const { getProvider } = require('../database/dbProvider');
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+function normalizePhoneBR(value) {
+  if (!value) return null;
+  let t = String(value).trim();
+  
+  // Se contiver letras no nome do contato / JID, rejeita
+  let username = t.split('@')[0].split(':')[0];
+  if (/[a-zA-Z]/.test(username)) {
+    return null;
+  }
+  
+  // Remove sufixo do whatsapp
+  t = t.split('@')[0].split(':')[0];
+  
+  // Remove caracteres não numéricos
+  t = t.replace(/\D/g, '');
+  if (!t) return null;
+  
+  // Rejeita se for timestamp unix
+  const numVal = Number(t);
+  if ((t.length === 10 && numVal >= 1000000000 && numVal <= 2200000000) ||
+      (t.length === 13 && numVal >= 1000000000000 && numVal <= 2200000000000)) {
+    return null;
+  }
+  
+  // Se tiver 10 ou 11 dígitos, adiciona 55 (Brasil)
+  if (t.length === 10 || t.length === 11) {
+    t = '55' + t;
+  }
+  
+  // Valida: se começar com 55 e tiver 12 ou 13 dígitos
+  // Ou se for qualquer outro número internacional válido (entre 10 e 15 dígitos)
+  const isValid = /^55\d{10,11}$/.test(t) || /^\d{10,15}$/.test(t);
+  if (isValid) {
+    return t;
+  }
+  
+  return null;
+}
+
 function normalizePhone(tel) {
-  return (tel || '').replace(/\D/g, '');
+  return normalizePhoneBR(tel) || '';
 }
 
 function agora() {

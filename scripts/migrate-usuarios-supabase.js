@@ -70,50 +70,61 @@ const USUARIOS = [
 async function run() {
   console.log('\n🚀 Iniciando migração de usuários para o Supabase...\n');
 
-  // Verifica quais já existem
+  // Verifica quais já existem por email (case-insensitive via lowercase no JavaScript)
   const { data: existentes, error: errList } = await sb
     .from('usuarios')
-    .select('id, email')
-    .in('id', USUARIOS.map(u => u.id));
+    .select('id, email');
 
   if (errList) {
     console.error('[ERRO] Não foi possível consultar tabela usuarios:', errList.message);
     process.exit(1);
   }
 
-  const idsExistentes = new Set((existentes || []).map(u => u.id));
-  console.log(`📋 Usuários já no Supabase: ${idsExistentes.size}`);
+  // Mapeia emails existentes para IDs
+  const emailToIdMap = new Map((existentes || []).map(u => [u.email.toLowerCase(), u.id]));
+  console.log(`📋 Usuários já no Supabase: ${emailToIdMap.size}`);
 
   let inseridos = 0;
   let atualizados = 0;
 
   for (const u of USUARIOS) {
+    const emailNorm = u.email.toLowerCase();
+    const idExistente = emailToIdMap.get(emailNorm);
+
     const payload = {
-      id:         u.id,
-      nome:       u.nome,
-      email:      u.email,
-      role:       u.role,
-      ativo:      u.ativo,
-      senha_hash: u.senha_hash,
+      nome:          u.nome,
+      email:         emailNorm,
+      role:          u.role,
+      ativo:         u.ativo,
       atualizado_em: new Date().toISOString(),
     };
 
-    if (idsExistentes.has(u.id)) {
-      // UPDATE — mantém senha_hash original se o usuário já existe
+    if (idExistente) {
+      // UPDATE — se o usuário já existe por email, atualizamos seus dados
+      const updatePayload = { ...payload };
+      // Se for o Super Admin, garantimos que o senha_hash seja atualizado para a credencial correta
+      if (u.role === 'SUPER_ADMIN') {
+        updatePayload.senha_hash = u.senha_hash;
+      }
+
       const { error } = await sb
         .from('usuarios')
-        .update({ nome: u.nome, role: u.role, ativo: u.ativo, atualizado_em: payload.atualizado_em })
-        .eq('id', u.id);
+        .update(updatePayload)
+        .eq('id', idExistente);
 
       if (error) {
-        console.error(`  ❌ Erro ao atualizar ${u.nome} (${u.id}):`, error.message);
+        console.error(`  ❌ Erro ao atualizar ${u.nome} (${idExistente}):`, error.message);
       } else {
         console.log(`  ✏️  Atualizado: ${u.nome} <${u.email}> [${u.role}]`);
         atualizados++;
       }
     } else {
-      // INSERT — inclui senha_hash para manter login funcionando
-      const { error } = await sb.from('usuarios').insert(payload);
+      // INSERT — inclui senha_hash e o ID do script
+      const { error } = await sb.from('usuarios').insert({
+        id: u.id,
+        senha_hash: u.senha_hash,
+        ...payload
+      });
 
       if (error) {
         console.error(`  ❌ Erro ao inserir ${u.nome} (${u.id}):`, error.message);

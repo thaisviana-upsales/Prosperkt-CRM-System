@@ -348,7 +348,7 @@ VALUES (
   encode(gen_random_bytes(16), 'hex'),
   'Super Admin',
   'admin@prosperkt.com',
-  '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TnL75VPbkMrSovgN5Z3iSTUfxqVq',
+  '$2b$12$nj48lIsQiku.J6S42w5S5O1Dr29LiyEgiYKPZL4mUl5YiMKHkx5B6',
   'SUPER_ADMIN',
   1
 )
