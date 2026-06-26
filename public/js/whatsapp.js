@@ -67,11 +67,11 @@ async function init() {
 
   bindEvents();
 
-  // Polling a cada 10s para novas mensagens
+  // Polling a cada 5s para novas mensagens recebidas
   _pollingTimer = setInterval(async () => {
     await carregarConversas(true);
-    if (_convAtiva) await carregarMensagens(_convAtiva.id, true);
-  }, 10000);
+    if (_convAtiva) await pollMensagens(_convAtiva.id);
+  }, 5000);
 }
 
 
@@ -498,6 +498,30 @@ async function carregarMensagens(convId, silencioso = false) {
 
   _mensagens = r.data.dados || [];
   renderMensagens();
+}
+
+// ─── Poll silencioso de mensagens novas ─────────────────────────────────────
+// Chamado pelo setInterval — só re-renderiza se houver mensagens novas,
+// evitando reset de scroll desnecessário.
+async function pollMensagens(convId) {
+  try {
+    const r = await Auth.api('GET', `/whatsapp/conversas/${convId}/mensagens?limit=200`);
+    if (!r?.ok) return;
+    const novas = r.data.dados || [];
+    const qtdAntes = _mensagens.length;
+    const idAnterior = _mensagens[_mensagens.length - 1]?.id;
+    const idNovo     = novas[novas.length - 1]?.id;
+    if (novas.length !== qtdAntes || idAnterior !== idNovo) {
+      _mensagens = novas;
+      renderMensagens(); // scrollToBottom interno
+      // Indicador visual discreto de nova mensagem
+      const novaRecebida = novas.find(m => m.direcao !== 'enviada' && !_mensagens.find(old => old.id === m.id));
+      console.log('CONVERSA_MESSAGES_HAS_RECEIVED', novas.filter(m => m.direcao === 'recebida').length);
+    }
+    console.log('CONVERSA_MESSAGES_LOAD_COUNT', novas.length);
+  } catch(e) {
+    // Silencioso — erro de polling não interrompe nada
+  }
 }
 
 // ─── Render mensagens ─────────────────────────────────────────────────────────
