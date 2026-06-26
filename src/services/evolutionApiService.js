@@ -241,30 +241,70 @@ async function consultarWebhook() {
 /**
  * Retorna informações da instância conectada: owner (número real), profileName, foto.
  * Normaliza o campo owner removendo @s.whatsapp.net.
+/**
+ * Retorna informações da instância conectada.
+ *
+ * ESTRATÉGIA (apikey de instância não tem acesso global):
+ *  1. Tenta fetchInstances (bônus) → se 401, loga e ignora silenciosamente.
+ *  2. Usa connectionState como fonte PRIMÁRIA de estado (funciona com apikey de instância).
+ *  3. Owner/número retornado apenas se algum endpoint autorizado retornar esse dado.
+ *  4. Nunca falha porque fetchInstances deu 401 — isso é esperado.
  */
 async function getInstanceInfo() {
-  const r = await call('GET', '/instance/fetchInstances');
-  if (!r.sucesso) return { sucesso: false, erro: r.erro };
+  let ownerRaw        = null;
+  let profileName     = null;
+  let profilePicture  = null;
 
-  const lista = Array.isArray(r.dados) ? r.dados : (r.dados ? [r.dados] : []);
-  const inst = lista.find(
-    (i) => (i.instance?.instanceName || i.instanceName || '') === EVOLUTION_INSTANCE
-  );
+  // ── FASE 1: fetchInstances (opcional — exige apikey global) ────────────────
+  // Trata 401 silenciosamente: apikey de instância não tem permissão global.
+  const fetchR = await call('GET', '/instance/fetchInstances');
+  if (fetchR.sucesso) {
+    const lista = Array.isArray(fetchR.dados) ? fetchR.dados : (fetchR.dados ? [fetchR.dados] : []);
+    const inst  = lista.find(i => (i.instance?.instanceName || i.instanceName || '') === EVOLUTION_INSTANCE);
+    if (inst) {
+      const info = inst.instance || inst;
+      // Mapeia todos os campos possíveis onde o owner pode estar
+      ownerRaw       = info.owner || info.ownerJid || info.wid || info.number || info.phone || null;
+      profileName    = info.profileName    || null;
+      profilePicture = info.profilePictureUrl || info.profilePicture || null;
+      console.log('[EVOLUTION_PROFILE_RESPONSE_FIELDS]', Object.keys(info).join(', '));
+    }
+    console.log('[EVOLUTION_PROFILE_FETCH_SUCCESS] fetchInstances OK | owner:', ownerRaw ? 'PRESENTE' : 'AUSENTE');
+  } else if (fetchR.status === 401) {
+    console.log('[EVOLUTION_FETCH_INSTANCES_401_SKIPPED] apikey de instância sem acesso global — ignorado.');
+  } else {
+    console.log('[EVOLUTION_PROFILE_FETCH_START] fetchInstances indisponível:', fetchR.status, fetchR.erro);
+  }
 
-  if (!inst) return { sucesso: false, erro: `Instância "${EVOLUTION_INSTANCE}" não encontrada.` };
+  // ── FASE 2: connectionState — fonte primária de estado ────────────────────
+  // Este endpoint funciona com apikey de instância.
+  console.log('[EVOLUTION_PROFILE_FETCH_START] connectionState...');
+  const connR   = await call('GET', `/instance/connectionState/${EVOLUTION_INSTANCE}`);
+  const rawState = connR.dados?.instance?.state || connR.dados?.state || 'desconhecido';
 
-  const info = inst.instance || inst;
-  const ownerRaw = info.owner || '';
-  const ownerNumero = ownerRaw.split('@')[0].replace(/\D/g, '') || null;
+  // Se connectionState também não retornou owner, tenta campos extras
+  if (!ownerRaw && connR.sucesso && connR.dados) {
+    const cd = connR.dados?.instance || connR.dados;
+    ownerRaw = cd?.owner || cd?.ownerJid || cd?.wid || cd?.number || null;
+  }
+
+  const ownerNumero = ownerRaw ? ownerRaw.split('@')[0].replace(/\D/g, '') || null : null;
+
+  if (ownerNumero) {
+    console.log('[EVOLUTION_CONNECTED_NUMBER_FOUND] owner normalizado presente');
+    console.log('[EVOLUTION_CONNECTED_NUMBER_SOURCE] fetchInstances ou connectionState');
+  } else {
+    console.log('[EVOLUTION_CONNECTED_NUMBER_NOT_FOUND] nenhum endpoint autorizado retornou owner');
+  }
 
   return {
-    sucesso:           true,
-    instanceName:      info.instanceName      || EVOLUTION_INSTANCE,
+    sucesso:           true, // sempre retorna sucesso — 401 no fetchInstances não é falha crítica
+    instanceName:      EVOLUTION_INSTANCE,
     owner:             ownerNumero,
     ownerJid:          ownerRaw,
-    profileName:       info.profileName        || null,
-    profilePictureUrl: info.profilePictureUrl  || null,
-    status:            info.status             || 'desconhecido',
+    profileName,
+    profilePictureUrl: profilePicture,
+    status:            rawState,
   };
 }
 

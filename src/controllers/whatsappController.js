@@ -2065,7 +2065,7 @@ module.exports = {
 async function evoInstanciaStatus(req, res) {
   try {
     const instName = evoSvc.EVOLUTION_INSTANCE;
-    console.log(`[LOG] EVOLUTION_INSTANCE_STATUS_REQUEST | instanceName: ${instName}`);
+    console.log('[EVOLUTION_STATUS_REQUEST] instance:', instName);
 
     if (!evoSvc.isConfigured()) {
       return res.json({
@@ -2075,42 +2075,43 @@ async function evoInstanciaStatus(req, res) {
       });
     }
 
-    // Busca estado de conexão e dados reais da instância em paralelo
-    const [stateR, infoR] = await Promise.all([
-      evoSvc.getConnectionState(),
-      evoSvc.getInstanceInfo(),
-    ]);
+    // ── Fonte primária: connectionState (funciona com apikey de instância) ──────
+    const stateR = await evoSvc.getConnectionState();
+    const rawState = (stateR.dados?.instance?.state || stateR.dados?.state || '').toLowerCase();
 
-    const rawEstado = stateR.dados?.instance?.state || stateR.dados?.state || 'desconhecido';
     let estado = 'unknown';
-    const rawEstadoLower = String(rawEstado).toLowerCase();
-    
-    if (rawEstadoLower === 'open' || rawEstadoLower === 'connected') {
+    if (rawState === 'open' || rawState === 'connected') {
       estado = 'connected';
-    } else if (rawEstadoLower === 'connecting') {
+    } else if (rawState === 'connecting') {
       estado = 'connecting';
-    } else if (rawEstadoLower === 'close' || rawEstadoLower === 'closed' || rawEstadoLower === 'disconnected') {
+    } else if (rawState === 'close' || rawState === 'closed' || rawState === 'disconnected') {
       estado = 'disconnected';
-    } else {
-      console.log(`[LOG] EVOLUTION_UNKNOWN_STATUS_RECEIVED: ${rawEstado}`);
+    } else if (rawState) {
+      console.log('[EVOLUTION_STATUS_CONNECTED] rawState desconhecido:', rawState);
     }
 
-    const owner = infoR.owner || null;
-    const profileName = infoR.profileName || null;
+    console.log('[EVOLUTION_STATUS_CONNECTED] estado:', estado, '| rawState:', rawState);
+
+    // ── Secundário: getInstanceInfo — tenta owner/profileName (pode dar 401 no fetchInstances) ──
+    // getInstanceInfo() nunca retorna sucesso:false por causa do 401 — trata internamente.
+    const infoR = await evoSvc.getInstanceInfo().catch(e => {
+      console.log('[EVOLUTION_PROFILE_FETCH_401] getInstanceInfo falhou:', e.message);
+      return { sucesso: false, owner: null, profileName: null, profilePictureUrl: null };
+    });
+
+    const owner            = infoR.owner            || null;
+    const profileName      = infoR.profileName      || null;
     const profilePictureUrl = infoR.profilePictureUrl || null;
 
-    console.log(`[LOG] EVOLUTION_INSTANCE_STATUS_RESPONSE | instanceName: ${instName} | estado: ${estado} | owner: ${owner ? '***' + owner.slice(-4) : 'null'}`);
-
     if (owner) {
-      console.log(`[LOG] EVOLUTION_CONNECTED_NUMBER_FOUND: true | owner: ***${owner.slice(-4)}`);
-      console.log(`[LOG] EVOLUTION_CONNECTED_NUMBER_SOURCE: evolution_api`);
+      console.log('[EVOLUTION_CONNECTED_NUMBER_FOUND] owner disponível: ***' + String(owner).slice(-4));
+      console.log('[EVOLUTION_CONNECTED_NUMBER_SOURCE] evolution_api');
     } else {
-      console.log(`[LOG] EVOLUTION_CONNECTED_NUMBER_NOT_FOUND: true`);
+      console.log('[EVOLUTION_CONNECTED_NUMBER_NOT_FOUND] owner não retornado por nenhum endpoint autorizado');
     }
 
     const webhookUrl = evoSvc.obterWebhookUrl();
-    console.log(`[LOG] WHATSAPP_WEBHOOK_URL_SOURCE: ${webhookUrl ? 'ENV_WEBHOOK_URL_OR_RAILWAY' : 'NONE'}`);
-    console.log(`[LOG] WHATSAPP_WEBHOOK_URL_PRODUCTION: ${webhookUrl || 'N/A'}`);
+    console.log('[EVOLUTION_STATUS_CONNECTED] webhookUrl:', webhookUrl ? 'configurado' : 'ausente');
 
     return res.json({
       sucesso:           true,
@@ -2120,10 +2121,13 @@ async function evoInstanciaStatus(req, res) {
       owner,
       profileName,
       profilePictureUrl,
+      // Informa se owner não está disponível (sem apikey global) — não é erro
+      ownerIndisponivel: !owner && estado === 'connected',
       dados:             stateR.dados,
       erro:              stateR.sucesso ? undefined : stateR.erro,
     });
   } catch (e) {
+    console.error('[EVOLUTION_STATUS_REQUEST] Erro inesperado:', e.message);
     return res.status(500).json({ sucesso: false, erro: e.message });
   }
 }

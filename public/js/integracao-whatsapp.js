@@ -201,13 +201,22 @@ async function carregarEvoStatus() {
   const instEl = $id('evo-instance-name');
   if (instEl && d.instancia) instEl.textContent = d.instancia;
 
-  // ── Número real conectado (owner) ─────────────────────────────────
+  // ── Número real conectado (owner) ─────────────────────────────────────────
   const nCon  = $id('num-val');
   const nInf  = $id('num-info');
   if (d.owner) {
+    // Formata número brasileiro: 5511964634949 → +55 (11) 96463-4949
     if (nCon) nCon.textContent = formatTel(d.owner);
     const perfil = d.profileName ? ` — ${d.profileName}` : '';
     if (nInf) nInf.textContent = `Número real conectado${perfil}`;
+  } else if (d.ownerIndisponivel) {
+    // Conectado mas API key de instância não expõe o número (sem apikey global) — NÃO é erro
+    if (nCon) {
+      nCon.textContent = 'Número não disponível via API';
+      nCon.style.fontSize = '1rem';
+      nCon.style.color = 'var(--text-secondary)';
+    }
+    if (nInf) nInf.textContent = 'Instância conectada · número não exposto pela API key de instância';
   } else {
     if (nCon) nCon.textContent = 'Número não confirmado pela Evolution';
     if (nInf) nInf.textContent = 'Nenhum número ativo confirmado pela API';
@@ -222,7 +231,7 @@ async function carregarEvoStatus() {
     fotoEl.style.display = 'none';
   }
 
-  // ── Status da conexão ───────────────────────────────────────────
+  // ── Status da conexão ─────────────────────────────────────────────────────
   const estado = (d.estado || '').toLowerCase();
   if (estado === 'open' || estado === 'connected') {
     if (dot)   dot.className     = 'sdot g';
@@ -241,7 +250,6 @@ async function carregarEvoStatus() {
     if (label) label.textContent = `⚫ Estado: ${d.estado || 'desconhecido'}`;
     if (sub)   sub.textContent   = 'Clique em "Criar Instância" e depois "Gerar QR Code".';
   }
-}
 
 
 async function abrirModalQr() {
