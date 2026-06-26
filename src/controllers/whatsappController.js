@@ -1730,9 +1730,11 @@ async function webhookReceberMensagem(req, res) {
               fonte: 'evolution_webhook',
             });
             const nomePend = nome || 'Contato WhatsApp não identificado';
+            // telefone é NOT NULL no Supabase — usa prefixo LID: como placeholder rastreável
+            const telPendente = `LID:${lidNumero}`;
             const { data: convPend, error: errPend } = await sb.from('conversas_whatsapp').insert({
               id: pendId,
-              telefone: null,   // telefone desconhecido — será preenchido ao vincular lead
+              telefone: telPendente,
               nome_contato: nomePend,
               lead_id: null,
               origem: 'WHATSAPP_WEBHOOK',
