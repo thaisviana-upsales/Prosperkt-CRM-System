@@ -1410,8 +1410,24 @@ async function webhookReceberMensagem(req, res) {
     String(body.event || '').toUpperCase() === 'MESSAGES_UPDATE';
 
   if (ehEventoStatus) {
-    console.log('WEBHOOK_STATUS_UPDATE: processando atualização de status — NÃO cria conversa/mensagem');
-    return await processarStatusMensagem(body, req, res);
+    // ── DETECÇÃO: MESSAGES_UPDATE com mensagem real (Evolution v2+) ──────────
+    // Algumas versões da Evolution enviam NOVAS mensagens recebidas como MESSAGES_UPDATE
+    // em vez de MESSAGES_UPSERT. Detecta pelo campo 'message' no payload.
+    const dados = body.data;
+    const primeiroDado = Array.isArray(dados) ? dados[0] : dados;
+    const temMensagemReal = primeiroDado?.message &&
+      typeof primeiroDado.message === 'object' &&
+      Object.keys(primeiroDado.message).length > 0;
+
+    if (temMensagemReal) {
+      console.log('WEBHOOK_MESSAGES_UPDATE_COM_MENSAGEM — redirecionando para fluxo de recebimento');
+      // Normaliza para o formato MESSAGES_UPSERT e continua no fluxo principal
+      body.event = 'MESSAGES_UPSERT';
+      // Cai no processamento normal abaixo (não retorna aqui)
+    } else {
+      console.log('WEBHOOK_STATUS_UPDATE: processando atualização de status — NÃO cria conversa/mensagem');
+      return await processarStatusMensagem(body, req, res);
+    }
   }
 
   // ── 2b. Filtra eventos não-mensagem ───────────────────────────────────────
