@@ -191,6 +191,8 @@ router.delete('/whatsapp/evolution/desconectar',      autenticar, exigirSuperAdm
 router.delete('/whatsapp/evolution/deletar',          autenticar, exigirSuperAdmin, whatsappCtrl.evoDeletarInstancia);
 router.post  ('/whatsapp/evolution/configurar-webhook', autenticar, exigirSuperAdmin, whatsappCtrl.evoConfigurarWebhook);
 router.get   ('/whatsapp/evolution/webhook-config',   autenticar, exigirSuperAdmin, whatsappCtrl.evoConsultarWebhook);
+// DIAG TEMPORÁRIO — expõe payload cru da Evolution para identificar campo do número conectado
+router.get   ('/whatsapp/evolution/diag-raw',         autenticar, exigirSuperAdmin, whatsappCtrl.evoDiagRaw);
 
 router.get   ('/whatsapp/conversas',              autenticar, whatsappCtrl.listarConversas);
 router.post  ('/whatsapp/conversas',              autenticar, whatsappCtrl.criarOuAbrirConversa);
