@@ -12,7 +12,7 @@
 const EVOLUTION_URL      = (process.env.EVOLUTION_API_URL  || '').replace(/\/$/, '');
 const EVOLUTION_KEY      = process.env.EVOLUTION_API_KEY   || '';
 // Aceita EVOLUTION_INSTANCE_NAME (padrão solicitado) ou EVOLUTION_INSTANCE (legado)
-const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || '';
+const EVOLUTION_INSTANCE = (process.env.EVOLUTION_INSTANCE || process.env.EVOLUTION_INSTANCE_NAME || '').trim();
 
 function obterWebhookUrl() {
   let source = 'ENV_WEBHOOK_URL';
@@ -55,7 +55,13 @@ function obterWebhookUrl() {
 }
 
 function isConfigured() {
-  return !!(EVOLUTION_URL && EVOLUTION_KEY);
+  const ok = !!(EVOLUTION_URL && EVOLUTION_KEY && EVOLUTION_INSTANCE);
+  if (!ok) {
+    if (!EVOLUTION_URL)      console.warn('[EVO] EVOLUTION_API_URL não configurada no ambiente.');
+    if (!EVOLUTION_KEY)      console.warn('[EVO] EVOLUTION_API_KEY não configurada no ambiente.');
+    if (!EVOLUTION_INSTANCE) console.warn('[EVO] EVOLUTION_INSTANCE (ou EVOLUTION_INSTANCE_NAME) não configurada no ambiente.');
+  }
+  return ok;
 }
 
 function headers() {
@@ -109,6 +115,11 @@ async function call(method, path, body = null) {
  * EVOLUTION_API_KEY é usado SOMENTE no header apikey — nunca como token da instância.
  */
 async function criarInstancia() {
+  // Guard: EVOLUTION_INSTANCE deve estar configurado
+  if (!EVOLUTION_INSTANCE) {
+    console.error('[EVO] criarInstancia: EVOLUTION_INSTANCE está vazia! Configure a variável no ambiente Railway/env.');
+    return { sucesso: false, erro: 'EVOLUTION_INSTANCE não configurada. Defina EVOLUTION_INSTANCE no ambiente Railway.' };
+  }
   // ── 1. Verifica instâncias existentes ────────────────────────────────────
   const listaR = await call('GET', '/instance/fetchInstances');
   const instancias = Array.isArray(listaR.dados)
