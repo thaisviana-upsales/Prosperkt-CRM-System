@@ -1331,42 +1331,64 @@ async function webhookReceberMensagem(req, res) {
 
   // ── 1. Validação de autenticação — múltiplas estratégias ─────────────────
   // A Evolution API v1.8.6 NÃO envia x-webhook-secret por padrão.
-  // Ela envia o `apikey` dentro do body do payload.
-  // Estratégia: aceita se QUALQUER uma das condições for verdadeira:
+  // Ela envia `apikey` no body E `instance` no body.
+  //
+  // Estratégia (aceita se QUALQUER condição for verdadeira):
   //   (a) WHATSAPP_WEBHOOK_SECRET não configurado → aceita tudo
   //   (b) Header x-webhook-secret bate com WHATSAPP_WEBHOOK_SECRET
-  //   (c) body.apikey bate com EVOLUTION_API_KEY (autenticação Evolution nativa)
-  //   (d) body.instance bate com EVOLUTION_INSTANCE (instância conhecida)
-  const secretEsperado   = process.env.WHATSAPP_WEBHOOK_SECRET  || '';
-  const evoApiKeyEsperado = process.env.EVOLUTION_API_KEY        || '';
-  const evoInstanceEsperada = process.env.EVOLUTION_INSTANCE     || '';
+  //   (c) body.apikey bate com EVOLUTION_API_KEY (Evolution envia apikey no body)
+  //   (d) body.instance bate com EVOLUTION_INSTANCE (quando var está configurada)
+  //   (e) body.instance não-vazio + event reconhecido da Evolution (fallback: EVOLUTION_INSTANCE não configurado)
+  //       → seguro porque o endpoint não executa código perigoso sem validar o payload depois
+  const secretEsperado      = process.env.WHATSAPP_WEBHOOK_SECRET || '';
+  const evoApiKeyEsperado   = process.env.EVOLUTION_API_KEY       || '';
+  const evoInstanceEsperada = (process.env.EVOLUTION_INSTANCE || process.env.EVOLUTION_INSTANCE_NAME || '').trim();
 
-  const secretHeader  = req.headers['x-webhook-secret'] || req.query.secret || '';
-  const apikeyPayload = body.apikey || '';
+  const secretHeader    = req.headers['x-webhook-secret'] || req.query.secret || '';
+  const apikeyPayload   = body.apikey   || '';
   const instancePayload = body.instance || '';
+  const eventoPayload   = String(body.event || body.type || '').toUpperCase();
 
-  const autenticadoPorSecret   = secretEsperado   && secretHeader  === secretEsperado;
-  const autenticadoPorApikey   = evoApiKeyEsperado && apikeyPayload === evoApiKeyEsperado;
-  const autenticadoPorInstance = evoInstanceEsperada && instancePayload === evoInstanceEsperada;
   const semSecretConfigurado   = !secretEsperado;
+  const autenticadoPorSecret   = !!(secretEsperado && secretHeader === secretEsperado);
+  const autenticadoPorApikey   = !!(evoApiKeyEsperado && apikeyPayload && apikeyPayload === evoApiKeyEsperado);
+  const autenticadoPorInstance = !!(evoInstanceEsperada && instancePayload && instancePayload === evoInstanceEsperada);
+  // (e) Fallback: payload tem instance E evento Evolution reconhecido — sem EVOLUTION_INSTANCE configurado
+  const EVENTOS_EVOLUTION_CONHECIDOS = [
+    'MESSAGES_UPSERT','MESSAGES_UPDATE','MESSAGES_SET','CONNECTION_UPDATE',
+    'QRCODE_UPDATED','CONTACTS_UPSERT','CHATS_UPSERT','PRESENCE_UPDATE',
+  ];
+  const autenticadoPorPayloadEvolution = !!(
+    !evoInstanceEsperada &&      // só aplica quando EVOLUTION_INSTANCE não está configurado
+    instancePayload &&           // payload precisa ter instance
+    EVENTOS_EVOLUTION_CONHECIDOS.includes(eventoPayload)
+  );
 
-  const autenticado = semSecretConfigurado || autenticadoPorSecret || autenticadoPorApikey || autenticadoPorInstance;
+  const autenticado = semSecretConfigurado || autenticadoPorSecret || autenticadoPorApikey || autenticadoPorInstance || autenticadoPorPayloadEvolution;
 
-  console.log('WEBHOOK_AUTH_CHECK:', {
+  console.log('WEBHOOK_RECEIVED', {
     ip: req.ip,
+    event: eventoPayload || '(sem event)',
+    instance: instancePayload || '(sem instance)',
+  });
+  console.log('WEBHOOK_AUTH_RESULT', {
     autenticado,
     semSecretConfigurado,
     autenticadoPorSecret,
-    autenticadoPorApikey: !!evoApiKeyEsperado && apikeyPayload === evoApiKeyEsperado,
+    autenticadoPorApikey,
     autenticadoPorInstance,
-    instance: instancePayload,
+    autenticadoPorPayloadEvolution,
+    evoInstanceEsperada: evoInstanceEsperada || '(não configurado)',
   });
 
   if (!autenticado) {
-    console.warn(`[WA Webhook] REJEITADO — autenticação falhou de ${req.ip}`, {
+    console.warn('WEBHOOK_AUTH_REJECTED', {
+      ip: req.ip,
       secretHeader: secretHeader ? '(presente)' : '(ausente)',
-      apikeyPayload: apikeyPayload ? apikeyPayload.slice(0,8) + '...' : '(ausente)',
-      instancePayload,
+      apikeyPayload: apikeyPayload ? apikeyPayload.slice(0, 6) + '...' : '(ausente)',
+      instancePayload: instancePayload || '(ausente)',
+      eventoPayload,
+      dica: 'Configure WHATSAPP_WEBHOOK_SECRET="" para desativar auth, ou EVOLUTION_INSTANCE=nome-da-instancia',
     });
     return res.status(401).json({ sucesso: false, erro: 'Não autorizado.' });
   }
@@ -1375,11 +1397,12 @@ async function webhookReceberMensagem(req, res) {
   const evento = String(body.event || body.type || '').toUpperCase().replace(/\./g, '_');
   const instance = body.instance || '(sem instance)';
 
-  console.log('WEBHOOK_EVENTO_IDENTIFICADO:', evento || '(sem evento)');
+  console.log('WEBHOOK_EVENT_NAME', evento || '(sem evento)');
+  console.log('WEBHOOK_INSTANCE', instance);
+  console.log('WEBHOOK_PROCESS_START', { event: evento, instance });
 
   // ── 2a. Evento de STATUS — atualiza check de entrega/leitura ─────────────
   // NUNCA cria mensagem nova — apenas atualiza status da mensagem existente
-  // Proteção tripla: 3 formas de detectar MESSAGES_UPDATE
   const ehEventoStatus =
     evento === 'MESSAGES_UPDATE' ||
     evento === 'MESSAGE_STATUS'  ||
@@ -1389,18 +1412,16 @@ async function webhookReceberMensagem(req, res) {
   if (ehEventoStatus) {
     console.log('WEBHOOK_STATUS_UPDATE: processando atualização de status — NÃO cria conversa/mensagem');
     return await processarStatusMensagem(body, req, res);
-    // EARLY RETURN garantido — nunca cai no fluxo de mensagens abaixo
   }
 
   // ── 2b. Filtra eventos não-mensagem ───────────────────────────────────────
-  // ATENÇÃO: usa lista EXATA (includes exato, não substring) para nunca capturar MESSAGES_UPDATE
   const EVENTOS_MENSAGEM_NOVA = [
     'MESSAGES_UPSERT', 'MESSAGES_SET',
     'SEND_MESSAGE', 'SEND_MESSAGES',
     'MESSAGE', 'NEW_MESSAGE',
   ];
   const EVENTOS_IGNORADOS_SEM_AVISO = [
-    'MESSAGES_UPDATE', 'MESSAGE_STATUS', 'MESSAGE-STATUS', // redundância de segurança
+    'MESSAGES_UPDATE', 'MESSAGE_STATUS', 'MESSAGE-STATUS',
     'CHATS_UPSERT', 'CHATS_UPDATE', 'CHATS_SET',
     'CONTACTS_UPSERT', 'CONTACTS_UPDATE', 'CONTACTS_SET',
     'PRESENCE_UPDATE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED',
@@ -1427,51 +1448,35 @@ async function webhookReceberMensagem(req, res) {
   const { tel, nome, conteudo, tipo, messageId, midiaUrl, arquivoNome, mimeType, direcao, rawJid, fromMe, lidNumero } = parsed;
 
   // Logs obrigatórios pós-parse
-  console.log('WEBHOOK_MENSAGEM_PARSEADA:', {
-    eventName: evento,
+  console.log('WEBHOOK_MESSAGES_UPSERT_RECEIVED', {
+    event: evento,
     instance,
-    telefoneNormalizado: tel,
+    rawJid,
+    tel: tel || '(não extraído)',
     fromMe,
-    messageId,
-    nomeContato: nome,
-    texto: conteudo?.slice(0, 100),
+    messageId: messageId || '(sem id)',
+    hasText: !!(conteudo),
+    tipo,
   });
-  console.log('WEBHOOK_MESSAGE_PARSED', {
-    event:    body.event || '(sem evento)',
-    instance,
-    telefoneNormalizado: tel,
-    fromMe,
-    messageId,
-    nomeContato: nome,
-    texto: conteudo?.slice(0, 100),
-  });
-  console.log('MENSAGEM_PARSEADA:', {
-    telefone: tel,
-    nomeContato: nome,
-    texto: conteudo?.slice(0, 100),
-    direcao,
-    messageId,
-    instance: body.instance || '(sem instance)',
-    evento: body.event || '(sem evento)',
-  });
+  console.log('WEBHOOK_FROM_ME_VALUE', fromMe);
+  console.log('WEBHOOK_PHONE_NORMALIZED', { rawJid, telNormalizado: tel || '(inválido)' });
 
   if (!tel) {
-    console.warn('[WA Webhook] Telefone não identificado. Body:', JSON.stringify(body).slice(0, 300));
+    console.warn('WEBHOOK_PHONE_INVALID_REJECTED', { rawJid, body: JSON.stringify(body).slice(0, 200) });
     return res.status(400).json({ sucesso: false, erro: 'Telefone não identificado no payload.' });
   }
 
   // ── Detecta JID no formato LID (WhatsApp Multi-Device) ──────────────────────
-  // LID: identificador interno do WA, não é número de telefone real.
-  // Ex: 62972877619405@lid → lidNumero=62972877619405, tel pode ser resolvido pelo participant
   const isLidJid = rawJid.endsWith('@lid');
   if (isLidJid) {
     console.log(`[WA Webhook] ⚠️ LID_DETECTADO: ${lidNumero || tel} (JID: ${rawJid}) participant_tel=${tel}`);
   }
 
-  // ── AÇÃO 5: Valida número antes de criar qualquer conversa ───────────────
+  // ── Valida número antes de criar qualquer conversa ───────────────────────
   // Brasil: 55 + DDD(2) + número(8-9) = 12-13 dígitos
   // Internacional genérico: 10-15 dígitos
   const numBrasileiro = /^55\d{10,11}$/.test(tel);
+
   const numGenerico   = /^\d{10,15}$/.test(tel);
   if (!numBrasileiro && !numGenerico) {
     console.warn('WEBHOOK_NUMERO_INVALIDO_NAO_CRIAR_CONVERSA', {
