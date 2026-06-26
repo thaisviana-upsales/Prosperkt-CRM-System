@@ -1708,7 +1708,46 @@ async function webhookReceberMensagem(req, res) {
           }
           console.log(`WEBHOOK_LID_CONVERSA_FOUND via resolucao: ${conversaId}`);
         } else {
-          // ── LID não resolvido: cria/reusa conversa PENDENTE para não perder a mensagem ──
+          // ── LID não resolvido: tenta Camada D — busca por pushName/nome_contato ──────
+          // Evita criar conversa duplicada quando o nome do contato já existe no CRM
+          if (!convLidItem && nome) {
+            const primeiroNome = nome.split(' ')[0]; // ex: "Gislainni" de "Gislainni Arruda"
+            const { data: byNome } = await sb.from('conversas_whatsapp')
+              .select('id, telefone, lead_id, nome_contato')
+              .ilike('nome_contato', `%${primeiroNome}%`)
+              .neq('status', 'FECHADA')
+              .order('ultima_msg_em', { ascending: false, nullsFirst: false })
+              .limit(2); // busca 2 para detectar ambiguidade
+
+            if (byNome?.length === 1) {
+              // Correspondência única — seguro usar
+              convLidItem = byNome[0];
+              console.log('WEBHOOK_LID_CONVERSA_FOUND', { via: 'nome_contato', nome, primeiroNome, convId: convLidItem.id });
+              // Salva o LID para próximas respostas serem roteadas corretamente
+              try {
+                const extN = (() => { try { return JSON.parse(convLidItem.dados_extras || '{}'); } catch { return {}; } })();
+                if (!extN.lid) {
+                  await sb.from('conversas_whatsapp')
+                    .update({ dados_extras: JSON.stringify({ ...extN, lid: lidNumero }) })
+                    .eq('id', convLidItem.id);
+                  console.log('WEBHOOK_LID_SAVED_TO_CONVERSA', { lid: lidNumero, convId: convLidItem.id, via: 'nome_contato' });
+                }
+              } catch(eN) { console.warn('[WA Webhook] Erro ao salvar LID por nome:', eN.message); }
+            } else if (byNome?.length > 1) {
+              console.warn('WEBHOOK_LID_NOME_AMBIGUO — múltiplas conversas com nome similar, não usa:', nome, byNome.map(c => c.nome_contato));
+            } else {
+              console.warn('WEBHOOK_LID_NOME_NAO_ENCONTRADO —', nome);
+            }
+          }
+
+          // Se encontrou por nome, usa essa conversa
+          if (convLidItem) {
+            conversaId = convLidItem.lead_id
+              ? (await sb.from('conversas_whatsapp').select('id').eq('lead_id', convLidItem.lead_id).neq('status', 'FECHADA').order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1)).data?.[0]?.id || convLidItem.id
+              : convLidItem.id;
+            console.log('WEBHOOK_LID_CONVERSA_FOUND_BY_NAME', { conversaId });
+          } else {
+          // ── Camada E: cria/reusa conversa PENDENTE (último recurso) ──────────────
           console.warn('WEBHOOK_LID_NAO_RESOLVIDO — buscando conversa pendente existente para LID:', lidNumero);
 
           // Verifica se já existe conversa pendente para esse LID (evita duplicidade)
@@ -1752,6 +1791,7 @@ async function webhookReceberMensagem(req, res) {
               // Mesmo assim retorna sucesso — não pode bloquear o webhook
               return res.json({ sucesso: true, ignorado: true, motivo: 'lid_pending_conv_error', lid: lidNumero });
             }
+          }
           }
         }
       }
