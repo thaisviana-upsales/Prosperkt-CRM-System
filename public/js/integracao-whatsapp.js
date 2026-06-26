@@ -250,11 +250,13 @@ async function carregarEvoStatus() {
     if (label) label.textContent = `⚫ Estado: ${d.estado || 'desconhecido'}`;
     if (sub)   sub.textContent   = 'Clique em "Criar Instância" e depois "Gerar QR Code".';
   }
+} // fim de carregarEvoStatus
 
 
 async function abrirModalQr() {
   const modal = $id('modal-qr-ov');
   if (modal) modal.style.display = 'flex';
+
   await carregarQrCode();
   iniciarPollConexao();
 }
