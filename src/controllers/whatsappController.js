@@ -2261,60 +2261,68 @@ async function evoConsultarWebhook(req, res) {
 
 /**
  * GET /api/whatsapp/evolution/diag-raw
- * DIAGNÓSTICO TEMPORÁRIO — expõe payload cru da Evolution API.
- * Ajuda a identificar em qual campo o número conectado é retornado.
- * Não expõe apikey nem secrets.
+ * DIAGNÓSTICO — mapeia endpoints da Evolution API para encontrar campo do número.
  */
 async function evoDiagRaw(req, res) {
   try {
     const instName = evoSvc.EVOLUTION_INSTANCE;
-    console.log('[EVOLUTION_DIAG_RAW] Iniciando diagnóstico | instance:', instName);
+    console.log('[EVOLUTION_DIAG_RAW] Iniciando | instance:', instName);
 
-    // Paraleliza chamadas para não demorar
+    // Lote 1: endpoints principais
     const [fetchAll, connState, connectInfo] = await Promise.allSettled([
       evoSvc.call('GET', '/instance/fetchInstances'),
       evoSvc.call('GET', `/instance/connectionState/${instName}`),
       evoSvc.call('GET', `/instance/connect/${instName}`),
     ]);
 
-    // Também tenta endpoints alternativos de perfil
-    const [profileFetch, infoFetch, businessFetch] = await Promise.allSettled([
-      evoSvc.call('GET', `/profile/${instName}`),
-      evoSvc.call('GET', `/instance/info/${instName}`),
-      evoSvc.call('GET', `/business/${instName}`),
+    // Lote 2: endpoints alternativos (Evolution v1/v2 diferem aqui)
+    const [fetchQuery, settings, profilePic, chatContacts] = await Promise.allSettled([
+      evoSvc.call('GET', `/instance/fetchInstances?instanceName=${encodeURIComponent(instName)}`),
+      evoSvc.call('GET', `/settings/find/${instName}`),
+      evoSvc.call('GET', `/instance/profilePicture/${instName}`),
+      evoSvc.call('POST', `/chat/findContacts/${instName}`, { where: {} }),
     ]);
 
-    // Extrai dados seguros (sem apikey)
     const safe = (r) => {
       if (r.status === 'rejected') return { erro: r.reason?.message || 'Rejected' };
-      return { status: r.value?.status, sucesso: r.value?.sucesso, dados: r.value?.dados };
+      return { httpStatus: r.value?.status, sucesso: r.value?.sucesso, dados: r.value?.dados };
     };
 
-    const resultado = {
-      instancia: instName,
-      fetchInstances:  safe(fetchAll),
-      connectionState: safe(connState),
-      connectInfo:     safe(connectInfo),
-      profile:         safe(profileFetch),
-      instanceInfo:    safe(infoFetch),
-      business:        safe(businessFetch),
-    };
-
-    // Log seguro dos campos disponíveis no fetchInstances
-    if (fetchAll.status === 'fulfilled' && fetchAll.value?.dados) {
-      const lista = Array.isArray(fetchAll.value.dados) ? fetchAll.value.dados : [fetchAll.value.dados];
-      const inst = lista.find(i => (i.instance?.instanceName || i.instanceName || '') === instName);
-      if (inst) {
-        const info = inst.instance || inst;
-        const campos = Object.keys(info);
-        console.log('[EVOLUTION_PROFILE_RESPONSE_FIELDS] Campos disponíveis em instance:', campos.join(', '));
-        console.log('[EVOLUTION_STATUS_CONNECTED] state:', info.state || info.status || info.connectionStatus);
-        console.log('[EVOLUTION_CONNECTED_NUMBER_SOURCE] owner:', info.owner ? 'PRESENTE' : 'AUSENTE');
+    // Análise do fetchInstances
+    let ownerDetectado = null, camposDisponiveis = [];
+    for (const fetched of [fetchAll, fetchQuery]) {
+      if (fetched.status === 'fulfilled' && fetched.value?.dados) {
+        const lista = Array.isArray(fetched.value.dados) ? fetched.value.dados : [fetched.value.dados];
+        const instData = lista.find(i => (i.instance?.instanceName || i.instanceName || '') === instName);
+        if (instData) {
+          const info = instData.instance || instData;
+          camposDisponiveis = Object.keys(info);
+          ownerDetectado = info.owner || info.ownerJid || info.wid || info.number || info.phone || null;
+          console.log('[EVOLUTION_PROFILE_RESPONSE_FIELDS] Campos:', camposDisponiveis.join(', '));
+          console.log('[EVOLUTION_CONNECTED_NUMBER_SOURCE] owner:', ownerDetectado ? 'PRESENTE' : 'AUSENTE');
+          break;
+        }
       }
     }
 
-    return res.json({ sucesso: true, diag: resultado });
+    return res.json({
+      sucesso: true,
+      diag: {
+        instancia: instName,
+        ownerDetectado,
+        camposDisponiveis,
+        fetchInstances:    safe(fetchAll),
+        fetchInstancesQ:   safe(fetchQuery),
+        connectionState:   safe(connState),
+        connectInfo:       safe(connectInfo),
+        settings:          safe(settings),
+        profilePicture:    safe(profilePic),
+        chatFindContacts:  safe(chatContacts),
+      },
+    });
   } catch (e) {
+    console.error('[EVOLUTION_DIAG_RAW] Erro:', e.message);
     return res.status(500).json({ sucesso: false, erro: e.message });
   }
 }
+
