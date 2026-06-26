@@ -420,20 +420,35 @@ function initSchema(db) {
 }
 
 function seedSuperAdmin(db) {
+  // SUPERADMIN_SEED_START — seed idempotente (SQLite apenas)
+  // Em produção com Supabase, este seed nunca executa pois getDb() não é chamado no boot
   const bcrypt = require('bcryptjs');
-  const existing = db.prepare("SELECT id FROM usuarios WHERE role = 'SUPER_ADMIN' LIMIT 1").get();
-  if (!existing) {
-    const hash = bcrypt.hashSync('Admin@2026!', 12);
-    const id = require('crypto').randomBytes(16).toString('hex');
-    db.prepare(`
-      INSERT INTO usuarios (id, nome, email, senha_hash, role)
-      VALUES (?, ?, ?, ?, 'SUPER_ADMIN')
-    `).run(id, 'Super Admin', 'admin@prosperkt.com', hash);
-
-    console.log('\n✅ SUPER_ADMIN criado:');
-    console.log('   Email: admin@prosperkt.com');
-    console.log('   Senha: Admin@2026!\n');
+  const existing = db.prepare("SELECT id, email FROM usuarios WHERE role = 'SUPER_ADMIN' LIMIT 1").get();
+  if (existing) {
+    console.log('[SUPERADMIN_EXISTS] Super Admin já existe no SQLite — senha NÃO sobrescrita.');
+    console.log('[SUPERADMIN_PASSWORD_NOT_OVERWRITTEN] Seed idempotente: sem alteração.');
+    return;
   }
+
+  // [SUPERADMIN_CREATED] Super Admin não existe — criando via env ou senha padrão segura
+  const senhaSeed = process.env.SUPERADMIN_PASSWORD;
+  if (!senhaSeed || senhaSeed.length < 8) {
+    console.warn('[SUPERADMIN_SEED_START] SUPERADMIN_PASSWORD não definida no .env (ou muito curta).');
+    console.warn('[SUPERADMIN_SEED_START] Super Admin NÃO criado no SQLite. Defina SUPERADMIN_PASSWORD no .env e reinicie.');
+    return;
+  }
+
+  const hash = bcrypt.hashSync(senhaSeed, 12);
+  const id   = require('crypto').randomBytes(16).toString('hex');
+  const emailAdmin = (process.env.SUPERADMIN_EMAIL || 'admin@prosperkt.com').toLowerCase().trim();
+  db.prepare(`
+    INSERT INTO usuarios (id, nome, email, senha_hash, role)
+    VALUES (?, ?, ?, ?, 'SUPER_ADMIN')
+  `).run(id, 'Super Admin', emailAdmin, hash);
+
+  console.log('[SUPERADMIN_CREATED] Super Admin criado no SQLite.');
+  console.log('[SUPERADMIN_CREATED] Email:', emailAdmin);
+  // Não logar senha nem hash
 }
 
 /**

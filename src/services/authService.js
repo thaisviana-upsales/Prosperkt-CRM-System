@@ -2,6 +2,13 @@
  * PROSPEKT CRM — Auth Service
  * JWT access token + refresh token com rotação automática.
  * Suporta Supabase e SQLite via getProvider().
+ *
+ * CORREÇÃO v4 (2026-06-26) — FIX DEFINITIVO:
+ *  - buscarUsuarioPorEmail/Id: .eq('ativo',1) funciona (campo INTEGER no Supabase)
+ *  - salvarRefreshToken: coluna Supabase é 'expires_at', não 'expira_em' — CAUSA DO BUG
+ *  - validarRefreshToken: mesma correção de coluna
+ *  - Sem refresh token salvo = sessão não renovável ao fechar/abrir CRM
+ *  - Logs AUTH_ seguros sem expor credenciais, hash ou token
  */
 
 const jwt    = require('jsonwebtoken');
@@ -26,26 +33,74 @@ function gerarRefreshToken(usuario) {
 
 async function buscarUsuarioPorEmail(email) {
   const { getProvider } = require('../database/dbProvider');
-  const { sb, isSupa, sqlite } = getProvider();
+  const { sb, isSupa, sqlite, mode } = getProvider();
+  const emailNorm = (email || '').toLowerCase().trim();
+  console.log('[AUTH_LOGIN_START] buscarUsuarioPorEmail chamado');
+  console.log('[AUTH_DB_PROVIDER]', mode || (isSupa ? 'supabase' : 'sqlite'));
+  console.log('[AUTH_SUPABASE_ENABLED]', isSupa ? 'true' : 'false');
+  console.log('[AUTH_SQLITE_FALLBACK_USED]', isSupa ? 'false' : 'true');
   if (isSupa) {
-    const { data } = await sb.from('usuarios').select('*').eq('email', email).eq('ativo', 1).single();
+    // ativo é INTEGER no Supabase — .eq('ativo', 1) funciona corretamente
+    const { data, error } = await sb
+      .from('usuarios')
+      .select('*')
+      .eq('email', emailNorm)
+      .eq('ativo', 1)
+      .limit(1)
+      .single();
+    if (error && error.code !== 'PGRST116') {
+      // PGRST116 = zero rows — não é erro crítico
+      console.warn('[AUTH_USER_NOT_FOUND] Erro ao buscar usuário no Supabase:', error.code);
+    }
+    if (data) {
+      console.log('[AUTH_USER_FOUND] Usuário localizado no Supabase | role:', data.role);
+      console.log('[AUTH_DB_SOURCE] supabase | ativo_valor_no_banco:', typeof data.ativo, JSON.stringify(data.ativo));
+    } else {
+      console.warn('[AUTH_USER_NOT_FOUND] Usuário não encontrado ou inativo no Supabase | email verificado:', emailNorm);
+    }
     return data || null;
   }
-  return sqlite.prepare('SELECT * FROM usuarios WHERE email=? AND ativo=1').get(email);
+  const usuario = sqlite.prepare('SELECT * FROM usuarios WHERE email=? AND ativo=1').get(emailNorm);
+  if (usuario) {
+    console.log('[AUTH_USER_FOUND] Usuário localizado no SQLite');
+  } else {
+    console.warn('[AUTH_USER_NOT_FOUND] Usuário não encontrado ou inativo no SQLite');
+  }
+  return usuario || null;
 }
 
 async function buscarUsuarioPorId(id) {
   const { getProvider } = require('../database/dbProvider');
   const { sb, isSupa, sqlite } = getProvider();
   if (isSupa) {
-    const { data } = await sb.from('usuarios').select('id,nome,email,role,ativo,criado_em').eq('id', id).eq('ativo', 1).single();
+    // ativo é INTEGER no Supabase — .eq('ativo', 1) funciona corretamente
+    const { data, error } = await sb
+      .from('usuarios')
+      .select('id,nome,email,role,ativo,avatar_url,criado_em')
+      .eq('id', id)
+      .eq('ativo', 1)
+      .limit(1)
+      .single();
+    if (error && error.code !== 'PGRST116') {
+      console.warn('[AUTH_USER_NOT_FOUND] Erro ao buscar usuário por ID no Supabase:', error.code);
+    }
     return data || null;
   }
   return sqlite.prepare('SELECT id,nome,email,role,ativo,avatar_url,criado_em FROM usuarios WHERE id=? AND ativo=1').get(id);
 }
 
 async function verificarSenha(senhaPlain, hash) {
-  return bcrypt.compare(senhaPlain, hash);
+  if (!hash || !hash.startsWith('$2')) {
+    console.warn('[AUTH_PASSWORD_INVALID] senha_hash ausente ou formato inválido no banco');
+    return false;
+  }
+  const ok = await bcrypt.compare(senhaPlain, hash);
+  if (ok) {
+    console.log('[AUTH_PASSWORD_MATCH] Senha verificada com sucesso');
+  } else {
+    console.warn('[AUTH_PASSWORD_INVALID] Senha não corresponde ao hash salvo');
+  }
+  return ok;
 }
 
 // ── Refresh token persistence ─────────────────────────────────────────────────
@@ -58,7 +113,14 @@ async function salvarRefreshToken(usuarioId, token, ip, ua) {
   const expiresAt = new Date(decoded.exp * 1000).toISOString();
   const id = crypto.randomBytes(16).toString('hex');
   if (isSupa) {
-    await sb.from('refresh_tokens').insert({ id, usuario_id:usuarioId, token_hash:hash, expira_em:expiresAt });
+    // CORREÇÃO v4: coluna no Supabase é 'expires_at' (não 'expira_em')
+    // Bug anterior: inserir em coluna inexistente = falha silenciosa = sem refresh token = sessão não renovável
+    const { error } = await sb.from('refresh_tokens').insert({ id, usuario_id:usuarioId, token_hash:hash, expires_at:expiresAt });
+    if (error) {
+      console.warn('[AUTH_LOGIN_ERROR] Falha ao salvar refresh_token no Supabase:', error.message, '| code:', error.code);
+    } else {
+      console.log('[AUTH_LOGIN_SUCCESS] refresh_token salvo no Supabase (expires_at ok)');
+    }
   } else {
     sqlite.prepare(`INSERT INTO refresh_tokens (id,usuario_id,token_hash,expires_at,ip_address,user_agent) VALUES (?,?,?,?,?,?)`).run(id,usuarioId,hash,expiresAt,ip||null,ua||null);
   }
@@ -72,7 +134,8 @@ async function validarRefreshToken(token) {
     const { sb, isSupa, sqlite } = getProvider();
     const hash = crypto.createHash('sha256').update(token).digest('hex');
     if (isSupa) {
-      const { data } = await sb.from('refresh_tokens').select('id').eq('token_hash', hash).gt('expira_em', new Date().toISOString()).single();
+      // CORREÇÃO v4: coluna 'expires_at' (não 'expira_em')
+      const { data } = await sb.from('refresh_tokens').select('id').eq('token_hash', hash).gt('expires_at', new Date().toISOString()).single();
       if (!data) return null;
       await sb.from('refresh_tokens').delete().eq('token_hash', hash);
     } else {
