@@ -100,22 +100,18 @@ async function run() {
     };
 
     if (idExistente) {
-      // UPDATE — se o usuário já existe por email, atualizamos seus dados
-      const updatePayload = { ...payload };
-      // Se for o Super Admin, garantimos que o senha_hash seja atualizado para a credencial correta
-      if (u.role === 'SUPER_ADMIN') {
-        updatePayload.senha_hash = u.senha_hash;
-      }
-
+      // UPDATE — NUNCA sobrescreve senha_hash se usuário já existe
+      // Isso garante que senhas alteradas pelo usuário não sejam revertidas
+      // ao reexecutar o script de migração.
       const { error } = await sb
         .from('usuarios')
-        .update(updatePayload)
+        .update(payload)   // payload não contém senha_hash
         .eq('id', idExistente);
 
       if (error) {
         console.error(`  ❌ Erro ao atualizar ${u.nome} (${idExistente}):`, error.message);
       } else {
-        console.log(`  ✏️  Atualizado: ${u.nome} <${u.email}> [${u.role}]`);
+        console.log(`  ✏️  Atualizado: ${u.nome} <${u.email}> [${u.role}] (senha_hash preservada)`);
         atualizados++;
       }
     } else {

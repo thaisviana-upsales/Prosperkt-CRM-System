@@ -56,14 +56,40 @@ async function login(req, res) {
     });
   }
 
-  const usuario = await buscarUsuarioPorEmail(email.toLowerCase().trim());
+  // Normaliza email (lowercase + trim) antes de buscar
+  const emailNorm = email.toLowerCase().trim();
+  console.log('[AUTH_LOGIN_START] Tentativa de login iniciada');
+
+  let usuario;
+  try {
+    usuario = await buscarUsuarioPorEmail(emailNorm);
+  } catch (e) {
+    console.error('[AUTH_LOGIN_ERROR] Erro ao buscar usuário no banco:', e.message);
+    return res.status(500).json({ sucesso: false, erro: 'Erro interno ao processar login.' });
+  }
 
   if (!usuario) {
+    console.warn('[AUTH_USER_NOT_FOUND] Usuário não localizado ou inativo');
     return res.status(401).json({ sucesso:false, erro:'Credenciais inválidas.' });
   }
 
-  const senhaCorreta = await verificarSenha(senha, usuario.senha_hash);
+  // Verifica campo ativo (cobre integer 1 e boolean true)
+  const estaAtivo = (usuario.ativo === 1 || usuario.ativo === true);
+  if (!estaAtivo) {
+    console.warn('[AUTH_USER_INACTIVE] Usuário encontrado mas está inativo');
+    return res.status(401).json({ sucesso:false, erro:'Credenciais inválidas.' });
+  }
+
+  let senhaCorreta;
+  try {
+    senhaCorreta = await verificarSenha(senha, usuario.senha_hash);
+  } catch (e) {
+    console.error('[AUTH_LOGIN_ERROR] Erro ao verificar senha:', e.message);
+    return res.status(500).json({ sucesso: false, erro: 'Erro interno ao verificar credenciais.' });
+  }
+
   if (!senhaCorreta) {
+    console.warn('[AUTH_PASSWORD_INVALID] Senha incorreta para o usuário localizado');
     return res.status(401).json({ sucesso:false, erro:'Credenciais inválidas.' });
   }
 
@@ -89,6 +115,8 @@ async function login(req, res) {
 
   // Super Admin nunca é obrigado a trocar senha
   const deveTrocarSenha = deveTrocar && !isSuperAdmin;
+
+  console.log('[AUTH_LOGIN_SUCCESS] Login realizado com sucesso | role:', usuario.role);
 
   return res.json({
     sucesso: true,
