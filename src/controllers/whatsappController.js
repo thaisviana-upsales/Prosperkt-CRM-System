@@ -1611,48 +1611,48 @@ async function webhookReceberMensagem(req, res) {
     let conversaId = null;
     if (isSupa) {
     // ── Busca 0: LID (@lid) — resolve para telefone real antes de buscar conversa ─────
-      if (!conversaId && isLidJid && lidNumero && tel === lidNumero) {
-        console.log(`[WA Webhook] ⚠️ LID_DETECTADO: ${lidNumero} — iniciando resolução...`);
+      if (!conversaId && isLidJid && lidNumero) {
+        console.log('WEBHOOK_LID_DETECTED', lidNumero);
+        console.log('WEBHOOK_LID_VALUE', { lid: lidNumero, rawJid });
 
-        // Camada A: dados_extras LIKE (TEXT column)
+        // ── Camada 0: lookup LOCAL por dados_extras.lid (mais rápido, sem I/O externo) ──
+        console.log('WEBHOOK_LID_LOOKUP_LOCAL', lidNumero);
         const { data: byLike } = await sb.from('conversas_whatsapp')
           .select('id, telefone, lead_id').like('dados_extras', `%${lidNumero}%`)
           .neq('status', 'FECHADA').order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
 
         let convLidItem = byLike?.[0] || null;
 
-        // Camada B: dados_extras JSONB contains
+        // Camada 0b: dados_extras JSONB contains
         if (!convLidItem) {
           const { data: byJson } = await sb.from('conversas_whatsapp')
             .select('id, telefone, lead_id')
             .filter('dados_extras', 'cs', JSON.stringify({ lid: lidNumero }))
             .neq('status', 'FECHADA').order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
           convLidItem = byJson?.[0] || null;
-          if (convLidItem) console.log(`[WA Webhook] ✅ LID_MATCH (JSONB): ${lidNumero}`);
+          if (convLidItem) console.log('WEBHOOK_LID_CONVERSA_FOUND', { via: 'jsonb', lid: lidNumero, convId: convLidItem.id });
         } else {
-          console.log(`[WA Webhook] ✅ LID_MATCH (LIKE): ${lidNumero}`);
+          console.log('WEBHOOK_LID_CONVERSA_FOUND', { via: 'like', lid: lidNumero, convId: byLike[0].id });
         }
 
-        // Camada C: resolução via Evolution API → obtém telefone real do contato
+        if (!convLidItem) console.log('WEBHOOK_LID_CONVERSA_NOT_FOUND', lidNumero);
+
+        // ── Camada C: resolução via Evolution API → obtém telefone real do contato ──
         if (!convLidItem) {
           console.log(`[WA Webhook] 🔍 LID sem mapeamento local — tentando resolver via Evolution API...`);
           try {
             const lidJidCompleto = rawJid.includes('@') ? rawJid : `${lidNumero}@lid`;
-            // Tenta endpoint de contacts da Evolution API
             const resContato = await evoSvc.call('POST', `/contacts/find/${evoSvc.EVOLUTION_INSTANCE}`, {
               where: { id: lidJidCompleto }
             });
             const contatos = Array.isArray(resContato?.dados) ? resContato.dados : (resContato?.dados ? [resContato.dados] : []);
             const contato = contatos[0] || null;
             if (contato) {
-              // Extrai telefone real: pode estar em id (@s.whatsapp.net) ou phone
               const jidReal = contato.id || contato.remoteJid || '';
               const telResolvidoRaw = contato.phone || (jidReal.includes('@s.whatsapp.net') ? jidReal.split('@')[0] : null);
               if (telResolvidoRaw) {
                 const telResolvido = normalizePhone(telResolvidoRaw);
-                console.log(`[WA Webhook] ✅ LID_RESOLVIDO_EVO: ${lidNumero} → ${telResolvido} (pushName: ${contato.pushName || nome})`);
-
-                // Agora busca conversa pelo telefone real
+                console.log(`[WA Webhook] ✅ LID_RESOLVIDO_EVO: ${lidNumero} → ${telResolvido}`);
                 const variantesReal = phoneVariants(telResolvido);
                 for (const variant of variantesReal) {
                   const { data: convReal } = await sb.from('conversas_whatsapp')
@@ -1660,15 +1660,14 @@ async function webhookReceberMensagem(req, res) {
                     .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
                   if (convReal?.[0]) {
                     convLidItem = convReal[0];
-                    console.log(`[WA Webhook] ✅ LID→CONV via EVO: ${lidNumero} → ${telResolvido} → conv=${convLidItem.id}`);
-                    // Armazena mapeamento LID para próximas mensagens
+                    console.log('WEBHOOK_LID_CONVERSA_FOUND', { via: 'evo_phone', lid: lidNumero, telResolvido, convId: convLidItem.id });
                     try {
                       const extR = (() => { try { return JSON.parse(convLidItem.dados_extras || '{}'); } catch { return {}; } })();
                       if (!extR.lid) {
                         await sb.from('conversas_whatsapp')
                           .update({ dados_extras: JSON.stringify({ ...extR, lid: lidNumero }) })
                           .eq('id', convLidItem.id);
-                        console.log(`[WA Webhook] 🔗 LID armazenado em dados_extras: ${lidNumero} → conv=${convLidItem.id}`);
+                        console.log('WEBHOOK_LID_SAVED_TO_CONVERSA', { lid: lidNumero, convId: convLidItem.id });
                       }
                     } catch(e) { console.warn('[WA Webhook] Erro ao armazenar LID:', e.message); }
                     break;
@@ -1682,21 +1681,60 @@ async function webhookReceberMensagem(req, res) {
         }
 
         if (convLidItem) {
-          const convLidEncontrada = convLidItem;
-          // Busca conversa mais ativa para o mesmo lead
-          if (convLidEncontrada.lead_id) {
+          // ✅ LID resolvido → usa conversa existente
+          if (convLidItem.lead_id) {
             const { data: convMaisAtiva } = await sb.from('conversas_whatsapp')
-              .select('id').eq('lead_id', convLidEncontrada.lead_id).neq('status', 'FECHADA')
+              .select('id').eq('lead_id', convLidItem.lead_id).neq('status', 'FECHADA')
               .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
-            conversaId = convMaisAtiva?.[0]?.id || convLidEncontrada.id;
-            console.log(`[WA Webhook] ✅ LID→conv_ativa: ${conversaId}`);
+            conversaId = convMaisAtiva?.[0]?.id || convLidItem.id;
           } else {
-            conversaId = convLidEncontrada.id;
+            conversaId = convLidItem.id;
           }
+          console.log(`WEBHOOK_LID_CONVERSA_FOUND via resolucao: ${conversaId}`);
         } else {
-          // Não conseguiu resolver o LID — ignora sem criar lixo no banco
-          console.warn(`[WA Webhook] ❌ LID_NAO_RESOLVIDO: ${lidNumero} — sem mapeamento, sem contato EVO.`);
-          return res.json({ sucesso: true, ignorado: true, motivo: 'lid_nao_resolvido', lid: lidNumero });
+          // ── LID não resolvido: cria/reusa conversa PENDENTE para não perder a mensagem ──
+          console.warn('WEBHOOK_LID_NAO_RESOLVIDO — buscando conversa pendente existente para LID:', lidNumero);
+
+          // Verifica se já existe conversa pendente para esse LID (evita duplicidade)
+          const { data: pendente } = await sb.from('conversas_whatsapp')
+            .select('id').like('dados_extras', `%"lid":"${lidNumero}"%`)
+            .order('criado_em', { ascending: false }).limit(1);
+
+          if (pendente?.[0]) {
+            conversaId = pendente[0].id;
+            console.log('WEBHOOK_LID_EXISTING_PENDING_USED', { lid: lidNumero, conversaId });
+            console.log('WEBHOOK_LID_DUPLICATE_PREVENTED', { lid: lidNumero });
+          } else {
+            // Cria conversa pendente — NÃO descarta a mensagem
+            const pendId = crypto.randomBytes(16).toString('hex');
+            const dadosExtrasPend = JSON.stringify({
+              lid: lidNumero,
+              remoteJid: rawJid,
+              motivo: 'lid_nao_resolvido',
+              fonte: 'evolution_webhook',
+            });
+            const nomePend = nome || 'Contato WhatsApp não identificado';
+            const { data: convPend, error: errPend } = await sb.from('conversas_whatsapp').insert({
+              id: pendId,
+              telefone: null,   // telefone desconhecido — será preenchido ao vincular lead
+              nome_contato: nomePend,
+              lead_id: null,
+              origem: 'WHATSAPP_WEBHOOK',
+              status: 'ABERTA',
+              dados_extras: dadosExtrasPend,
+              criado_em: agora,
+              atualizado_em: agora,
+            }).select('id').single();
+            if (!errPend && convPend) {
+              conversaId = convPend.id;
+              console.log('WEBHOOK_LID_PENDING_CONVERSA_CREATED', { lid: lidNumero, conversaId, nome: nomePend });
+              console.log('WEBHOOK_LID_MESSAGE_SAVED_PENDING', { lid: lidNumero, conversaId });
+            } else {
+              console.error('WEBHOOK_LID_PENDING_CONVERSA_ERROR', errPend?.message);
+              // Mesmo assim retorna sucesso — não pode bloquear o webhook
+              return res.json({ sucesso: true, ignorado: true, motivo: 'lid_pending_conv_error', lid: lidNumero });
+            }
+          }
         }
       }
 
@@ -1760,14 +1798,21 @@ async function webhookReceberMensagem(req, res) {
         }
         // Cria nova conversa apenas para mensagens RECEBIDAS (fromMe=false)
         const novoConvId = crypto.randomBytes(16).toString('hex');
+        // Se for LID pendente (telefone inválido como número), usa placeholder LID:
+        const telParaConversa = (isLidJid && !leadId) ? `LID:${lidNumero}` : (tel || null);
+        const dadosExtrasNova = isLidJid && lidNumero
+          ? JSON.stringify({ lid: lidNumero, remoteJid: rawJid })
+          : null;
         const { data: novaConv, error: errC } = await sb.from('conversas_whatsapp').insert({
-          id: novoConvId, telefone: tel, nome_contato: nome || null,
+          id: novoConvId, telefone: telParaConversa, nome_contato: nome || null,
           lead_id: leadId || null, origem: 'WHATSAPP_WEBHOOK',
-          status: 'ABERTA', criado_em: agora, atualizado_em: agora,
+          status: 'ABERTA',
+          dados_extras: dadosExtrasNova,
+          criado_em: agora, atualizado_em: agora,
         }).select('id').single();
         if (!errC && novaConv) {
           conversaId = novaConv.id;
-          console.log(`[WA Webhook] ✅ Nova conversa criada (recebida): ${conversaId} tel=${tel} leadId=${leadId}`);
+          console.log(`WEBHOOK_CONVERSA_CREATED`, { conversaId, tel: telParaConversa, leadId, isLidJid, lid: lidNumero || null });
         } else {
           console.error('[WA Webhook] Erro ao criar conversa:', errC?.message);
         }
