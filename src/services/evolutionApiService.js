@@ -11,8 +11,16 @@
 
 const EVOLUTION_URL      = (process.env.EVOLUTION_API_URL  || '').replace(/\/$/, '');
 const EVOLUTION_KEY      = process.env.EVOLUTION_API_KEY   || '';
-// Aceita EVOLUTION_INSTANCE_NAME (padrão solicitado) ou EVOLUTION_INSTANCE (legado)
+// Prioridade: EVOLUTION_INSTANCE → EVOLUTION_INSTANCE_NAME → erro de configuração (sem fallback hardcoded)
 const EVOLUTION_INSTANCE = (process.env.EVOLUTION_INSTANCE || process.env.EVOLUTION_INSTANCE_NAME || '').trim();
+
+// Log de startup — confirma qual instância está ativa neste servidor
+if (EVOLUTION_INSTANCE) {
+  const src = process.env.EVOLUTION_INSTANCE ? 'EVOLUTION_INSTANCE' : 'EVOLUTION_INSTANCE_NAME';
+  console.log(`[EVO] Instância carregada: "${EVOLUTION_INSTANCE}" (fonte: ${src})`);
+} else {
+  console.error('[EVO] ATENÇÃO: EVOLUTION_INSTANCE e EVOLUTION_INSTANCE_NAME não estão configuradas no ambiente. Defina no Railway/env.');
+}
 
 function obterWebhookUrl() {
   let source = 'ENV_WEBHOOK_URL';
