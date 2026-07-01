@@ -1846,45 +1846,89 @@ async function webhookReceberMensagem(req, res) {
 
       console.log('[WA Webhook] CONVERSA_ANTES_DE_CRIAR:', { conversaId, leadId, tel, telSem55 });
 
+      // ── Determina nome_contato correto ANTES de criar/atualizar ─────────────
+      // REGRA: NUNCA usar pushName de fromMe=true (seria o nome do dono do WA, ex: "Thais Viana")
+      // Prioridade: lead_nome > pushName (só se recebida) > telefone > fallback
+      let nomeContato = null;
+      if (leadId) {
+        // 1. Busca nome do lead (fonte mais confiável)
+        const { data: leadData } = await sb.from('leads').select('nome').eq('id', leadId).single();
+        nomeContato = leadData?.nome || null;
+        if (nomeContato) console.log('CONTACT_NAME_SOURCE_LEAD', { leadId, nome: nomeContato });
+      }
+      if (!nomeContato && !fromMe && nome) {
+        // 2. pushName da Evolution — apenas para mensagens RECEBIDAS (fromMe=false)
+        nomeContato = nome;
+        console.log('CONTACT_NAME_SOURCE_EVOLUTION_PUSHNAME', { nome: nomeContato });
+      }
+      if (!nomeContato && fromMe) {
+        // fromMe=true: pushName é do dono do número — NUNCA usar como nome do contato
+        console.log('CONTACT_NAME_NOT_USER_NAME', { motivo: 'fromMe_pushname_rejeitado', pushNameRejeitado: nome });
+      }
+      // 3. telefone como fallback (nome preenchido depois no update se conversa já tiver nome)
+      if (!nomeContato) {
+        nomeContato = tel || 'Contato WhatsApp não identificado';
+        console.log('CONTACT_NAME_SOURCE_PHONE', { nome: nomeContato });
+      }
+
       if (!conversaId) {
-        // fromMe=true sem conversa existente → NÃO cria conversa nova
-        // Mensagem enviada pelo CRM: a conversa já existe ou será criada na próxima mensagem recebida
+        // fromMe=true sem conversa existente → BLOQUEAR completamente
+        // Mensagem enviada pelo CRM sempre tem conversa já existente — se não tem, é eco descartável
         if (fromMe) {
-          console.log('[WA Webhook] fromMe=true sem conversa existente — NÃO cria conversa nova');
-          console.log('WEBHOOK_STATUS_UPDATE_IGNORADO_SEM_MENSAGEM', { messageId, status: 'fromMe_sem_conversa' });
+          console.log('[WA Webhook] fromMe=true sem conversa existente — BLOQUEADO, não cria conversa nova');
+          console.log('CONTACT_NAME_NOT_USER_NAME', { motivo: 'fromMe_sem_conversa_bloqueado', pushNameRejeitado: nome });
           return res.json({ sucesso: true, ignorado: true, motivo: 'fromMe_sem_conversa_existente' });
         }
         // Cria nova conversa apenas para mensagens RECEBIDAS (fromMe=false)
         const novoConvId = crypto.randomBytes(16).toString('hex');
-        // Se for LID pendente (telefone inválido como número), usa placeholder LID:
         const telParaConversa = (isLidJid && !leadId) ? `LID:${lidNumero}` : (tel || null);
         const dadosExtrasNova = isLidJid && lidNumero
           ? JSON.stringify({ lid: lidNumero, remoteJid: rawJid })
           : null;
+        console.log('CONVERSA_CREATE_NEEDED', { tel: telParaConversa, leadId, nomeContato });
         const { data: novaConv, error: errC } = await sb.from('conversas_whatsapp').insert({
-          id: novoConvId, telefone: telParaConversa, nome_contato: nome || null,
-          lead_id: leadId || null, origem: 'WHATSAPP_WEBHOOK',
+          id: novoConvId,
+          telefone: telParaConversa,
+          nome_contato: nomeContato,
+          lead_id: leadId || null,
+          origem: 'WHATSAPP_WEBHOOK',
           status: 'ABERTA',
           dados_extras: dadosExtrasNova,
-          criado_em: agora, atualizado_em: agora,
+          criado_em: agora,
+          atualizado_em: agora,
         }).select('id').single();
         if (!errC && novaConv) {
           conversaId = novaConv.id;
-          console.log(`WEBHOOK_CONVERSA_CREATED`, { conversaId, tel: telParaConversa, leadId, isLidJid, lid: lidNumero || null });
+          console.log('WEBHOOK_CONVERSA_CREATED', { conversaId, tel: telParaConversa, leadId, nomeContato, isLidJid });
         } else {
           console.error('[WA Webhook] Erro ao criar conversa:', errC?.message);
         }
       } else {
-        // Atualiza ultima_msg_em, vincula lead, normaliza telefone e armazena mapeamento LID
+        // Conversa existente — atualiza campos sem sobrescrever nome_contato com nome errado
         const { data: convAtual } = await sb.from('conversas_whatsapp')
-          .select('telefone,lead_id,dados_extras').eq('id', conversaId).single();
+          .select('telefone,lead_id,dados_extras,nome_contato').eq('id', conversaId).single();
         const upd = { ultima_msg_em: agora, atualizado_em: agora, status: 'ABERTA' };
         if (leadId) upd.lead_id = leadId;
-        if (convAtual && convAtual.telefone !== tel) {
+        if (convAtual && convAtual.telefone !== tel && tel) {
           upd.telefone = tel;
           console.log(`[WA Webhook] 📞 Telefone corrigido: ${convAtual.telefone} → ${tel}`);
         }
-        // Armazena LID no dados_extras para lookup futuro quando fromMe=true ecoa com LID
+        // Atualiza nome_contato apenas se melhorar a qualidade do dado
+        // Regra: se já tem nome bom (não é telefone nem fallback), não sobrescreve
+        const nomeAtual = convAtual?.nome_contato || '';
+        const nomeEhTelefone = nomeAtual === tel || nomeAtual === 'Contato WhatsApp não identificado';
+        if (leadId && nomeContato !== tel && nomeContato !== 'Contato WhatsApp não identificado') {
+          // Lead identificado: sempre atualiza para nome do lead
+          upd.nome_contato = nomeContato;
+          console.log('CONTACT_NAME_SOURCE_LEAD', { leadId, nome: nomeContato, anterior: nomeAtual });
+        } else if (!fromMe && nome && nomeEhTelefone) {
+          // pushName chegou em mensagem recebida E o nome atual era apenas telefone/fallback
+          upd.nome_contato = nome;
+          console.log('CONTACT_NAME_SOURCE_EVOLUTION_PUSHNAME', { nome, anterior: nomeAtual });
+        } else if (nomeAtual) {
+          console.log('CONTACT_NAME_SOURCE_EXISTING_CONVERSA', { nomeAtual, fromMe, motivo: 'preservado' });
+        }
+        // Armazena LID no dados_extras
         if (isLidJid && lidNumero) {
           const extrasAtuais = (() => { try { return JSON.parse(convAtual?.dados_extras || '{}'); } catch { return {}; } })();
           if (!extrasAtuais.lid || extrasAtuais.lid !== lidNumero) {
@@ -1893,6 +1937,7 @@ async function webhookReceberMensagem(req, res) {
             console.log(`[WA Webhook] 🔗 LID armazenado: ${lidNumero} → conv=${conversaId}`);
           }
         }
+        console.log('CONVERSA_FOUND_EXISTING', { conversaId, leadId, upd: Object.keys(upd) });
         await sb.from('conversas_whatsapp').update(upd).eq('id', conversaId);
         console.log(`[WA Webhook] ✅ Conversa existente atualizada: ${conversaId} leadId=${leadId}`);
       }
@@ -2134,6 +2179,144 @@ async function statusIntegracao(req, res) {
 }
 
 
+// ───────────────────────────────────────────────────────────────────────────────
+// GET /api/whatsapp/deduplicar
+// Diagnóstico: lista grupos de conversas duplicadas (sem escrever nada)
+// ───────────────────────────────────────────────────────────────────────────────
+async function diagnosticarDuplicatas(req, res) {
+  try {
+    const { sb, isSupa } = getProvider();
+    if (!isSupa) return res.json({ sucesso: true, aviso: 'Apenas Supabase suportado.', grupos: [] });
+
+    console.log('DUPLICATE_CONVERSAS_SCAN_START');
+    const { data: todas } = await sb.from('conversas_whatsapp')
+      .select('id,telefone,lead_id,nome_contato,status,criado_em,ultima_msg_em,dados_extras')
+      .order('criado_em', { ascending: true });
+
+    const byPhone = {};
+    for (const c of (todas || [])) {
+      if (!c.telefone || c.telefone.startsWith('LID:')) continue;
+      const key = normalizePhoneBR(c.telefone) || c.telefone;
+      if (!byPhone[key]) byPhone[key] = [];
+      byPhone[key].push(c);
+    }
+
+    const grupos = Object.entries(byPhone)
+      .filter(([, convs]) => convs.length > 1)
+      .map(([tel, convs]) => ({ telefone: tel, quantidade: convs.length, conversas: convs.map(c => ({ id: c.id, nome_contato: c.nome_contato, status: c.status, lead_id: c.lead_id, criado_em: c.criado_em, ultima_msg_em: c.ultima_msg_em })) }));
+
+    console.log('DUPLICATE_CONVERSAS_FOUND', { total_grupos: grupos.length });
+    return res.json({ sucesso: true, total_grupos_duplicados: grupos.length, grupos });
+  } catch (e) {
+    console.error('[WA Dedup] diagnosticarDuplicatas:', e.message);
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────────────
+// POST /api/whatsapp/deduplicar
+// Executa deduplicação segura: move mensagens, marca duplicatas como FECHADA
+// NÃO usa DELETE nem TRUNCATE
+// ───────────────────────────────────────────────────────────────────────────────
+async function executarDeduplicacao(req, res) {
+  try {
+    const { sb, isSupa } = getProvider();
+    if (!isSupa) return res.json({ sucesso: true, aviso: 'Apenas Supabase suportado.', mescladas: 0 });
+
+    console.log('DUPLICATE_CONVERSAS_SCAN_START');
+    const agora = new Date().toISOString();
+    const { data: todas } = await sb.from('conversas_whatsapp')
+      .select('id,telefone,lead_id,nome_contato,status,criado_em,ultima_msg_em,dados_extras')
+      .order('criado_em', { ascending: true });
+
+    // Agrupa por telefone normalizado
+    const byPhone = {};
+    for (const c of (todas || [])) {
+      if (!c.telefone || c.telefone.startsWith('LID:')) continue;
+      const key = normalizePhoneBR(c.telefone) || c.telefone;
+      if (!byPhone[key]) byPhone[key] = [];
+      byPhone[key].push(c);
+    }
+
+    let gruposMesclados = 0;
+    let mensagensMov = 0;
+    const relatorio = [];
+
+    for (const [tel, convs] of Object.entries(byPhone)) {
+      if (convs.length <= 1) continue;
+      console.log('DUPLICATE_CONVERSAS_FOUND', { telefone: tel, quantidade: convs.length });
+
+      // Escolhe conversa canônica: prioridade = tem lead_id > status ABERTA > mais mensagens > mais antiga
+      // Conta mensagens por conversa
+      const ids = convs.map(c => c.id);
+      const { data: contagens } = await sb.from('mensagens_whatsapp')
+        .select('conversa_id')
+        .in('conversa_id', ids);
+      const contagemMap = {};
+      for (const m of (contagens || [])) {
+        contagemMap[m.conversa_id] = (contagemMap[m.conversa_id] || 0) + 1;
+      }
+
+      convs.sort((a, b) => {
+        if (!!a.lead_id !== !!b.lead_id) return a.lead_id ? -1 : 1;
+        if ((a.status === 'ABERTA') !== (b.status === 'ABERTA')) return a.status === 'ABERTA' ? -1 : 1;
+        const ca = contagemMap[a.id] || 0;
+        const cb = contagemMap[b.id] || 0;
+        if (ca !== cb) return cb - ca; // mais mensagens primeiro
+        return new Date(a.criado_em) - new Date(b.criado_em); // mais antiga primeiro
+      });
+
+      const canonica = convs[0];
+      const duplicatas = convs.slice(1);
+      console.log('DUPLICATE_CANONICAL_SELECTED', { conversaId: canonica.id, telefone: tel, total: convs.length });
+
+      for (const dup of duplicatas) {
+        // Move mensagens da duplicata para a canônica
+        const { error: errMove } = await sb.from('mensagens_whatsapp')
+          .update({ conversa_id: canonica.id })
+          .eq('conversa_id', dup.id);
+        if (!errMove) {
+          const qtd = contagemMap[dup.id] || 0;
+          mensagensMov += qtd;
+          console.log('DUPLICATE_MESSAGES_MOVED', { de: dup.id, para: canonica.id, mensagens: qtd });
+        }
+
+        // Mescla dados_extras (preserva LID se existir)
+        const extCan = (() => { try { return JSON.parse(canonica.dados_extras || '{}'); } catch { return {}; } })();
+        const extDup = (() => { try { return JSON.parse(dup.dados_extras || '{}'); } catch { return {}; } })();
+        const extMerge = { ...extDup, ...extCan }; // canônica tem prioridade
+
+        // Atualiza canônica com ultima_msg_em mais recente
+        const ultimaRecente = [canonica.ultima_msg_em, dup.ultima_msg_em]
+          .filter(Boolean).sort().pop();
+
+        await sb.from('conversas_whatsapp').update({
+          dados_extras: JSON.stringify(extMerge),
+          ultima_msg_em: ultimaRecente || agora,
+          atualizado_em: agora,
+        }).eq('id', canonica.id);
+
+        // Marca duplicata como FECHADA (não deleta)
+        await sb.from('conversas_whatsapp').update({
+          status: 'FECHADA',
+          atualizado_em: agora,
+          dados_extras: JSON.stringify({ ...extDup, _duplicata_de: canonica.id, _deduplicado_em: agora }),
+        }).eq('id', dup.id);
+        console.log('DUPLICATE_CONVERSA_MARKED', { duplicataId: dup.id, canonicaId: canonica.id });
+      }
+
+      gruposMesclados++;
+      relatorio.push({ telefone: tel, canonicaId: canonica.id, duplicatasIds: duplicatas.map(d => d.id) });
+    }
+
+    console.log('DUPLICATE_CONVERSAS_SCAN_DONE', { gruposMesclados, mensagensMov });
+    return res.json({ sucesso: true, grupos_mesclados: gruposMesclados, mensagens_movidas: mensagensMov, relatorio });
+  } catch (e) {
+    console.error('[WA Dedup] executarDeduplicacao:', e.message);
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}
+
 module.exports = {
   // Legado SQLite (não alterados)
   listarConversas,
@@ -2162,6 +2345,9 @@ module.exports = {
   evoConfigurarWebhook,
   evoConsultarWebhook,
   evoDiagRaw,
+  // Deduplicação segura de conversas
+  diagnosticarDuplicatas,
+  executarDeduplicacao,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -274,8 +274,15 @@ router.post('/admin/backups',         autenticar, exigirSuperAdmin, backupCtrl.e
 router.get ('/admin/backups/:arquivo',autenticar, exigirSuperAdmin, backupCtrl.download);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// WHATSAPP — Deduplicação segura de conversas (SUPER_ADMIN)
+// ─────────────────────────────────────────────────────────────────────────────
+router.get  ('/whatsapp/deduplicar',  autenticar, exigirSuperAdmin, whatsappCtrl.diagnosticarDuplicatas);
+router.post ('/whatsapp/deduplicar',  autenticar, exigirSuperAdmin, whatsappCtrl.executarDeduplicacao);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // HEALTH CHECK
 // ─────────────────────────────────────────────────────────────────────────────
+
 router.get('/health', (req, res) => {
   res.json({
     sucesso: true,
