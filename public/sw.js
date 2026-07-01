@@ -22,7 +22,7 @@
  *     Versão anterior (v4) será deletada no activate.
  */
 
-const CACHE_NAME = 'prospekt-pwa-v5';
+const CACHE_NAME = 'prospekt-pwa-v6';
 
 const PRECACHE = [
   '/manifest.json',

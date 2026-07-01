@@ -1,16 +1,18 @@
 /**
- * PROSPEKT CRM — Mobile Navigation v2
+ * PROSPEKT CRM — Mobile Navigation + PWA Install v3
  *
  * O que faz:
- *  1. Registra o Service Worker (PWA)
+ *  1. Registra o Service Worker (PWA) — SEMPRE, mobile E desktop
  *  2. Cria a Bottom Navigation Bar no mobile
  *  3. Cria o Mobile Header compacto
  *  4. Cria o Menu Bottom Sheet
  *  5. Exibe banner de instalar PWA (Android/Chrome: A2HS nativo)
  *  6. Exibe dica de "Adicionar à tela inicial" no iOS/Safari
  *  7. Botão de voltar no WhatsApp mobile
+ *  8. Botão flutuante de instalar no Desktop (Chrome/Edge)
  *
- * Desktop: NADA é renderizado (tudo fica hidden ou condicional).
+ * O SW é registrado em TODOS os dispositivos para permitir instalação PWA.
+ * No desktop, apenas o botão de instalação é exibido (sem nav mobile).
  * Não altera regras de negócio, rotas ou integrações.
  */
 (function() {
@@ -373,29 +375,32 @@
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         if (!refreshing) {
           refreshing = true;
-          // Não recarrega automaticamente — usuário pode estar em meio a uma ação
-          // O reload acontece na próxima navegação naturalmente
         }
       });
     }
   }
 
-  // ── Banner de Instalar PWA (Android/Chrome) ─────────────────────────────────
+  // ── Banner de Instalar PWA (Android/Chrome/Desktop) ─────────────────────────
   let _deferredPrompt = null;
   let _bannerDismissed = false;
 
   function configurarBannerInstalacao() {
-    // Captura o evento beforeinstallprompt (Chrome/Android)
+    // Captura o evento beforeinstallprompt (Chrome/Edge — Android e Desktop)
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
       _deferredPrompt = e;
+      console.log('[PWA] beforeinstallprompt capturado');
 
       // Só mostra se não foi dispensado antes (salvo em localStorage)
       const dispensado = localStorage.getItem('pwa_banner_dismissed');
       if (dispensado) return;
 
       if (isMobile()) {
+        // Android: banner bottom após 3s
         setTimeout(() => mostrarBannerAndroid(), 3000);
+      } else {
+        // Desktop: botão flutuante no canto inferior direito
+        setTimeout(() => mostrarBotaoDesktop(), 2000);
       }
     });
 
@@ -403,6 +408,7 @@
     window.addEventListener('appinstalled', () => {
       _deferredPrompt = null;
       esconderBanners();
+      localStorage.setItem('pwa_installed', '1');
       console.log('[PWA] App instalado com sucesso!');
     });
   }
@@ -441,6 +447,103 @@
     });
   }
 
+  // ── Botão flutuante de instalação — Desktop ──────────────────────────────────
+  function mostrarBotaoDesktop() {
+    if (_bannerDismissed || !_deferredPrompt) return;
+    if (document.getElementById('pwa-desktop-btn')) return;
+
+    const btn = document.createElement('div');
+    btn.id = 'pwa-desktop-btn';
+    btn.setAttribute('role', 'dialog');
+    btn.setAttribute('aria-label', 'Instalar PROSPEKT CRM');
+    btn.innerHTML = `
+      <button class="pwa-desktop-close" id="pwa-desktop-close" aria-label="Fechar">✕</button>
+      <div class="pwa-desktop-inner">
+        <img src="/icons/icon-192.png" alt="PROSPEKT" width="40" height="40" style="border-radius:10px;flex-shrink:0">
+        <div class="pwa-desktop-text">
+          <div class="pwa-desktop-title">Instalar PROSPEKT CRM</div>
+          <div class="pwa-desktop-sub">Acesse como app — sem abrir o navegador</div>
+        </div>
+      </div>
+      <button class="pwa-desktop-install-btn" id="pwa-desktop-install-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        Instalar CRM
+      </button>
+    `;
+
+    // Estilos inline — não dependem de CSS externo
+    btn.style.cssText = `
+      position:fixed;bottom:28px;right:28px;z-index:9999;
+      background:rgba(18,18,18,0.97);border:1px solid rgba(91,222,62,0.3);
+      border-radius:16px;padding:16px 18px;box-shadow:0 8px 40px rgba(0,0,0,0.6),0 0 0 1px rgba(255,255,255,0.04);
+      display:flex;flex-direction:column;gap:12px;min-width:260px;max-width:300px;
+      animation:pwaSlideIn .35s cubic-bezier(0.16,1,0.3,1);
+      font-family:inherit;
+    `;
+
+    // Injeta keyframe se ainda não existe
+    if (!document.getElementById('pwa-desktop-keyframes')) {
+      const style = document.createElement('style');
+      style.id = 'pwa-desktop-keyframes';
+      style.textContent = `
+        @keyframes pwaSlideIn {
+          from { opacity:0; transform:translateY(20px) scale(0.95); }
+          to   { opacity:1; transform:translateY(0)   scale(1); }
+        }
+        #pwa-desktop-btn .pwa-desktop-inner {
+          display:flex;align-items:center;gap:12px;
+        }
+        #pwa-desktop-btn .pwa-desktop-text {
+          min-width:0;
+        }
+        #pwa-desktop-btn .pwa-desktop-title {
+          font-size:.875rem;font-weight:700;color:#fff;letter-spacing:-.01em;
+        }
+        #pwa-desktop-btn .pwa-desktop-sub {
+          font-size:.75rem;color:rgba(255,255,255,.5);margin-top:2px;
+        }
+        #pwa-desktop-btn .pwa-desktop-install-btn {
+          width:100%;padding:9px 14px;background:linear-gradient(135deg,#5BDE3E,#3fcf1e);
+          border:none;border-radius:10px;color:#0A0A0A;font-weight:700;font-size:.8125rem;
+          cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;
+          font-family:inherit;transition:opacity .15s,transform .15s;
+        }
+        #pwa-desktop-btn .pwa-desktop-install-btn:hover {
+          opacity:.9;transform:translateY(-1px);
+        }
+        #pwa-desktop-btn .pwa-desktop-close {
+          position:absolute;top:10px;right:12px;background:none;border:none;
+          color:rgba(255,255,255,.35);cursor:pointer;font-size:.8rem;padding:4px;
+          line-height:1;transition:color .15s;font-family:inherit;
+        }
+        #pwa-desktop-btn .pwa-desktop-close:hover { color:rgba(255,255,255,.8); }
+        #pwa-desktop-btn { position:fixed; }
+      `;
+      document.head.appendChild(style);
+    }
+
+    document.body.appendChild(btn);
+
+    document.getElementById('pwa-desktop-install-btn').addEventListener('click', async () => {
+      if (!_deferredPrompt) return;
+      _deferredPrompt.prompt();
+      const { outcome } = await _deferredPrompt.userChoice;
+      console.log('[PWA] Desktop resultado:', outcome);
+      _deferredPrompt = null;
+      esconderBanners();
+    });
+
+    document.getElementById('pwa-desktop-close').addEventListener('click', () => {
+      _bannerDismissed = true;
+      localStorage.setItem('pwa_banner_dismissed', '1');
+      esconderBanners();
+    });
+  }
+
   // ── Dica de instalação para iOS/Safari ──────────────────────────────────────
   function configurarDicaIOS() {
     const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -449,9 +552,8 @@
     const jaViu = localStorage.getItem('ios_hint_dismissed');
 
     if (!isIOS || !isSafari || isStandalone || jaViu) return;
-    if (!isMobile()) return;
 
-    // Mostra a dica após 4 segundos
+    // Mostra a dica após 4 segundos (mobile e tablet iOS)
     setTimeout(() => mostrarDicaIOS(), 4000);
   }
 
@@ -480,7 +582,7 @@
   }
 
   function esconderBanners() {
-    ['pwa-install-banner', 'ios-install-hint'].forEach(id => {
+    ['pwa-install-banner', 'ios-install-hint', 'pwa-desktop-btn'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.remove();
     });
@@ -488,17 +590,19 @@
 
   // ── Init ────────────────────────────────────────────────────────────────────
   function init() {
+    // ⚠ SW registrado SEMPRE — mobile E desktop — é obrigatório para instalação PWA
+    registrarSW();
+    // Banner/botão de instalação e dica iOS disponíveis em todos os dispositivos
+    configurarBannerInstalacao();
+    configurarDicaIOS();
+
     if (isMobile()) {
-      registrarSW();
-      configurarBannerInstalacao();
       criarBottomNav();
       criarMobileHeader();
       injetarBotaoVoltarWA();
       monitorarChatWA();
-      configurarDicaIOS();
-    } else {
-      desregistrarSW();
     }
+    // Desktop: SW ativo + botão de instalação flutuante (sem nav mobile renderizada)
 
     // Re-checar no resize
     window.addEventListener('resize', () => {

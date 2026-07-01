@@ -238,6 +238,79 @@
       0%, 100% { opacity: 1; }
       50%       { opacity: 0.4; }
     }
+    /* PWA install hint na tela de login */
+    .pwa-login-hint {
+      margin-top: var(--space-4);
+      padding: var(--space-3) var(--space-4);
+      background: rgba(91,222,62,0.06);
+      border: 1px solid rgba(91,222,62,0.18);
+      border-radius: var(--radius-lg);
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      font-size: 0.8125rem;
+      color: var(--text-secondary);
+      animation: fadeIn 0.5s ease 1s both;
+      position: relative;
+    }
+
+    .pwa-login-hint img {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      flex-shrink: 0;
+    }
+
+    .pwa-login-hint .hint-text {
+      flex: 1;
+      min-width: 0;
+      font-size: 0.75rem;
+      line-height: 1.4;
+    }
+
+    .pwa-login-hint .hint-title {
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 2px;
+      font-size: 0.8125rem;
+    }
+
+    .pwa-login-hint .hint-install-btn {
+      flex-shrink: 0;
+      padding: 6px 12px;
+      background: linear-gradient(135deg, #5BDE3E, #3fcf1e);
+      border: none;
+      border-radius: 8px;
+      color: #0A0A0A;
+      font-weight: 700;
+      font-size: 0.75rem;
+      cursor: pointer;
+      font-family: inherit;
+      transition: opacity .15s, transform .15s;
+      white-space: nowrap;
+    }
+
+    .pwa-login-hint .hint-install-btn:hover {
+      opacity: .9;
+      transform: translateY(-1px);
+    }
+
+    .pwa-login-hint .hint-dismiss {
+      position: absolute;
+      top: 6px;
+      right: 8px;
+      background: none;
+      border: none;
+      color: rgba(255,255,255,.3);
+      cursor: pointer;
+      font-size: 0.7rem;
+      padding: 2px;
+      line-height: 1;
+      font-family: inherit;
+      transition: color .15s;
+    }
+
+    .pwa-login-hint .hint-dismiss:hover { color: rgba(255,255,255,.7); }
   </style>
 </head>
 <body>
@@ -334,6 +407,9 @@
 
   <div id="toast-container" aria-live="polite"></div>
 
+  <!-- PWA Install Hint (gerado por JS abaixo) -->
+  <div id="pwa-login-hint-wrap" style="position:relative;z-index:1;width:100%;max-width:420px;margin:0 auto;padding:0 var(--space-4) var(--space-4);"></div>
+
   <script src="/js/auth.js"></script>
   <script src="/js/toast.js"></script>
   <script>
@@ -429,5 +505,66 @@
     }
   </style>
 <script src="/js/mobile-nav.js"></script>
+<script>
+  // ── PWA Install Hint na tela de Login ──────────────────────────────────────
+  (function() {
+    const wrap = document.getElementById('pwa-login-hint-wrap');
+    if (!wrap) return;
+
+    // Se já instalado ou dispensado, não exibir
+    if (localStorage.getItem('pwa_installed') || localStorage.getItem('pwa_login_hint_dismissed')) return;
+
+    const isIOS     = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    const isSafari  = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+    const isStandalone = window.navigator.standalone === true
+                      || window.matchMedia('(display-mode: standalone)').matches;
+
+    if (isStandalone) return; // já está rodando como app
+
+    function renderHint(content) {
+      wrap.innerHTML = `
+        <div class="pwa-login-hint" id="pwa-login-hint">
+          <img src="/icons/icon-192.png" alt="PROSPEKT CRM">
+          <div class="hint-text">${content}</div>
+          <button class="hint-dismiss" id="pwa-hint-dismiss" aria-label="Fechar">✕</button>
+        </div>`;
+      document.getElementById('pwa-hint-dismiss').addEventListener('click', () => {
+        localStorage.setItem('pwa_login_hint_dismissed', '1');
+        wrap.innerHTML = '';
+      });
+    }
+
+    if (isIOS && isSafari) {
+      // iOS: instrução manual
+      renderHint(`
+        <div class="hint-title">Instale no iPhone</div>
+        Toque em <strong>⎋ Compartilhar</strong> no Safari e depois em <strong>Adicionar à Tela de Início</strong>.`);
+    } else {
+      // Chrome/Edge (Android ou Desktop): captura beforeinstallprompt
+      let _prompt = null;
+      window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        _prompt = e;
+        renderHint(`
+          <div class="hint-title">Instale o PROSPEKT CRM</div>
+          Acesse como app — sem abrir o navegador.
+          <button class="hint-install-btn" id="hint-install-btn" style="margin-top:6px;display:inline-flex;align-items:center;gap:5px;">
+            ↓ Instalar CRM
+          </button>`);
+        document.getElementById('hint-install-btn').addEventListener('click', async () => {
+          if (!_prompt) return;
+          _prompt.prompt();
+          const { outcome } = await _prompt.userChoice;
+          if (outcome === 'accepted') {
+            localStorage.setItem('pwa_installed', '1');
+            wrap.innerHTML = '';
+          }
+          _prompt = null;
+        });
+      });
+    }
+  })();
+</script>
 </body>
 </html>
+
