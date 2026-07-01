@@ -107,6 +107,177 @@ function phoneVariants(tel) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// resolverConversaWhatsapp — FUNÇÃO CENTRAL DE RESOLUÇÃO
+// Garante que NUNCA se cria conversa duplicada para o mesmo telefone/LID.
+//
+// Ordem de busca:
+//   1. LID em dados_extras (like + jsonb)
+//   2. lead_id
+//   3. Telefone — exact match todas as variantes
+//   4. Telefone — ilike fallback legado
+//   5. LID → Evolution API → telefone real
+//   6. LID → nome_contato único
+//   7. LID → conversa pendente existente
+//   8. fromMe=true sem conversa → BLOQUEIA criação
+//
+// Retorna: { conversaId, permiteCreate, fonte }
+// ─────────────────────────────────────────────────────────────────────────────
+async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, rawJid, fromMe, nome }) {
+  const agora = new Date().toISOString();
+  let conversaId = null;
+  let fonte = null;
+
+  console.log('CONVERSA_RESOLVE_START', { tel, lidNumero, leadId, isLidJid, fromMe, nome: nome?.slice(0,30) });
+
+  // ── Passo 1: LID em dados_extras ────────────────────────────────────────
+  if (!conversaId && isLidJid && lidNumero) {
+    console.log('CONVERSA_LOOKUP_LID', { lidNumero });
+    const { data: byLike } = await sb.from('conversas_whatsapp')
+      .select('id,telefone,lead_id').like('dados_extras', `%${lidNumero}%`)
+      .neq('status', 'FECHADA').order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
+    if (byLike?.[0]) {
+      conversaId = byLike[0].id; fonte = 'lid_like';
+      console.log('CONVERSA_FOUND_EXISTING', { conversaId, fonte, lidNumero });
+    }
+    if (!conversaId) {
+      const { data: byJson } = await sb.from('conversas_whatsapp')
+        .select('id,telefone,lead_id')
+        .filter('dados_extras', 'cs', JSON.stringify({ lid: lidNumero }))
+        .neq('status', 'FECHADA').order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
+      if (byJson?.[0]) {
+        conversaId = byJson[0].id; fonte = 'lid_jsonb';
+        console.log('CONVERSA_FOUND_EXISTING', { conversaId, fonte, lidNumero });
+      }
+    }
+  }
+
+  // ── Passo 2: por lead_id ────────────────────────────────────────────────
+  if (!conversaId && leadId) {
+    console.log('CONVERSA_LOOKUP_LEAD', { leadId });
+    const { data: byLead } = await sb.from('conversas_whatsapp')
+      .select('id').eq('lead_id', leadId).neq('status', 'FECHADA')
+      .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
+    if (byLead?.[0]) {
+      conversaId = byLead[0].id; fonte = 'lead_id';
+      console.log('CONVERSA_FOUND_EXISTING', { conversaId, fonte, leadId });
+    }
+  }
+
+  // ── Passo 3: telefone — exact match ─────────────────────────────────────
+  if (!conversaId && tel) {
+    console.log('CONVERSA_LOOKUP_PHONE', { tel });
+    const variantes = phoneVariants(tel);
+    for (const v of variantes) {
+      const { data: byTel } = await sb.from('conversas_whatsapp')
+        .select('id,telefone').eq('telefone', v).neq('status', 'FECHADA')
+        .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
+      if (byTel?.[0]) {
+        conversaId = byTel[0].id; fonte = `telefone_eq`;
+        console.log('CONVERSA_FOUND_EXISTING', { conversaId, fonte, variante: v });
+        break;
+      }
+    }
+  }
+
+  // ── Passo 4: telefone — ilike fallback ──────────────────────────────────
+  if (!conversaId && tel) {
+    const variantes = phoneVariants(tel).filter(v => v.length >= 10);
+    for (const v of variantes) {
+      const { data: byIlike } = await sb.from('conversas_whatsapp')
+        .select('id,telefone').ilike('telefone', `%${v}%`).neq('status', 'FECHADA')
+        .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
+      if (byIlike?.[0]) {
+        conversaId = byIlike[0].id; fonte = `telefone_ilike`;
+        console.log('CONVERSA_FOUND_EXISTING', { conversaId, fonte, variante: v, telSalvo: byIlike[0].telefone });
+        await sb.from('conversas_whatsapp')
+          .update({ telefone: tel, atualizado_em: agora }).eq('id', conversaId);
+        break;
+      }
+    }
+  }
+
+  // ── Passo 5: LID → Evolution API → telefone real ────────────────────────
+  if (!conversaId && isLidJid && lidNumero) {
+    console.log('CONVERSA_LOOKUP_LID_EVO_API', { lidNumero });
+    try {
+      const lidJidCompleto = rawJid?.includes('@') ? rawJid : `${lidNumero}@lid`;
+      const resContato = await evoSvc.call('POST', `/contacts/find/${evoSvc.EVOLUTION_INSTANCE}`, { where: { id: lidJidCompleto } });
+      const contato = (Array.isArray(resContato?.dados) ? resContato.dados : (resContato?.dados ? [resContato.dados] : []))[0] || null;
+      if (contato) {
+        const jidReal = contato.id || contato.remoteJid || '';
+        const telRaw  = contato.phone || (jidReal.includes('@s.whatsapp.net') ? jidReal.split('@')[0] : null);
+        if (telRaw) {
+          const telNorm = normalizePhone(telRaw);
+          for (const v of phoneVariants(telNorm)) {
+            const { data: byEvo } = await sb.from('conversas_whatsapp')
+              .select('id,dados_extras').eq('telefone', v).neq('status', 'FECHADA')
+              .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
+            if (byEvo?.[0]) {
+              conversaId = byEvo[0].id; fonte = 'lid_evo_phone';
+              console.log('CONVERSA_FOUND_EXISTING', { conversaId, fonte, lidNumero, telNorm });
+              const ext = (() => { try { return JSON.parse(byEvo[0].dados_extras || '{}'); } catch { return {}; } })();
+              if (!ext.lid) {
+                await sb.from('conversas_whatsapp')
+                  .update({ dados_extras: JSON.stringify({ ...ext, lid: lidNumero }), atualizado_em: agora })
+                  .eq('id', conversaId);
+              }
+              break;
+            }
+          }
+        }
+      }
+    } catch (e) { console.warn('CONVERSA_LOOKUP_LID_EVO_ERROR', e.message); }
+  }
+
+  // ── Passo 6: LID → nome_contato único ───────────────────────────────────
+  if (!conversaId && isLidJid && lidNumero && nome && !fromMe) {
+    const primeiroNome = nome.split(' ')[0];
+    if (primeiroNome.length >= 3) {
+      const { data: byNome } = await sb.from('conversas_whatsapp')
+        .select('id,dados_extras').ilike('nome_contato', `%${primeiroNome}%`)
+        .neq('status', 'FECHADA').order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(2);
+      if (byNome?.length === 1) {
+        conversaId = byNome[0].id; fonte = 'lid_nome_contato';
+        console.log('CONVERSA_FOUND_EXISTING', { conversaId, fonte, nome, primeiroNome });
+        const ext = (() => { try { return JSON.parse(byNome[0].dados_extras || '{}'); } catch { return {}; } })();
+        if (!ext.lid) {
+          await sb.from('conversas_whatsapp')
+            .update({ dados_extras: JSON.stringify({ ...ext, lid: lidNumero }), atualizado_em: agora })
+            .eq('id', conversaId);
+        }
+      } else if (byNome?.length > 1) {
+        console.warn('CONVERSA_LOOKUP_LID_NOME_AMBIGUO', { nome, primeiroNome, qtd: byNome.length });
+      }
+    }
+  }
+
+  // ── Passo 7: LID → conversa pendente existente ───────────────────────────
+  if (!conversaId && isLidJid && lidNumero) {
+    const { data: pendente } = await sb.from('conversas_whatsapp')
+      .select('id').like('dados_extras', `%"lid":"${lidNumero}"%`)
+      .order('criado_em', { ascending: false }).limit(1);
+    if (pendente?.[0]) {
+      conversaId = pendente[0].id; fonte = 'lid_pending_existente';
+      console.log('CONVERSA_FOUND_EXISTING', { conversaId, fonte, lidNumero });
+      console.log('CONVERSA_CREATE_BLOCKED_DUPLICATE', { lidNumero, conversaId });
+    }
+  }
+
+  // ── Passo 8: fromMe=true sem conversa → BLOQUEAR ────────────────────────
+  if (!conversaId && fromMe) {
+    console.log('WHATSAPP_FROM_ME_IGNORED_NO_CONVERSA', { tel, lidNumero, nome });
+    return { conversaId: null, permiteCreate: false, fonte: 'from_me_blocked' };
+  }
+
+  if (conversaId) {
+    return { conversaId, permiteCreate: false, fonte };
+  }
+
+  console.log('CONVERSA_CREATE_ALLOWED', { tel, lidNumero, leadId });
+  return { conversaId: null, permiteCreate: true, fonte: 'nao_encontrada' };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /api/whatsapp/conversas
 // Lista todas as conversas com última mensagem
 // ─────────────────────────────────────────────────────────────────────────────
@@ -123,7 +294,13 @@ async function listarConversas(req, res) {
         .range(Number(offset), Number(offset) + Number(limit) - 1);
       if (role === 'VENDEDOR') q = q.eq('vendedor_id', req.usuario.id);
       if (vendedor_id) q = q.eq('vendedor_id', vendedor_id);
-      if (status)      q = q.eq('status', status);
+      // Por padrão: exclui FECHADA (inclui duplicatas marcadas por deduplicação)
+      // Se o usuário pedir status=FECHADA explicitamente, mostra normalmente
+      if (status) {
+        q = q.eq('status', status);
+      } else {
+        q = q.neq('status', 'FECHADA');
+      }
       if (busca)       q = q.or(`telefone.ilike.%${busca}%,nome_contato.ilike.%${busca}%`);
       const { data, error } = await q;
       if (error) throw error;
@@ -1621,326 +1798,23 @@ async function webhookReceberMensagem(req, res) {
     }
     console.log('[WA Webhook] RESULTADO_BUSCA_LEAD:', { telefoneNormalizado: tel, variantesSem55: telSem55, leadId });
 
-    // ── 6. Busca ou cria conversa ─────────────────────────────────────────
-    // CRÍTICO: busca em múltiplos formatos de telefone para evitar criar conversa duplicada
-    // Lead pode estar salvo com 11964634949 (sem 55) mas webhook entrega 5511964634949
+    // ── 6. Resolve conversa (FUNÇÃO CENTRAL — elimina duplicação) ─────────────
+    // Usa resolverConversaWhatsapp() que executa 8 passos de busca em ordem antes
+    // de permitir qualquer criação. Nunca cria conversa duplicada.
     let conversaId = null;
     if (isSupa) {
-    // ── Busca 0: LID (@lid) — resolve para telefone real antes de buscar conversa ─────
-      if (!conversaId && isLidJid && lidNumero) {
-        console.log('WEBHOOK_LID_DETECTED', lidNumero);
-        console.log('WEBHOOK_LID_VALUE', { lid: lidNumero, rawJid });
+      const resolucao = await resolverConversaWhatsapp(sb, {
+        tel, lidNumero, leadId, isLidJid, rawJid, fromMe, nome
+      });
 
-        // ── Camada 0: lookup LOCAL por dados_extras.lid (mais rápido, sem I/O externo) ──
-        console.log('WEBHOOK_LID_LOOKUP_LOCAL', lidNumero);
-        const { data: byLike } = await sb.from('conversas_whatsapp')
-          .select('id, telefone, lead_id').like('dados_extras', `%${lidNumero}%`)
-          .neq('status', 'FECHADA').order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
-
-        let convLidItem = byLike?.[0] || null;
-
-        // Camada 0b: dados_extras JSONB contains
-        if (!convLidItem) {
-          const { data: byJson } = await sb.from('conversas_whatsapp')
-            .select('id, telefone, lead_id')
-            .filter('dados_extras', 'cs', JSON.stringify({ lid: lidNumero }))
-            .neq('status', 'FECHADA').order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
-          convLidItem = byJson?.[0] || null;
-          if (convLidItem) console.log('WEBHOOK_LID_CONVERSA_FOUND', { via: 'jsonb', lid: lidNumero, convId: convLidItem.id });
-        } else {
-          console.log('WEBHOOK_LID_CONVERSA_FOUND', { via: 'like', lid: lidNumero, convId: byLike[0].id });
-        }
-
-        if (!convLidItem) console.log('WEBHOOK_LID_CONVERSA_NOT_FOUND', lidNumero);
-
-        // ── Camada C: resolução via Evolution API → obtém telefone real do contato ──
-        if (!convLidItem) {
-          console.log(`[WA Webhook] 🔍 LID sem mapeamento local — tentando resolver via Evolution API...`);
-          try {
-            const lidJidCompleto = rawJid.includes('@') ? rawJid : `${lidNumero}@lid`;
-            const resContato = await evoSvc.call('POST', `/contacts/find/${evoSvc.EVOLUTION_INSTANCE}`, {
-              where: { id: lidJidCompleto }
-            });
-            const contatos = Array.isArray(resContato?.dados) ? resContato.dados : (resContato?.dados ? [resContato.dados] : []);
-            const contato = contatos[0] || null;
-            if (contato) {
-              const jidReal = contato.id || contato.remoteJid || '';
-              const telResolvidoRaw = contato.phone || (jidReal.includes('@s.whatsapp.net') ? jidReal.split('@')[0] : null);
-              if (telResolvidoRaw) {
-                const telResolvido = normalizePhone(telResolvidoRaw);
-                console.log(`[WA Webhook] ✅ LID_RESOLVIDO_EVO: ${lidNumero} → ${telResolvido}`);
-                const variantesReal = phoneVariants(telResolvido);
-                for (const variant of variantesReal) {
-                  const { data: convReal } = await sb.from('conversas_whatsapp')
-                    .select('id, telefone, lead_id').eq('telefone', variant).neq('status', 'FECHADA')
-                    .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
-                  if (convReal?.[0]) {
-                    convLidItem = convReal[0];
-                    console.log('WEBHOOK_LID_CONVERSA_FOUND', { via: 'evo_phone', lid: lidNumero, telResolvido, convId: convLidItem.id });
-                    try {
-                      const extR = (() => { try { return JSON.parse(convLidItem.dados_extras || '{}'); } catch { return {}; } })();
-                      if (!extR.lid) {
-                        await sb.from('conversas_whatsapp')
-                          .update({ dados_extras: JSON.stringify({ ...extR, lid: lidNumero }) })
-                          .eq('id', convLidItem.id);
-                        console.log('WEBHOOK_LID_SAVED_TO_CONVERSA', { lid: lidNumero, convId: convLidItem.id });
-                      }
-                    } catch(e) { console.warn('[WA Webhook] Erro ao armazenar LID:', e.message); }
-                    break;
-                  }
-                }
-              }
-            }
-          } catch (e) {
-            console.warn(`[WA Webhook] LID_EVO_ERRO: ${e.message}`);
-          }
-        }
-
-        if (convLidItem) {
-          // ✅ LID resolvido → usa conversa existente
-          if (convLidItem.lead_id) {
-            const { data: convMaisAtiva } = await sb.from('conversas_whatsapp')
-              .select('id').eq('lead_id', convLidItem.lead_id).neq('status', 'FECHADA')
-              .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
-            conversaId = convMaisAtiva?.[0]?.id || convLidItem.id;
-          } else {
-            conversaId = convLidItem.id;
-          }
-          console.log(`WEBHOOK_LID_CONVERSA_FOUND via resolucao: ${conversaId}`);
-        } else {
-          // ── LID não resolvido: tenta Camada D — busca por pushName/nome_contato ──────
-          // Evita criar conversa duplicada quando o nome do contato já existe no CRM
-          if (!convLidItem && nome) {
-            const primeiroNome = nome.split(' ')[0]; // ex: "Gislainni" de "Gislainni Arruda"
-            const { data: byNome } = await sb.from('conversas_whatsapp')
-              .select('id, telefone, lead_id, nome_contato')
-              .ilike('nome_contato', `%${primeiroNome}%`)
-              .neq('status', 'FECHADA')
-              .order('ultima_msg_em', { ascending: false, nullsFirst: false })
-              .limit(2); // busca 2 para detectar ambiguidade
-
-            if (byNome?.length === 1) {
-              // Correspondência única — seguro usar
-              convLidItem = byNome[0];
-              console.log('WEBHOOK_LID_CONVERSA_FOUND', { via: 'nome_contato', nome, primeiroNome, convId: convLidItem.id });
-              // Salva o LID para próximas respostas serem roteadas corretamente
-              try {
-                const extN = (() => { try { return JSON.parse(convLidItem.dados_extras || '{}'); } catch { return {}; } })();
-                if (!extN.lid) {
-                  await sb.from('conversas_whatsapp')
-                    .update({ dados_extras: JSON.stringify({ ...extN, lid: lidNumero }) })
-                    .eq('id', convLidItem.id);
-                  console.log('WEBHOOK_LID_SAVED_TO_CONVERSA', { lid: lidNumero, convId: convLidItem.id, via: 'nome_contato' });
-                }
-              } catch(eN) { console.warn('[WA Webhook] Erro ao salvar LID por nome:', eN.message); }
-            } else if (byNome?.length > 1) {
-              console.warn('WEBHOOK_LID_NOME_AMBIGUO — múltiplas conversas com nome similar, não usa:', nome, byNome.map(c => c.nome_contato));
-            } else {
-              console.warn('WEBHOOK_LID_NOME_NAO_ENCONTRADO —', nome);
-            }
-          }
-
-          // Se encontrou por nome, usa essa conversa
-          if (convLidItem) {
-            conversaId = convLidItem.lead_id
-              ? (await sb.from('conversas_whatsapp').select('id').eq('lead_id', convLidItem.lead_id).neq('status', 'FECHADA').order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1)).data?.[0]?.id || convLidItem.id
-              : convLidItem.id;
-            console.log('WEBHOOK_LID_CONVERSA_FOUND_BY_NAME', { conversaId });
-          } else {
-          // ── Camada E: cria/reusa conversa PENDENTE (último recurso) ──────────────
-          console.warn('WEBHOOK_LID_NAO_RESOLVIDO — buscando conversa pendente existente para LID:', lidNumero);
-
-          // Verifica se já existe conversa pendente para esse LID (evita duplicidade)
-          const { data: pendente } = await sb.from('conversas_whatsapp')
-            .select('id').like('dados_extras', `%"lid":"${lidNumero}"%`)
-            .order('criado_em', { ascending: false }).limit(1);
-
-          if (pendente?.[0]) {
-            conversaId = pendente[0].id;
-            console.log('WEBHOOK_LID_EXISTING_PENDING_USED', { lid: lidNumero, conversaId });
-            console.log('WEBHOOK_LID_DUPLICATE_PREVENTED', { lid: lidNumero });
-          } else {
-            // Cria conversa pendente — NÃO descarta a mensagem
-            const pendId = crypto.randomBytes(16).toString('hex');
-            const dadosExtrasPend = JSON.stringify({
-              lid: lidNumero,
-              remoteJid: rawJid,
-              motivo: 'lid_nao_resolvido',
-              fonte: 'evolution_webhook',
-            });
-            const nomePend = nome || 'Contato WhatsApp não identificado';
-            // telefone é NOT NULL no Supabase — usa prefixo LID: como placeholder rastreável
-            const telPendente = `LID:${lidNumero}`;
-            const { data: convPend, error: errPend } = await sb.from('conversas_whatsapp').insert({
-              id: pendId,
-              telefone: telPendente,
-              nome_contato: nomePend,
-              lead_id: null,
-              origem: 'WHATSAPP_WEBHOOK',
-              status: 'ABERTA',
-              dados_extras: dadosExtrasPend,
-              criado_em: agora,
-              atualizado_em: agora,
-            }).select('id').single();
-            if (!errPend && convPend) {
-              conversaId = convPend.id;
-              console.log('WEBHOOK_LID_PENDING_CONVERSA_CREATED', { lid: lidNumero, conversaId, nome: nomePend });
-              console.log('WEBHOOK_LID_MESSAGE_SAVED_PENDING', { lid: lidNumero, conversaId });
-            } else {
-              console.error('WEBHOOK_LID_PENDING_CONVERSA_ERROR', errPend?.message);
-              // Mesmo assim retorna sucesso — não pode bloquear o webhook
-              return res.json({ sucesso: true, ignorado: true, motivo: 'lid_pending_conv_error', lid: lidNumero });
-            }
-          }
-          }
-        }
+      if (!resolucao.permiteCreate && !resolucao.conversaId) {
+        // fromMe=true sem conversa — eco do CRM, descarta
+        console.log('WHATSAPP_FROM_ME_IGNORED_NO_CONVERSA', { tel, fonte: resolucao.fonte });
+        return res.json({ sucesso: true, ignorado: true, motivo: 'fromMe_sem_conversa_existente' });
       }
 
-      // Busca 1: por lead_id (mais confiável — já linkado) — ordena por ultima_msg_em
-      if (!conversaId && leadId) {
-        const { data: convByLead } = await sb.from('conversas_whatsapp')
-          .select('id').eq('lead_id', leadId).neq('status', 'FECHADA')
-          .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
-        conversaId = convByLead?.[0]?.id || null;
-        if (conversaId) console.log(`[WA Webhook] Conversa encontrada por lead_id=${leadId} → conv=${conversaId}`);
-      }
-
-      // Busca 2: por telefone em TODAS as variantes (com/sem 55, com/sem 9º dígito)
-      if (!conversaId) {
-        const variantesCompletas = phoneVariants(tel);
-        console.log('[WA Webhook] VARIANTES_TELEFONE:', variantesCompletas);
-
-        // Passo 2a: exact match para cada variante (mais preciso)
-        for (const variant of variantesCompletas) {
-          const { data: convExist } = await sb.from('conversas_whatsapp')
-            .select('id,telefone').eq('telefone', variant).neq('status', 'FECHADA')
-            .order('criado_em', { ascending: false }).limit(1);
-          if (convExist?.[0]) {
-            conversaId = convExist[0].id;
-            console.log(`[WA Webhook] Conversa encontrada (eq) por variante ${variant} → conv=${conversaId}`);
-            break;
-          }
-        }
-
-        // Passo 2b: fallback ILIKE para cobrir formatos legados (com +, espaços, etc.)
-        // Usa apenas as variantes mais longas (13+ dígitos) para evitar falso positivo
-        if (!conversaId) {
-          const variantesLongas = variantesCompletas.filter(v => v.length >= 11);
-          for (const variant of variantesLongas) {
-            const { data: convIlike } = await sb.from('conversas_whatsapp')
-              .select('id,telefone').ilike('telefone', `%${variant}%`).neq('status', 'FECHADA')
-              .order('criado_em', { ascending: false }).limit(1);
-            if (convIlike?.[0]) {
-              conversaId = convIlike[0].id;
-              console.log(`[WA Webhook] Conversa encontrada (ilike) por variante ${variant} → conv=${conversaId} tel_salvo=${convIlike[0].telefone}`);
-              // Atualiza o telefone da conversa para o formato canônico do webhook
-              await sb.from('conversas_whatsapp')
-                .update({ telefone: tel, atualizado_em: new Date().toISOString() })
-                .eq('id', conversaId);
-              console.log(`[WA Webhook] ✅ Telefone da conversa normalizado: ${convIlike[0].telefone} → ${tel}`);
-              break;
-            }
-          }
-        }
-      }
-
-      console.log('[WA Webhook] CONVERSA_ANTES_DE_CRIAR:', { conversaId, leadId, tel, telSem55 });
-
-      // ── Determina nome_contato correto ANTES de criar/atualizar ─────────────
-      // REGRA: NUNCA usar pushName de fromMe=true (seria o nome do dono do WA, ex: "Thais Viana")
-      // Prioridade: lead_nome > pushName (só se recebida) > telefone > fallback
-      let nomeContato = null;
-      if (leadId) {
-        // 1. Busca nome do lead (fonte mais confiável)
-        const { data: leadData } = await sb.from('leads').select('nome').eq('id', leadId).single();
-        nomeContato = leadData?.nome || null;
-        if (nomeContato) console.log('CONTACT_NAME_SOURCE_LEAD', { leadId, nome: nomeContato });
-      }
-      if (!nomeContato && !fromMe && nome) {
-        // 2. pushName da Evolution — apenas para mensagens RECEBIDAS (fromMe=false)
-        nomeContato = nome;
-        console.log('CONTACT_NAME_SOURCE_EVOLUTION_PUSHNAME', { nome: nomeContato });
-      }
-      if (!nomeContato && fromMe) {
-        // fromMe=true: pushName é do dono do número — NUNCA usar como nome do contato
-        console.log('CONTACT_NAME_NOT_USER_NAME', { motivo: 'fromMe_pushname_rejeitado', pushNameRejeitado: nome });
-      }
-      // 3. telefone como fallback (nome preenchido depois no update se conversa já tiver nome)
-      if (!nomeContato) {
-        nomeContato = tel || 'Contato WhatsApp não identificado';
-        console.log('CONTACT_NAME_SOURCE_PHONE', { nome: nomeContato });
-      }
-
-      if (!conversaId) {
-        // fromMe=true sem conversa existente → BLOQUEAR completamente
-        // Mensagem enviada pelo CRM sempre tem conversa já existente — se não tem, é eco descartável
-        if (fromMe) {
-          console.log('[WA Webhook] fromMe=true sem conversa existente — BLOQUEADO, não cria conversa nova');
-          console.log('CONTACT_NAME_NOT_USER_NAME', { motivo: 'fromMe_sem_conversa_bloqueado', pushNameRejeitado: nome });
-          return res.json({ sucesso: true, ignorado: true, motivo: 'fromMe_sem_conversa_existente' });
-        }
-        // Cria nova conversa apenas para mensagens RECEBIDAS (fromMe=false)
-        const novoConvId = crypto.randomBytes(16).toString('hex');
-        const telParaConversa = (isLidJid && !leadId) ? `LID:${lidNumero}` : (tel || null);
-        const dadosExtrasNova = isLidJid && lidNumero
-          ? JSON.stringify({ lid: lidNumero, remoteJid: rawJid })
-          : null;
-        console.log('CONVERSA_CREATE_NEEDED', { tel: telParaConversa, leadId, nomeContato });
-        const { data: novaConv, error: errC } = await sb.from('conversas_whatsapp').insert({
-          id: novoConvId,
-          telefone: telParaConversa,
-          nome_contato: nomeContato,
-          lead_id: leadId || null,
-          origem: 'WHATSAPP_WEBHOOK',
-          status: 'ABERTA',
-          dados_extras: dadosExtrasNova,
-          criado_em: agora,
-          atualizado_em: agora,
-        }).select('id').single();
-        if (!errC && novaConv) {
-          conversaId = novaConv.id;
-          console.log('WEBHOOK_CONVERSA_CREATED', { conversaId, tel: telParaConversa, leadId, nomeContato, isLidJid });
-        } else {
-          console.error('[WA Webhook] Erro ao criar conversa:', errC?.message);
-        }
-      } else {
-        // Conversa existente — atualiza campos sem sobrescrever nome_contato com nome errado
-        const { data: convAtual } = await sb.from('conversas_whatsapp')
-          .select('telefone,lead_id,dados_extras,nome_contato').eq('id', conversaId).single();
-        const upd = { ultima_msg_em: agora, atualizado_em: agora, status: 'ABERTA' };
-        if (leadId) upd.lead_id = leadId;
-        if (convAtual && convAtual.telefone !== tel && tel) {
-          upd.telefone = tel;
-          console.log(`[WA Webhook] 📞 Telefone corrigido: ${convAtual.telefone} → ${tel}`);
-        }
-        // Atualiza nome_contato apenas se melhorar a qualidade do dado
-        // Regra: se já tem nome bom (não é telefone nem fallback), não sobrescreve
-        const nomeAtual = convAtual?.nome_contato || '';
-        const nomeEhTelefone = nomeAtual === tel || nomeAtual === 'Contato WhatsApp não identificado';
-        if (leadId && nomeContato !== tel && nomeContato !== 'Contato WhatsApp não identificado') {
-          // Lead identificado: sempre atualiza para nome do lead
-          upd.nome_contato = nomeContato;
-          console.log('CONTACT_NAME_SOURCE_LEAD', { leadId, nome: nomeContato, anterior: nomeAtual });
-        } else if (!fromMe && nome && nomeEhTelefone) {
-          // pushName chegou em mensagem recebida E o nome atual era apenas telefone/fallback
-          upd.nome_contato = nome;
-          console.log('CONTACT_NAME_SOURCE_EVOLUTION_PUSHNAME', { nome, anterior: nomeAtual });
-        } else if (nomeAtual) {
-          console.log('CONTACT_NAME_SOURCE_EXISTING_CONVERSA', { nomeAtual, fromMe, motivo: 'preservado' });
-        }
-        // Armazena LID no dados_extras
-        if (isLidJid && lidNumero) {
-          const extrasAtuais = (() => { try { return JSON.parse(convAtual?.dados_extras || '{}'); } catch { return {}; } })();
-          if (!extrasAtuais.lid || extrasAtuais.lid !== lidNumero) {
-            extrasAtuais.lid = lidNumero;
-            upd.dados_extras = JSON.stringify(extrasAtuais);
-            console.log(`[WA Webhook] 🔗 LID armazenado: ${lidNumero} → conv=${conversaId}`);
-          }
-        }
-        console.log('CONVERSA_FOUND_EXISTING', { conversaId, leadId, upd: Object.keys(upd) });
-        await sb.from('conversas_whatsapp').update(upd).eq('id', conversaId);
-        console.log(`[WA Webhook] ✅ Conversa existente atualizada: ${conversaId} leadId=${leadId}`);
-      }
+      conversaId = resolucao.conversaId;
+      console.log('CONVERSA_RESOLVE_RESULT', { conversaId, permiteCreate: resolucao.permiteCreate, fonte: resolucao.fonte });
     } else if (db) {
       const variantesLocais = phoneVariants(tel);
       let conv = null;
@@ -1949,18 +1823,89 @@ async function webhookReceberMensagem(req, res) {
         if (conv) break;
       }
       conversaId = conv?.id || null;
-      if (!conversaId) {
-        const cid = crypto.randomBytes(16).toString('hex');
-        db.prepare('INSERT INTO conversas_whatsapp (id,telefone,nome_contato,lead_id,origem,criado_em,atualizado_em) VALUES (?,?,?,?,?,?,?)').run(cid, tel, nome||null, leadId||null, 'WHATSAPP_WEBHOOK', agora, agora);
-        conversaId = cid;
-      } else {
-        db.prepare('UPDATE conversas_whatsapp SET ultima_msg_em=?,atualizado_em=? WHERE id=?').run(agora, agora, conversaId);
-      }
     }
 
+    // ── Determina nome_contato correto ────────────────────────────────────────
+    // REGRA: NUNCA usar pushName de fromMe=true (seria o nome do dono do WA)
+    // Prioridade: lead_nome > pushName (só fromMe=false) > nome existente > telefone > fallback
+    let nomeContato = null;
+    if (leadId && isSupa) {
+      const { data: leadData } = await sb.from('leads').select('nome').eq('id', leadId).single();
+      nomeContato = leadData?.nome || null;
+      if (nomeContato) console.log('CONTACT_NAME_SOURCE_LEAD', { leadId, nome: nomeContato });
+    }
+    if (!nomeContato && !fromMe && nome) {
+      nomeContato = nome;
+      console.log('CONTACT_NAME_SOURCE_EVOLUTION_PUSHNAME', { nome: nomeContato });
+    }
+    if (!nomeContato && fromMe) {
+      console.log('CONTACT_NAME_NOT_USER_NAME', { motivo: 'fromMe_pushname_rejeitado', pushNameRejeitado: nome });
+    }
+    if (!nomeContato) {
+      nomeContato = tel || 'Contato WhatsApp não identificado';
+      console.log('CONTACT_NAME_SOURCE_PHONE', { nome: nomeContato });
+    }
+
+    if (isSupa && !conversaId) {
+      // Cria nova conversa — só chega aqui se resolverConversaWhatsapp liberou (permiteCreate=true)
+      const novoConvId = crypto.randomBytes(16).toString('hex');
+      const telParaConversa = (isLidJid && !leadId) ? `LID:${lidNumero}` : (tel || null);
+      const dadosExtrasNova = isLidJid && lidNumero
+        ? JSON.stringify({ lid: lidNumero, remoteJid: rawJid })
+        : null;
+      console.log('CONVERSA_CREATE_NEEDED', { tel: telParaConversa, leadId, nomeContato });
+      const { data: novaConv, error: errC } = await sb.from('conversas_whatsapp').insert({
+        id: novoConvId, telefone: telParaConversa, nome_contato: nomeContato,
+        lead_id: leadId || null, origem: 'WHATSAPP_WEBHOOK', status: 'ABERTA',
+        dados_extras: dadosExtrasNova, criado_em: agora, atualizado_em: agora,
+      }).select('id').single();
+      if (!errC && novaConv) {
+        conversaId = novaConv.id;
+        console.log('WEBHOOK_CONVERSA_CREATED', { conversaId, tel: telParaConversa, leadId, nomeContato });
+      } else {
+        console.error('[WA Webhook] Erro ao criar conversa:', errC?.message);
+      }
+    } else if (isSupa && conversaId) {
+      // Conversa existente — atualiza sem sobrescrever nome_contato com dado ruim
+      const { data: convAtual } = await sb.from('conversas_whatsapp')
+        .select('telefone,lead_id,dados_extras,nome_contato').eq('id', conversaId).single();
+      const upd = { ultima_msg_em: agora, atualizado_em: agora, status: 'ABERTA' };
+      if (leadId) upd.lead_id = leadId;
+      if (convAtual && convAtual.telefone !== tel && tel && !tel.startsWith('LID:')) {
+        upd.telefone = tel;
+      }
+      const nomeAtual = convAtual?.nome_contato || '';
+      const nomeEhPlaceholder = nomeAtual === tel || nomeAtual === 'Contato WhatsApp não identificado' || nomeAtual.startsWith('LID:');
+      if (leadId && nomeContato && nomeContato !== tel && nomeContato !== 'Contato WhatsApp não identificado') {
+        upd.nome_contato = nomeContato;
+        console.log('CONTACT_NAME_SOURCE_LEAD', { leadId, nome: nomeContato, anterior: nomeAtual });
+      } else if (!fromMe && nome && nomeEhPlaceholder) {
+        upd.nome_contato = nome;
+        console.log('CONTACT_NAME_SOURCE_EVOLUTION_PUSHNAME', { nome, anterior: nomeAtual });
+      } else {
+        console.log('CONTACT_NAME_SOURCE_EXISTING_CONVERSA', { nomeAtual, fromMe, motivo: 'preservado' });
+      }
+      if (isLidJid && lidNumero) {
+        const extrasAtuais = (() => { try { return JSON.parse(convAtual?.dados_extras || '{}'); } catch { return {}; } })();
+        if (!extrasAtuais.lid || extrasAtuais.lid !== lidNumero) {
+          extrasAtuais.lid = lidNumero;
+          upd.dados_extras = JSON.stringify(extrasAtuais);
+        }
+      }
+      console.log('CONVERSA_FOUND_EXISTING', { conversaId, leadId, upd: Object.keys(upd) });
+      await sb.from('conversas_whatsapp').update(upd).eq('id', conversaId);
+    } else if (db && !conversaId) {
+      const cid = crypto.randomBytes(16).toString('hex');
+      db.prepare('INSERT INTO conversas_whatsapp (id,telefone,nome_contato,lead_id,origem,criado_em,atualizado_em) VALUES (?,?,?,?,?,?,?)').run(cid, tel, nome||null, leadId||null, 'WHATSAPP_WEBHOOK', agora, agora);
+      conversaId = cid;
+    } else if (db && conversaId) {
+      db.prepare('UPDATE conversas_whatsapp SET ultima_msg_em=?,atualizado_em=? WHERE id=?').run(agora, agora, conversaId);
+    }
+
+
     console.log('WEBHOOK_CONVERSATION_TARGET', {
-      conversaId: conversaId,
-      leadId: leadId,
+      conversaId,
+      leadId,
       telefoneNormalizado: tel,
     });
 
