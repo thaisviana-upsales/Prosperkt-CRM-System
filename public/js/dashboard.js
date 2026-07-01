@@ -463,6 +463,14 @@ function bindEvents() {
     _filtros.dataPeriodo = document.getElementById('f-periodo').value;
     _filtros.dataInicio  = document.getElementById('f-inicio').value;
     _filtros.dataFim     = document.getElementById('f-fim').value;
+
+    // ── Logs de diagnóstico ──────────────────────────────────────────────
+    console.log('[DASHBOARD_FILTER_APPLY]', _filtros);
+    if (_filtros.funil)       console.log('[DASHBOARD_FILTER_FUNIL_SELECTED]',    _filtros.funil,    document.getElementById('f-funil').selectedOptions[0]?.text);
+    if (_filtros.resp)        console.log('[DASHBOARD_FILTER_VENDEDOR_SELECTED]', _filtros.resp,     document.getElementById('f-resp').selectedOptions[0]?.text);
+    if (_filtros.dataTipo)    console.log('[DASHBOARD_FILTER_DATE_SELECTED]',     _filtros.dataTipo, _filtros.dataPeriodo, _filtros.dataInicio, _filtros.dataFim);
+    console.log('[DASHBOARD_API_PARAMS] query:', buildQuery());
+
     carregar();
   });
 
