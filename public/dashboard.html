@@ -13,13 +13,11 @@
 <title>Dashboard — PROSPEKT CRM</title>
 <link rel="stylesheet" href="/css/design-system.css">
 <link rel="stylesheet" href="/css/mobile.css">
+<link rel="stylesheet" href="/css/dashboard.css">
 <style>
-/* ── Layout ─────────────────────────── */
-.dash-wrap { display:flex; flex-direction:column; gap:20px; }
-
-/* ── Header ────────────────────────── */
-.dash-header-title { font-size:1.15rem !important; margin-bottom:1px !important; }
-.dash-header-sub   { font-size:.7rem !important; }
+/* Drawer/pendentes — mantidos inline pois não estão no dashboard.css */
+.dash-header-title { font-size:1.1rem !important; margin-bottom:2px !important; }
+.dash-header-sub   { font-size:.68rem !important; }
 
 /* ── Filter bar ─────────────────────── */
 .dash-filters {
@@ -254,7 +252,7 @@
 <body>
 <div class="app-layout">
 <div id="sidebar-container"></div>
-<main class="main-content animate-fade" style="padding:20px 24px">
+<main class="main-content dash-main animate-fade">
 
 <!-- Header -->
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
@@ -328,7 +326,7 @@
 </div>
 
 <!-- Row 1: Funil + Ranking -->
-<div class="two-col" style="margin-bottom:20px">
+<div class="two-col">
   <div class="panel">
     <div class="panel-title">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg>
@@ -345,11 +343,11 @@
   </div>
 </div>
 
-<!-- Row 2: Por funil + Tempo resposta -->
-<div class="two-col" style="margin-bottom:20px">
+<!-- Row 2: Vendas por Funil + Alertas + Tempo Resposta (3 colunas) -->
+<div class="three-col">
   <div class="panel">
     <div class="panel-title">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
       Vendas por Funil
     </div>
     <div id="por-funil"><div class="empty">Nenhum dado</div></div>
@@ -357,54 +355,46 @@
   <div class="panel">
     <div class="panel-title">
       🔄 Alertas de Recompra
-      <span id="badge-alertas-recompra" style="background:#F5A623;color:#000;border-radius:99px;font-size:.65rem;padding:1px 6px;font-weight:700;display:none;margin-left:6px">0</span>
+      <span id="badge-alertas-recompra" style="background:#F5A623;color:#000;border-radius:99px;font-size:.62rem;padding:1px 6px;font-weight:700;display:none;margin-left:6px">0</span>
     </div>
-    <div id="alertas-recompra-list" style="max-height:220px;overflow-y:auto">
-      <div class="empty" style="font-size:.75rem">Nenhum alerta de recompra nos próximos 7 dias.</div>
+    <div id="alertas-recompra-list" style="max-height:200px;overflow-y:auto">
+      <div class="empty" style="font-size:.73rem">Nenhum alerta nos próximos 7 dias.</div>
     </div>
   </div>
   <div class="panel">
     <div class="panel-title">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       Tempo Médio de Resposta
     </div>
     <div id="tempo-resposta" class="resp-stat">
       <div class="resp-num" id="resp-num">—</div>
       <div class="resp-label">minutos até 1ª interação</div>
-      <div style="font-size:.75rem;color:var(--text-muted);margin-top:8px" id="resp-leads"></div>
+      <div style="font-size:.72rem;color:var(--text-muted);margin-top:8px" id="resp-leads"></div>
     </div>
   </div>
 </div>
 
-<!-- Row 3: Evolução diária + Metas (preparado) -->
+<!-- Row 3: Evolução diária + Resumo do Período -->
 <div class="two-col">
   <div class="panel">
     <div class="panel-title">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
       Evolução de Leads (últimos 30 dias)
     </div>
     <div id="spark-wrap" class="sparkline-wrap"></div>
-    <div id="spark-labels" style="display:flex;justify-content:space-between;margin-top:4px;font-size:.6875rem;color:var(--text-muted)"></div>
+    <div id="spark-labels" style="display:flex;justify-content:space-between;margin-top:6px;font-size:.62rem;color:var(--text-muted)"></div>
   </div>
   <div class="panel">
     <div class="panel-title">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
       Resumo do Período
-      <a href="/metas.html" style="margin-left:auto;font-size:.7rem;color:var(--green);font-weight:600;text-decoration:none">Ver metas →</a>
+      <a href="/metas.html" style="margin-left:auto;font-size:.68rem;color:var(--green);font-weight:600;text-decoration:none">Ver metas →</a>
     </div>
-    <div style="margin-top:16px;display:flex;flex-direction:column;gap:10px" id="meta-preview">
-      <div style="display:flex;justify-content:space-between;font-size:.875rem">
-        <span>Leads recebidos</span><span id="mp-leads" style="font-weight:700">—</span>
-      </div>
-      <div style="display:flex;justify-content:space-between;font-size:.875rem">
-        <span>Vendas fechadas</span><span id="mp-ganhos" style="font-weight:700;color:var(--green)">—</span>
-      </div>
-      <div style="display:flex;justify-content:space-between;font-size:.875rem">
-        <span>Faturamento total</span><span id="mp-fat" style="font-weight:700;color:var(--green)">—</span>
-      </div>
-      <div style="display:flex;justify-content:space-between;font-size:.875rem">
-        <span>Taxa de conversão</span><span id="mp-conv" style="font-weight:700">—</span>
-      </div>
+    <div id="meta-preview">
+      <div class="meta-row"><span>Leads recebidos</span><span id="mp-leads">—</span></div>
+      <div class="meta-row"><span>Vendas fechadas</span><span id="mp-ganhos" style="color:var(--green)">—</span></div>
+      <div class="meta-row"><span>Faturamento total</span><span id="mp-fat" style="color:var(--green)">—</span></div>
+      <div class="meta-row"><span>Taxa de conversão</span><span id="mp-conv">—</span></div>
     </div>
   </div>
 </div>

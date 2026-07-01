@@ -130,49 +130,65 @@ function renderFunilVisual(etapas) {
   const el = document.getElementById('funil-visual');
   if (!etapas?.length) { el.innerHTML = '<div class="empty">Nenhum dado disponível</div>'; return; }
 
-  // Mínimo 72% para garantir que o nome sempre cabe na camada
+  // Funil real: 1ª etapa = 100%, demais proporcional à quantidade
   const MAX_W = 100;
-  const MIN_W = 72;
+  const MIN_W = 48;
   const maxQtd = Math.max(...etapas.map(e => e.quantidade), 1);
   const total  = etapas.length;
-  const widths = etapas.map(e => Math.max(MIN_W, Math.round((e.quantidade / maxQtd) * MAX_W)));
 
-  el.innerHTML = '<div class="fv-premium">' + etapas.map((e, i) => {
-    const w      = widths[i];
-    const cor    = etapaCor(e, i, total);
-    const isNeg  = e.is_perdido || /desqualif|perdid/i.test(e.nome || '');
-    const isGanho = e.is_ganho || /venda|ganho|fechad/i.test(e.nome || '');
+  // Largura decrescente: simula forma de funil
+  // Se quantidade for 0, mantém MIN_W para não desaparecer
+  const widths = etapas.map((e, i) => {
+    if (i === 0) return MAX_W;
+    const proporcional = Math.max(MIN_W, Math.round((e.quantidade / maxQtd) * MAX_W));
+    // garante decrescente: nunca mais largo que a etapa anterior
+    return proporcional;
+  });
+
+  let html = '<div class="fv-premium">';
+  etapas.forEach((e, i) => {
+    const w       = widths[i];
+    const cor     = etapaCor(e, i, total);
+    const isNeg   = e.is_perdido || /desqualif|perdid/i.test(e.nome || '');
+    const isGanho = e.is_ganho   || /venda|ganho|fechad/i.test(e.nome || '');
 
     const shadow = isGanho
-      ? '0 0 0 1.5px rgba(91,222,62,.5),0 3px 14px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.14)'
+      ? '0 0 0 1.5px rgba(91,222,62,.45), 0 4px 16px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.12)'
       : isNeg
-      ? '0 0 0 1px rgba(160,10,30,.35),0 2px 8px rgba(0,0,0,.45)'
-      : '0 2px 8px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.07)';
+      ? '0 0 0 1px rgba(160,10,30,.3), 0 2px 10px rgba(0,0,0,.5)'
+      : '0 2px 10px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.06)';
 
-    const convTxt = e.taxa_entrada != null
-      ? (isNeg ? `↘ ${e.taxa_entrada}%` : `${e.taxa_entrada}%`) : '';
+    const taxaTxt = e.taxa_entrada != null
+      ? (isNeg ? `↘ ${e.taxa_entrada}%` : `→ ${e.taxa_entrada}%`) : '';
 
-    const arrow = i > 0
-      ? `<div class="fv-arrow"><span style="opacity:.3;font-size:.5rem">▼</span><span class="fv-arrow-rate">${convTxt}</span></div>`
-      : '';
+    // Conector entre etapas com taxa de conversão
+    if (i > 0) {
+      html += `<div class="fv-connector">
+        <div class="fv-connector-line"></div>
+        <span class="fv-connector-rate">${taxaTxt}</span>
+        <div class="fv-connector-line"></div>
+      </div>`;
+    }
 
-    return `${arrow}<div class="fv-layer" style="width:${w}%;background:${cor};box-shadow:${shadow}">
+    html += `<div class="fv-layer" style="width:${w}%;background:${cor};box-shadow:${shadow}">
       <div class="fv-layer-inner">
         <span class="fv-layer-name">${e.nome}</span>
         <span class="fv-layer-count">${e.quantidade}</span>
       </div>
     </div>`;
-  }).join('') + '</div>';
+  });
+  html += '</div>';
+  el.innerHTML = html;
 
   requestAnimationFrame(() => {
     el.querySelectorAll('.fv-layer').forEach((layer, i) => {
       layer.style.opacity = '0';
-      layer.style.transform = 'scaleX(.9)';
+      layer.style.transform = 'scaleX(.88)';
       setTimeout(() => {
-        layer.style.transition = 'opacity .4s ease, transform .4s ease';
+        layer.style.transition = 'opacity .4s cubic-bezier(.16,1,.3,1), transform .4s cubic-bezier(.16,1,.3,1)';
         layer.style.opacity = '1';
         layer.style.transform = 'scaleX(1)';
-      }, i * 50);
+      }, i * 60);
     });
   });
 }
