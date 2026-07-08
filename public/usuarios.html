@@ -244,7 +244,10 @@ async function init() {
 
 // ── Load ──────────────────────────────────────────────────────
 async function carregarUsuarios() {
-  const res = await Auth.api('GET', '/usuarios');
+  // SUPER_ADMIN vê todos (ativos e inativos) para poder gerenciar
+  // Outros perfis recebem apenas os ativos (filtrado no backend)
+  const endpoint = _isSuperAdmin ? '/usuarios?incluir_inativos=true' : '/usuarios';
+  const res = await Auth.api('GET', endpoint);
   if (!res?.ok) { Toast.show('Erro ao carregar usuários.', 'error'); return; }
   _usuarios = res.data.dados;
   renderTabela(_usuarios);

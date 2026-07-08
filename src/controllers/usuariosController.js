@@ -18,14 +18,26 @@ const CAMPOS_PUBLICOS_SUPA = 'id, nome, email, role, ativo, avatar_url, criado_e
 // ─────────────────────────────────────────────────────────────────────────────
 async function listar(req, res) {
   const { sb, isSupa, sqlite } = getProvider();
+
+  // Por padrão, mostra apenas usuários ativos.
+  // SUPER_ADMIN pode passar ?incluir_inativos=true para ver todos (tela de gerenciamento).
+  const incluirInativos = req.query.incluir_inativos === 'true'
+    && req.usuario.role === 'SUPER_ADMIN';
+
   try {
     if (isSupa) {
       let q = sb.from('usuarios').select(CAMPOS_PUBLICOS_SUPA).order('nome');
-      if (req.usuario.role === 'VENDEDOR') q = q.eq('id', req.usuario.id);
+      if (req.usuario.role === 'VENDEDOR') {
+        q = q.eq('id', req.usuario.id);
+      } else if (!incluirInativos) {
+        // Filtra apenas ativos para dropdowns e listagens normais
+        q = q.eq('ativo', true);
+      }
       const { data, error } = await q;
       if (error) throw error;
       return res.json({ sucesso: true, dados: data || [], total: (data || []).length });
     }
+
     // SQLite
     const { getDb } = require('../database/db');
     const db = getDb();
@@ -33,8 +45,10 @@ async function listar(req, res) {
     let usuarios;
     if (req.usuario.role === 'VENDEDOR') {
       usuarios = db.prepare(`SELECT ${campos} FROM usuarios WHERE id = ?`).all(req.usuario.id);
-    } else {
+    } else if (incluirInativos) {
       usuarios = db.prepare(`SELECT ${campos} FROM usuarios ORDER BY nome`).all();
+    } else {
+      usuarios = db.prepare(`SELECT ${campos} FROM usuarios WHERE ativo = 1 ORDER BY nome`).all();
     }
     return res.json({ sucesso: true, dados: usuarios, total: usuarios.length });
   } catch (e) {
