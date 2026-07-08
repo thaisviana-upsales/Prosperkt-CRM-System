@@ -1,6 +1,21 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
+  <!-- Captura beforeinstallprompt o mais cedo possível -->
+  <script>
+    window.__pwaPrompt = null;
+    window.addEventListener('beforeinstallprompt', function(e) {
+      e.preventDefault();
+      window.__pwaPrompt = e;
+      // Notifica o botão se já estiver no DOM
+      document.dispatchEvent(new CustomEvent('pwa-ready'));
+    });
+    window.addEventListener('appinstalled', function() {
+      window.__pwaPrompt = null;
+      localStorage.setItem('pwa_installed', '1');
+      document.dispatchEvent(new CustomEvent('pwa-installed'));
+    });
+  </script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="manifest" href="/manifest.json">
@@ -252,7 +267,124 @@
       display: none !important;
     }
 
-    /* PWA install hint na tela de login */
+    /* ── PWA Install Bar ────────────────────────────────────────── */
+    #pwa-install-bar {
+      margin-top: var(--space-3);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      animation: fadeIn 0.4s ease 0.8s both;
+    }
+
+    /* Estado: botão instalar (Chrome/Android/Edge) */
+    .pwa-bar-btn {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 11px 14px;
+      background: rgba(91,222,62,0.07);
+      border: 1px solid rgba(91,222,62,0.20);
+      border-radius: var(--radius-lg);
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 0.15s, border-color 0.15s;
+      text-align: left;
+      position: relative;
+    }
+    .pwa-bar-btn:hover {
+      background: rgba(91,222,62,0.13);
+      border-color: rgba(91,222,62,0.38);
+    }
+    .pwa-bar-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      flex-shrink: 0;
+      object-fit: cover;
+    }
+    .pwa-bar-text {
+      flex: 1;
+      min-width: 0;
+    }
+    .pwa-bar-title {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      line-height: 1.2;
+      margin-bottom: 1px;
+    }
+    .pwa-bar-sub {
+      font-size: 0.68rem;
+      color: rgba(255,255,255,0.45);
+      line-height: 1.3;
+    }
+    .pwa-bar-cta {
+      flex-shrink: 0;
+      padding: 6px 13px;
+      background: linear-gradient(135deg, #5BDE3E, #3fcf1e);
+      border: none;
+      border-radius: 20px;
+      color: #0A0A0A;
+      font-weight: 800;
+      font-size: 0.72rem;
+      cursor: pointer;
+      font-family: inherit;
+      white-space: nowrap;
+      pointer-events: none; /* clicável via wrapper */
+    }
+    .pwa-bar-dismiss {
+      position: absolute;
+      top: 5px;
+      right: 7px;
+      background: none;
+      border: none;
+      color: rgba(255,255,255,0.25);
+      font-size: 0.65rem;
+      cursor: pointer;
+      padding: 3px 5px;
+      line-height: 1;
+      font-family: inherit;
+      transition: color 0.15s;
+    }
+    .pwa-bar-dismiss:hover { color: rgba(255,255,255,0.6); }
+
+    /* Estado: instrução iOS */
+    .pwa-bar-ios {
+      padding: 11px 14px;
+      background: rgba(91,222,62,0.06);
+      border: 1px solid rgba(91,222,62,0.15);
+      border-radius: var(--radius-lg);
+      position: relative;
+    }
+    .pwa-bar-ios-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+    .pwa-bar-ios-steps {
+      font-size: 0.7rem;
+      color: rgba(255,255,255,0.5);
+      line-height: 1.6;
+    }
+    .pwa-bar-ios-steps strong {
+      color: rgba(255,255,255,0.78);
+    }
+
+    /* Estado: já instalado */
+    .pwa-bar-installed {
+      text-align: center;
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      padding: 6px 0;
+      opacity: 0.6;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+    }
+
+    /* PWA install hint na tela de login (legado — oculto) */
     .pwa-login-hint {
       margin-top: var(--space-4);
       padding: var(--space-3) var(--space-4);
@@ -417,12 +549,13 @@
         </div>
       </div>
     </div>
+
+    <!-- ── PWA Install Bar ───────────────────────────────────── -->
+    <div id="pwa-install-bar" style="display:none;"></div>
+
   </main>
 
   <div id="toast-container" aria-live="polite"></div>
-
-  <!-- PWA Install Hint (gerado por JS abaixo) -->
-  <div id="pwa-login-hint-wrap" style="position:relative;z-index:1;width:100%;max-width:420px;margin:0 auto;padding:0 var(--space-4) var(--space-4);"></div>
 
   <script src="/js/auth.js"></script>
   <script src="/js/toast.js"></script>
@@ -520,62 +653,109 @@
   </style>
 <script src="/js/mobile-nav.js"></script>
 <script>
-  // ── PWA Install Hint na tela de Login ──────────────────────────────────────
-  (function() {
-    const wrap = document.getElementById('pwa-login-hint-wrap');
-    if (!wrap) return;
+  // ── PWA Install Bar — Tela de Login ────────────────────────────────────────
+  (function () {
+    const bar = document.getElementById('pwa-install-bar');
+    if (!bar) return;
 
-    // Se já instalado ou dispensado, não exibir
-    if (localStorage.getItem('pwa_installed') || localStorage.getItem('pwa_login_hint_dismissed')) return;
+    // Detecta plataforma
+    const ua           = navigator.userAgent;
+    const isIOS        = /iphone|ipad|ipod/i.test(ua);
+    const isAndroid    = /android/i.test(ua);
+    const isSafariOnly = /^((?!chrome|android|crios|fxios).)*safari/i.test(ua);
+    const isStandalone = (window.navigator.standalone === true)
+                       || window.matchMedia('(display-mode: standalone)').matches;
+    const alreadyInstalled = localStorage.getItem('pwa_installed') === '1';
+    const dismissed        = localStorage.getItem('pwa_bar_dismissed') === '1';
 
-    const isIOS     = /iphone|ipad|ipod/i.test(navigator.userAgent);
-    const isSafari  = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
-    const isStandalone = window.navigator.standalone === true
-                      || window.matchMedia('(display-mode: standalone)').matches;
+    // Se já rodando como PWA instalado: não exibir nada
+    if (isStandalone) return;
 
-    if (isStandalone) return; // já está rodando como app
+    // Se já instalado: mostrar badge discreto
+    if (alreadyInstalled) {
+      bar.innerHTML = '<div class="pwa-bar-installed"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> CRM instalado neste dispositivo</div>';
+      bar.style.display = '';
+      return;
+    }
 
-    function renderHint(content) {
-      wrap.innerHTML = `
-        <div class="pwa-login-hint" id="pwa-login-hint">
-          <img src="/icons/icon-192.png" alt="PROSPEKT CRM">
-          <div class="hint-text">${content}</div>
-          <button class="hint-dismiss" id="pwa-hint-dismiss" aria-label="Fechar">✕</button>
+    // Se dispensado: não mostrar
+    if (dismissed) return;
+
+    function dismiss() {
+      localStorage.setItem('pwa_bar_dismissed', '1');
+      bar.style.display = 'none';
+    }
+
+    // ── iOS/Safari: instrução manual ────────────────────────────
+    if (isIOS && isSafariOnly) {
+      bar.innerHTML = `
+        <div class="pwa-bar-ios">
+          <button class="pwa-bar-dismiss" id="pwa-bar-x" aria-label="Fechar">✕</button>
+          <div class="pwa-bar-ios-title">📲 Instale o PROSPEKT CRM no iPhone</div>
+          <div class="pwa-bar-ios-steps">
+            1. Toque em <strong>⎋ Compartilhar</strong> no Safari<br>
+            2. Role para baixo e toque em <strong>Adicionar à Tela de Início</strong>
+          </div>
         </div>`;
-      document.getElementById('pwa-hint-dismiss').addEventListener('click', () => {
-        localStorage.setItem('pwa_login_hint_dismissed', '1');
-        wrap.innerHTML = '';
+      bar.style.display = '';
+      document.getElementById('pwa-bar-x').addEventListener('click', dismiss);
+      return;
+    }
+
+    // ── Chrome / Edge / Android: beforeinstallprompt ─────────────
+    // O evento pode já ter sido capturado pelo script do <head>
+    function renderInstallBtn() {
+      bar.innerHTML = `
+        <button class="pwa-bar-btn" id="pwa-bar-btn" aria-label="Instalar PROSPEKT CRM">
+          <img class="pwa-bar-icon" src="/icons/icon-192.png" alt="">
+          <div class="pwa-bar-text">
+            <div class="pwa-bar-title">Instalar PROSPEKT CRM</div>
+            <div class="pwa-bar-sub">Acesse como app — sem abrir o navegador</div>
+          </div>
+          <div class="pwa-bar-cta">↓ Instalar</div>
+          <button class="pwa-bar-dismiss" id="pwa-bar-x" aria-label="Fechar">✕</button>
+        </button>`;
+      bar.style.display = '';
+
+      document.getElementById('pwa-bar-x').addEventListener('click', function(e) {
+        e.stopPropagation();
+        dismiss();
+      });
+
+      document.getElementById('pwa-bar-btn').addEventListener('click', async function() {
+        const prompt = window.__pwaPrompt;
+        if (!prompt) return;
+        prompt.prompt();
+        const { outcome } = await prompt.userChoice;
+        if (outcome === 'accepted') {
+          localStorage.setItem('pwa_installed', '1');
+          bar.innerHTML = '<div class="pwa-bar-installed"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Instalando...</div>';
+        } else {
+          bar.style.display = 'none';
+        }
+        window.__pwaPrompt = null;
       });
     }
 
-    if (isIOS && isSafari) {
-      // iOS: instrução manual
-      renderHint(`
-        <div class="hint-title">Instale no iPhone</div>
-        Toque em <strong>⎋ Compartilhar</strong> no Safari e depois em <strong>Adicionar à Tela de Início</strong>.`);
+    // Se o prompt já foi capturado (evento disparou antes deste script)
+    if (window.__pwaPrompt) {
+      renderInstallBtn();
     } else {
-      // Chrome/Edge (Android ou Desktop): captura beforeinstallprompt
-      let _prompt = null;
-      window.addEventListener('beforeinstallprompt', (e) => {
-        e.preventDefault();
-        _prompt = e;
-        renderHint(`
-          <div class="hint-title">Instale o PROSPEKT CRM</div>
-          Acesse como app — sem abrir o navegador.
-          <button class="hint-install-btn" id="hint-install-btn" style="margin-top:6px;display:inline-flex;align-items:center;gap:5px;">
-            ↓ Instalar CRM
-          </button>`);
-        document.getElementById('hint-install-btn').addEventListener('click', async () => {
-          if (!_prompt) return;
-          _prompt.prompt();
-          const { outcome } = await _prompt.userChoice;
-          if (outcome === 'accepted') {
-            localStorage.setItem('pwa_installed', '1');
-            wrap.innerHTML = '';
-          }
-          _prompt = null;
-        });
-      });
+      // Aguarda o evento (se ainda não disparou)
+      document.addEventListener('pwa-ready', function() {
+        renderInstallBtn();
+      }, { once: true });
+    }
+
+    // Reage ao evento appinstalled (confirmação do SO)
+    document.addEventListener('pwa-installed', function() {
+      bar.innerHTML = '<div class="pwa-bar-installed"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> CRM instalado com sucesso!</div>';
+      bar.style.display = '';
+    }, { once: true });
+
+    // Registra Service Worker (necessário para PWA instalável)
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function() {});
     }
   })();
 </script>
