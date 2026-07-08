@@ -33,11 +33,16 @@
     /* ── Login Page ─────────────────────────────────────── */
     body {
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
       min-height: 100vh;
-      overflow: hidden;
+      min-height: 100dvh;
+      /* NÃ£O usar overflow:hidden — quebra min-height em Safari/Chrome */
+      overflow-x: hidden;
       position: relative;
+      padding: 0 !important;
+      box-sizing: border-box;
     }
 
     /* Background noise + gradients */
@@ -82,13 +87,18 @@
       66%       { transform: translate(-20px, 30px) scale(0.97); }
     }
 
-    /* Login card */
+    /* Login wrapper — centralizado com margin:auto */
     .login-wrapper {
       position: relative;
       z-index: 1;
-      width: 100%;
-      max-width: 420px;
-      padding: var(--space-4);
+      /* Largura responsiva: 420px no desktop, segura no mobile */
+      width: min(420px, calc(100vw - 32px));
+      max-width: 100%;
+      /* margin:auto é a técnica mais robusta para centralizar em flex column */
+      margin: auto;
+      /* Padding vertical para não encostar no topo/fundo */
+      padding: var(--space-4) 0;
+      box-sizing: border-box;
       animation: fadeIn 0.5s cubic-bezier(0.16,1,0.3,1);
     }
 
@@ -100,6 +110,9 @@
       border-radius: var(--radius-xl);
       padding: var(--space-10) var(--space-8);
       box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255,255,255,0.04);
+      /* Garante que não vaze para fora do wrapper */
+      width: 100%;
+      box-sizing: border-box;
     }
 
     /* Logo */
@@ -255,11 +268,7 @@
     }
     /* ── Login: sobrescreve padding do mobile.css global ──────── */
     /* O mobile.css aplica padding-top/bottom !important no body  */
-    /* dentro de @media ≤768px, quebrando o flexbox de centragem. */
-    body {
-      padding-top: 0 !important;
-      padding-bottom: 0 !important;
-    }
+    /* Já anulado pelo padding:0!important acima no body            */
 
     /* Oculta header/nav mobile injetados pelo mobile-nav.js */
     #mobile-header,
@@ -272,6 +281,9 @@
       margin-top: var(--space-3);
       border-radius: var(--radius-lg);
       overflow: hidden;
+      /* Não pode ser mais largo que o wrapper */
+      width: 100%;
+      box-sizing: border-box;
       animation: fadeIn 0.4s ease 0.8s both;
     }
 
