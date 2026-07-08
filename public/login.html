@@ -238,6 +238,20 @@
       0%, 100% { opacity: 1; }
       50%       { opacity: 0.4; }
     }
+    /* ── Login: sobrescreve padding do mobile.css global ──────── */
+    /* O mobile.css aplica padding-top/bottom !important no body  */
+    /* dentro de @media ≤768px, quebrando o flexbox de centragem. */
+    body {
+      padding-top: 0 !important;
+      padding-bottom: 0 !important;
+    }
+
+    /* Oculta header/nav mobile injetados pelo mobile-nav.js */
+    #mobile-header,
+    #mobile-bottom-nav {
+      display: none !important;
+    }
+
     /* PWA install hint na tela de login */
     .pwa-login-hint {
       margin-top: var(--space-4);
