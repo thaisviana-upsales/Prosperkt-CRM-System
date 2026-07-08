@@ -273,8 +273,9 @@ async function resumo(req, res) {
       if (temFiltroData && data_tipo === 'fechamento') {
         // Busca todos os leads (sem filtro de data) para contar o total por vendedor
         let qTodos = sb.from('leads').select('id,responsavel_id,status,etapa_id,ganho_em,perdido_em');
-        if (funil_id)       qTodos = qTodos.eq('funil_id', funil_id);
-        if (responsavel_id) qTodos = qTodos.eq('responsavel_id', responsavel_id);
+        if (funil_id)           qTodos = qTodos.eq('funil_id', funil_id);
+        if (carteiraFunilId)    qTodos = qTodos.neq('funil_id', carteiraFunilId); // <- exclui Carteira Recorrente
+        if (responsavel_id)     qTodos = qTodos.eq('responsavel_id', responsavel_id);
         if (req.usuario.role === 'VENDEDOR') qTodos = qTodos.eq('responsavel_id', req.usuario.id);
         qTodos = qTodos.is('deleted_at', null);
         const { data: todosLeads } = await qTodos;
@@ -339,12 +340,13 @@ async function resumo(req, res) {
         })).sort((a,b) => b.faturamento - a.faturamento);
       }
 
-      // ── 7. Leads por dia (últimos 30 dias) ────────────────────────────────────
+      // ── 7. Leads por dia (últimos 30 dias) — respeitando exclusão da Carteira Recorrente ──
       const { data: leadsAll30 } = await (() => {
         const d30 = new Date(); d30.setDate(d30.getDate()-30);
         let q2 = sb.from('leads').select('criado_em,ganho_em,status,etapa_id,valor,valor_venda');
-        if (funil_id)       q2 = q2.eq('funil_id', funil_id);
-        if (responsavel_id) q2 = q2.eq('responsavel_id', responsavel_id);
+        if (funil_id)           q2 = q2.eq('funil_id', funil_id);
+        if (carteiraFunilId)    q2 = q2.neq('funil_id', carteiraFunilId); // <- exclui Carteira Recorrente
+        if (responsavel_id)     q2 = q2.eq('responsavel_id', responsavel_id);
         if (req.usuario.role === 'VENDEDOR') q2 = q2.eq('responsavel_id', req.usuario.id);
         q2 = q2.gte('criado_em', d30.toISOString());
         return q2;
