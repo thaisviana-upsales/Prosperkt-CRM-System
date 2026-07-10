@@ -569,8 +569,10 @@ function resetModal() {
   if (tagInput) tagInput.value = '';
   showTab('dados');
   const fSel = document.getElementById('fl-funil');
-  fSel.innerHTML = _funis.map(f => `<option value="${f.id}">${f.nome}</option>`).join('');
-  fSel.value = _filtros.funil || (_funis[0]?.id || '');
+  // Exclui funis inativos (ex: Tráfego Pago) do select de criação/edição de lead
+  const funisCriacaoAtivos = _funis.filter(f => f.ativo !== false && f.ativo !== 0 && f.ativo !== '0');
+  fSel.innerHTML = funisCriacaoAtivos.map(f => `<option value="${f.id}">${f.nome}</option>`).join('');
+  fSel.value = _filtros.funil || (funisCriacaoAtivos[0]?.id || '');
   const rSel = document.getElementById('fl-resp');
   rSel.innerHTML = _usuarios.map(u => `<option value="${u.id}">${u.nome}</option>`).join('');
   if (_usuario.role === 'VENDEDOR') { rSel.value = _usuario.id; rSel.disabled = true; }

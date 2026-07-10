@@ -287,11 +287,15 @@ async function listar(req, res) {
 
   try {
     if (isSupa) {
-      // Resolve id da Carteira Recorrente se necessário
+      // Resolve id da Carteira Recorrente e funis inativos se necessário
       let carteiraFunilId = null;
+      let funisInativosIds = [];
       if (excluiCarteira) {
         const { data: cr } = await sb.from('funis').select('id').ilike('nome','%Carteira Recorrente%').limit(1);
         carteiraFunilId = cr?.[0]?.id || null;
+        // Funis inativos (ex: Tráfego Pago) não aparecem em "Todos - Novos"
+        const { data: inativos } = await sb.from('funis').select('id').eq('ativo', false);
+        funisInativosIds = (inativos || []).map(f => f.id).filter(id => id !== carteiraFunilId);
       }
 
       let q = sb.from('leads').select(`
@@ -305,6 +309,8 @@ async function listar(req, res) {
       if (responsavel_id) q = q.eq('responsavel_id', responsavel_id);
       if (funil_id)       q = q.eq('funil_id', funil_id);
       if (carteiraFunilId) q = q.neq('funil_id', carteiraFunilId);
+      // Exclui leads de funis inativos (Tráfego Pago etc.) em "Todos - Novos"
+      if (funisInativosIds.length) q = q.not('funil_id', 'in', `(${funisInativosIds.join(',')})`);
       if (status)         q = q.eq('status', toSupaStatus(status));
       if (req.usuario.role === 'VENDEDOR') q = q.eq('responsavel_id', req.usuario.id);
       if (busca) q = q.or(`nome.ilike.%${busca}%,email.ilike.%${busca}%,telefone.ilike.%${busca}%,empresa.ilike.%${busca}%`);
@@ -326,11 +332,15 @@ async function listar(req, res) {
     }
 
     // SQLite
-    // Resolve Carteira Recorrente para exclusão
+    // Resolve Carteira Recorrente e funis inativos para exclusão
     let carteiraFunilIdSql = null;
+    let funisInativosSql = [];
     if (excluiCarteira) {
       const cr = sqlite.prepare(`SELECT id FROM funis WHERE nome LIKE '%Carteira Recorrente%' LIMIT 1`).get();
       carteiraFunilIdSql = cr?.id || null;
+      // Funis inativos (ex: Tráfego Pago)
+      const inat = sqlite.prepare(`SELECT id FROM funis WHERE ativo=0`).all();
+      funisInativosSql = inat.map(f => f.id).filter(id => id !== carteiraFunilIdSql);
     }
 
     let sql = `SELECT l.*, u.nome as responsavel_nome, e.nome as etapa_nome, e.cor as etapa_cor,
@@ -344,6 +354,12 @@ async function listar(req, res) {
     const params = [];
     if (funil_id)          { sql += ' AND p.funil_id=?';                                     params.push(funil_id); }
     if (carteiraFunilIdSql){ sql += ' AND (p.funil_id IS NULL OR p.funil_id<>?)';            params.push(carteiraFunilIdSql); }
+    // Exclui funis inativos (Tráfego Pago etc.) em "Todos - Novos"
+    if (funisInativosSql.length) {
+      const ph = funisInativosSql.map(()=>'?').join(',');
+      sql += ` AND (p.funil_id IS NULL OR p.funil_id NOT IN (${ph}))`;
+      params.push(...funisInativosSql);
+    }
     if (etapa_id)          { sql += ' AND l.etapa_id=?';                                     params.push(etapa_id); }
     if (status)            { sql += ' AND l.status=?';                                       params.push(status); }
     if (responsavel_id)    { sql += ' AND l.responsavel_id=?';                               params.push(responsavel_id); }
@@ -357,6 +373,7 @@ async function listar(req, res) {
     return res.status(500).json({ sucesso:false, erro:e.message });
   }
 }
+
 
 
 // ── GET /api/leads/:id ────────────────────────────────────────────────────────

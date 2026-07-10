@@ -109,12 +109,22 @@ async function resumo(req, res) {
 
   try {
     if (isSupa) {
-      // ── 0. Resolve id da Carteira Recorrente se necessário ─────────────────────
+      // ── 0. Resolve ids de funis a excluir em modo "Todos - Novos" ──────────────
       let carteiraFunilId = null;
+      let funisInativosIds = []; // ids de funis inativos (ex: Tráfego Pago) a excluir
+
       if (excluiCarteira) {
+        // Carteira Recorrente
         const { data: cr } = await sb.from('funis').select('id').ilike('nome','%Carteira Recorrente%').limit(1);
         carteiraFunilId = cr?.[0]?.id || null;
         console.log('[DASHBOARD_FILTER_FUNIL_SELECTED] excluindo Carteira Recorrente id:', carteiraFunilId);
+
+        // Funis inativos (ex: Tráfego Pago) — não devem aparecer em "Todos - Novos"
+        const { data: inativos } = await sb.from('funis').select('id,nome').eq('ativo', false);
+        funisInativosIds = (inativos || []).map(f => f.id);
+        if (funisInativosIds.length) {
+          console.log('[DASHBOARD_EXCLUIR_INATIVOS] funis inativos excluídos:', (inativos||[]).map(f=>f.nome));
+        }
       } else if (funil_id) {
         console.log('[DASHBOARD_FILTER_FUNIL_SELECTED] funil_id:', funil_id);
       }
@@ -132,6 +142,11 @@ async function resumo(req, res) {
       );
       if (funil_id)           q = q.eq('funil_id', funil_id);
       if (carteiraFunilId)    q = q.neq('funil_id', carteiraFunilId);
+      // Exclui leads de funis inativos (Tráfego Pago etc.) no modo "Todos - Novos"
+      if (funisInativosIds.length) {
+        const idsParaExcluir = funisInativosIds.filter(id => id !== carteiraFunilId);
+        if (idsParaExcluir.length) q = q.not('funil_id', 'in', `(${idsParaExcluir.join(',')})`);
+      }
       if (responsavel_id)     q = q.eq('responsavel_id', responsavel_id);
       if (req.usuario.role === 'VENDEDOR') q = q.eq('responsavel_id', req.usuario.id);
 
@@ -203,12 +218,13 @@ async function resumo(req, res) {
       } else {
         // Sem filtro de funil: busca etapas de todos os funis ativos diretamente
         // etapas.funil_id referencia funis.id
+        // Obs: eq('ativo', true) já exclui Tráfego Pago inativo automaticamente
         let { data: funisAtivos } = await sb.from('funis').select('id').eq('ativo', true);
         if (!funisAtivos?.length) {
-          const r2 = await sb.from('funis').select('id');
+          const r2 = await sb.from('funis').select('id').eq('ativo', true);
           funisAtivos = r2.data || [];
         }
-        // Exclui Carteira Recorrente se necessário
+        // Exclui Carteira Recorrente se necessário ("Todos - Novos")
         if (carteiraFunilId) {
           funisAtivos = funisAtivos.filter(f => f.id !== carteiraFunilId);
         }
@@ -274,7 +290,12 @@ async function resumo(req, res) {
         // Busca todos os leads (sem filtro de data) para contar o total por vendedor
         let qTodos = sb.from('leads').select('id,responsavel_id,status,etapa_id,ganho_em,perdido_em');
         if (funil_id)           qTodos = qTodos.eq('funil_id', funil_id);
-        if (carteiraFunilId)    qTodos = qTodos.neq('funil_id', carteiraFunilId); // <- exclui Carteira Recorrente
+        if (carteiraFunilId)    qTodos = qTodos.neq('funil_id', carteiraFunilId);
+        // Exclui funis inativos (Tráfego Pago etc.) no ranking também
+        if (funisInativosIds.length) {
+          const idsExcl = funisInativosIds.filter(id => id !== carteiraFunilId);
+          if (idsExcl.length) qTodos = qTodos.not('funil_id', 'in', `(${idsExcl.join(',')})`);
+        }
         if (responsavel_id)     qTodos = qTodos.eq('responsavel_id', responsavel_id);
         if (req.usuario.role === 'VENDEDOR') qTodos = qTodos.eq('responsavel_id', req.usuario.id);
         qTodos = qTodos.is('deleted_at', null);
@@ -340,12 +361,17 @@ async function resumo(req, res) {
         })).sort((a,b) => b.faturamento - a.faturamento);
       }
 
-      // ── 7. Leads por dia (últimos 30 dias) — respeitando exclusão da Carteira Recorrente ──
+      // ── 7. Leads por dia (últimos 30 dias) — respeitando exclusão de inativos e Carteira ──
       const { data: leadsAll30 } = await (() => {
         const d30 = new Date(); d30.setDate(d30.getDate()-30);
         let q2 = sb.from('leads').select('criado_em,ganho_em,status,etapa_id,valor,valor_venda');
         if (funil_id)           q2 = q2.eq('funil_id', funil_id);
-        if (carteiraFunilId)    q2 = q2.neq('funil_id', carteiraFunilId); // <- exclui Carteira Recorrente
+        if (carteiraFunilId)    q2 = q2.neq('funil_id', carteiraFunilId);
+        // Exclui funis inativos (Tráfego Pago etc.) no gráfico de leads por dia
+        if (funisInativosIds.length) {
+          const idsExcl = funisInativosIds.filter(id => id !== carteiraFunilId);
+          if (idsExcl.length) q2 = q2.not('funil_id', 'in', `(${idsExcl.join(',')})`);
+        }
         if (responsavel_id)     q2 = q2.eq('responsavel_id', responsavel_id);
         if (req.usuario.role === 'VENDEDOR') q2 = q2.eq('responsavel_id', req.usuario.id);
         q2 = q2.gte('criado_em', d30.toISOString());
@@ -377,12 +403,17 @@ async function resumo(req, res) {
     const { getDb } = require('../database/db');
     const db = getDb();
 
-    // Resolve Carteira Recorrente para exclusão (Todos - Novos)
+    // Resolve Carteira Recorrente e funis inativos para exclusão (Todos - Novos)
     let carteiraFunilIdSql = null;
+    let funisInativosSql = []; // ids de funis inativos (ex: Tráfego Pago)
     if (excluiCarteira) {
       const cr = db.prepare(`SELECT id FROM funis WHERE nome LIKE '%Carteira Recorrente%' LIMIT 1`).get();
       carteiraFunilIdSql = cr?.id || null;
       console.log('[DASH_EXCLUIR_CARTEIRA_SQL] excluindo funil_id:', carteiraFunilIdSql);
+      // Funis inativos (Tráfego Pago etc.)
+      const inativosRows = db.prepare(`SELECT id FROM funis WHERE ativo=0`).all();
+      funisInativosSql = inativosRows.map(f => f.id).filter(id => id !== carteiraFunilIdSql);
+      if (funisInativosSql.length) console.log('[DASH_EXCLUIR_INATIVOS_SQL] ids:', funisInativosSql);
     }
 
     const base = `FROM leads l LEFT JOIN pipelines p ON l.pipeline_id=p.id LEFT JOIN funis f ON p.funil_id=f.id LEFT JOIN usuarios u ON l.responsavel_id=u.id WHERE 1=1`;
@@ -390,6 +421,12 @@ async function resumo(req, res) {
     let baseFilter = '';
     if (funil_id)          { baseFilter += ' AND p.funil_id=?';         baseParams.push(funil_id); }
     if (carteiraFunilIdSql){ baseFilter += ' AND (p.funil_id IS NULL OR p.funil_id<>?)'; baseParams.push(carteiraFunilIdSql); }
+    // Exclui funis inativos (ex: Tráfego Pago) no modo "Todos - Novos"
+    if (funisInativosSql.length) {
+      const ph = funisInativosSql.map(()=>'?').join(',');
+      baseFilter += ` AND (p.funil_id IS NULL OR p.funil_id NOT IN (${ph}))`;
+      baseParams.push(...funisInativosSql);
+    }
     if (responsavel_id)    { baseFilter += ' AND l.responsavel_id=?';   baseParams.push(responsavel_id); }
     if (req.usuario.role === 'VENDEDOR') { baseFilter += ' AND l.responsavel_id=?'; baseParams.push(req.usuario.id); }
 

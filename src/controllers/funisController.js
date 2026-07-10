@@ -42,10 +42,12 @@ const ETAPAS_CARTEIRA_RECORRENTE = [
 
 const FUNIS_SEED = [
   { nome:'Indicação',           cor:'#6CFF4E' },
-  { nome:'Instagram',           cor:'#E10098' },
+  { nome:'Instagram - Direct',  cor:'#E10098' },  // era 'Instagram'
+  { nome:'Google Ads',          cor:'#EA4335' },  // novo
+  { nome:'Meta Ads',            cor:'#1877F2' },  // novo
   { nome:'Carteira Recorrente', cor:'#3B8BFF' },
   { nome:'Parcerias',           cor:'#FFB627' },
-  { nome:'Tráfego Pago',        cor:'#FF3B5C' },
+  // 'Tráfego Pago' inativo — não constar na seed de novos
   { nome:'WhatsApp',            cor:'#25D366' },
   { nome:'Site',                cor:'#6C47FF' },
   { nome:'Evento',              cor:'#FF6B35' },
@@ -56,9 +58,9 @@ async function seedFunis() {
   const { sb, isSupa, sqlite } = getProvider();
   try {
     if (isSupa) {
-      const { data: existing } = await sb.from('funis').select('id').limit(1);
+      const { data: existing } = await sb.from('funis').select('id,nome').limit(100);
       if (!existing?.length) {
-        // Cria todos os funis iniciais
+        // Instância vazia: cria todos os funis iniciais
         for (const [idx, f] of FUNIS_SEED.entries()) {
           const funilId    = crypto.randomBytes(16).toString('hex');
           const pipelineId = crypto.randomBytes(16).toString('hex');
@@ -66,14 +68,67 @@ async function seedFunis() {
           await sb.from('pipelines').insert({ id:pipelineId, funil_id:funilId, nome:`Pipeline - ${f.nome}`, ordem:idx, ativo:1 });
           const etapas = f.nome === 'Carteira Recorrente' ? ETAPAS_CARTEIRA_RECORRENTE : ETAPAS_PADRAO;
           for (const e of etapas) {
-            await sb.from('etapas').insert({ id:crypto.randomBytes(16).toString('hex'), pipeline_id:pipelineId, nome:e.nome, cor:e.cor, ordem:e.ordem, is_ganho:e.is_ganho, is_perdido:e.is_perdido, probabilidade:e.probabilidade });
+            await sb.from('etapas').insert({ id:crypto.randomBytes(16).toString('hex'), pipeline_id:pipelineId, funil_id:funilId, nome:e.nome, cor:e.cor, ordem:e.ordem, is_ganho:e.is_ganho, is_perdido:e.is_perdido, probabilidade:e.probabilidade });
           }
         }
         console.log('[Seed] Funis criados no Supabase.');
+      } else {
+        // ── Instância existente: aplica ajustes cirúrgicos ──────────────────
+        const nomesExistentes = new Set((existing||[]).map(f => f.nome));
+
+        // 1. Renomear Instagram → Instagram - Direct (se necessário)
+        if (nomesExistentes.has('Instagram') && !nomesExistentes.has('Instagram - Direct')) {
+          await sb.from('funis')
+            .update({ nome: 'Instagram - Direct', atualizado_em: new Date().toISOString() })
+            .eq('nome', 'Instagram');
+          // Renomeia pipeline vinculada
+          await sb.from('pipelines')
+            .update({ nome: 'Pipeline - Instagram - Direct', atualizado_em: new Date().toISOString() })
+            .eq('nome', 'Pipeline - Instagram');
+          console.log('[Seed] Funil "Instagram" renomeado para "Instagram - Direct".');
+        }
+
+        // 2. Inativar Tráfego Pago (sem deletar)
+        if (nomesExistentes.has('Tráfego Pago')) {
+          await sb.from('funis')
+            .update({ ativo: false, atualizado_em: new Date().toISOString() })
+            .eq('nome', 'Tráfego Pago');
+          console.log('[Seed] Funil "Tráfego Pago" marcado como inativo.');
+        }
+
+        // 3. Criar Google Ads se não existir
+        if (!nomesExistentes.has('Google Ads')) {
+          const gId = crypto.randomBytes(16).toString('hex');
+          const gPipeId = crypto.randomBytes(16).toString('hex');
+          await sb.from('funis').insert({ id:gId, nome:'Google Ads', cor:'#EA4335', ativo:true });
+          await sb.from('pipelines').insert({ id:gPipeId, funil_id:gId, nome:'Pipeline - Google Ads', ordem:0, ativo:true });
+          for (const e of ETAPAS_PADRAO) {
+            await sb.from('etapas').insert({ id:crypto.randomBytes(16).toString('hex'), pipeline_id:gPipeId, funil_id:gId, nome:e.nome, cor:e.cor, ordem:e.ordem, is_ganho:e.is_ganho, is_perdido:e.is_perdido, probabilidade:e.probabilidade });
+          }
+          console.log('[Seed] Funil "Google Ads" criado com pipeline e etapas.');
+        } else {
+          // Garante que está ativo
+          await sb.from('funis').update({ ativo: true }).eq('nome', 'Google Ads');
+        }
+
+        // 4. Criar Meta Ads se não existir
+        if (!nomesExistentes.has('Meta Ads')) {
+          const mId = crypto.randomBytes(16).toString('hex');
+          const mPipeId = crypto.randomBytes(16).toString('hex');
+          await sb.from('funis').insert({ id:mId, nome:'Meta Ads', cor:'#1877F2', ativo:true });
+          await sb.from('pipelines').insert({ id:mPipeId, funil_id:mId, nome:'Pipeline - Meta Ads', ordem:0, ativo:true });
+          for (const e of ETAPAS_PADRAO) {
+            await sb.from('etapas').insert({ id:crypto.randomBytes(16).toString('hex'), pipeline_id:mPipeId, funil_id:mId, nome:e.nome, cor:e.cor, ordem:e.ordem, is_ganho:e.is_ganho, is_perdido:e.is_perdido, probabilidade:e.probabilidade });
+          }
+          console.log('[Seed] Funil "Meta Ads" criado com pipeline e etapas.');
+        } else {
+          // Garante que está ativo
+          await sb.from('funis').update({ ativo: true }).eq('nome', 'Meta Ads');
+        }
       }
       // Garante etapas corretas da Carteira Recorrente em instâncias existentes
       await _seedEtapasCarteiraRecorrente_Supa(sb).catch(e => console.warn('[seedEtapas Supa]', e.message));
-      // Garante etapas padrão (incl. Layout Virtual) em todos os funis comerciais
+      // Garante etapas padrão (incl. Layout Virtual) em todos os funis comerciais ativos
       await _seedEtapasPadrao_Supa(sb).catch(e => console.warn('[seedEtapasPadrao Supa]', e.message));
       return;
     }
@@ -93,6 +148,18 @@ async function seedFunis() {
           db.prepare(`INSERT INTO etapas (id,pipeline_id,nome,cor,ordem,is_ganho,is_perdido,probabilidade,criado_por) VALUES (?,?,?,?,?,?,?,?,?)`).run(crypto.randomBytes(16).toString('hex'),pipelineId,e.nome,e.cor,e.ordem,e.is_ganho,e.is_perdido,e.probabilidade,adminId);
         });
       });
+    } else {
+      // SQLite — ajustes cirúrgicos em instância existente
+      const instNomes = new Set(db.prepare('SELECT nome FROM funis').all().map(f => f.nome));
+      if (instNomes.has('Instagram') && !instNomes.has('Instagram - Direct')) {
+        db.prepare(`UPDATE funis SET nome='Instagram - Direct', atualizado_em=? WHERE nome='Instagram'`).run(new Date().toISOString());
+        db.prepare(`UPDATE pipelines SET nome='Pipeline - Instagram - Direct', atualizado_em=? WHERE nome='Pipeline - Instagram'`).run(new Date().toISOString());
+        console.log('[Seed SQLite] Funil "Instagram" renomeado para "Instagram - Direct".');
+      }
+      if (instNomes.has('Tráfego Pago')) {
+        db.prepare(`UPDATE funis SET ativo=0, atualizado_em=? WHERE nome='Tráfego Pago'`).run(new Date().toISOString());
+        console.log('[Seed SQLite] Funil "Tráfego Pago" inativado.');
+      }
     }
     // Garante etapas corretas da Carteira Recorrente em instâncias existentes
     try { _seedEtapasCarteiraRecorrente_SQLite(db); } catch(e) { console.warn('[seedEtapas SQLite]', e.message); }
