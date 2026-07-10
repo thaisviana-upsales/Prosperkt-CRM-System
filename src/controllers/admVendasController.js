@@ -252,6 +252,15 @@ async function moverEtapa(req, res) {
     if (usuario.role === 'VENDEDOR' && atual.responsavel_id !== usuario.id)
       return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
 
+    // ── FLUXO: bloqueia "concluido" se não tiver previsão de próxima compra ──
+    if (etapa === 'concluido' && !atual.previsao_proxima_compra) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'Para concluir a venda, informe a previsão de próxima compra deste cliente.',
+        campos_faltando: ['previsao_proxima_compra'],
+      });
+    }
+
     const etapaAnterior = atual.etapa;
     const now = agora();
     const novoStatus = etapa === 'concluido' ? 'concluido' : 'ativo';
@@ -265,11 +274,37 @@ async function moverEtapa(req, res) {
         .run(etapa, novoStatus, now, now, id);
     }
 
-    // Histórico de mudança de etapa — detalhado
     const etapaAntLabel = ETAPAS_LABELS[etapaAnterior] || etapaAnterior;
     const etapaNovaLabel = ETAPAS_LABELS[etapa] || etapa;
-    const msg = `Pedido movido de "${etapaAntLabel}" para "${etapaNovaLabel}". Responsável: ${usuario.nome||usuario.email||'Sistema'}. Data: ${new Date(now).toLocaleString('pt-BR')}.`;
+    const msg = `Pedido movido de "${etapaAntLabel}" para "${etapaNovaLabel}". Responsável: ${usuario.nome||usuario.email||'Sistema'}.`;
     await _registrarHistorico(sb, isSupa, sqlite, id, usuario.id, 'ETAPA', msg);
+
+    // ── FLUXO: Venda Concluída → clone para Carteira Recorrente ─────────────
+    if (etapa === 'concluido' && etapaAnterior !== 'concluido') {
+      const previsao = atual.previsao_proxima_compra;
+      await _registrarHistorico(sb, isSupa, sqlite, id, null, 'SISTEMA',
+        `Venda operacional concluída. Cliente enviado automaticamente para Carteira Recorrente. Previsão: "${previsao}".`);
+      try {
+        // Importação lazy — evita dependência circular
+        const _leadCtrl = require('./leadsController');
+        if (typeof _leadCtrl._clonarParaCarteiraRecorrente === 'function') {
+          const crRes = await _leadCtrl._clonarParaCarteiraRecorrente(
+            sb, isSupa, sqlite, atual, previsao, usuario.id, id
+          );
+          if (crRes?.criado) {
+            console.log('[ADM_VENDAS→CARTEIRA] ✅ Clone criado:', crRes.id);
+            await _registrarHistorico(sb, isSupa, sqlite, id, null, 'SISTEMA',
+              `Clone criado na Carteira Recorrente (ID: ${crRes.id}). Etapa: "Previsão Carteira ${previsao}".`);
+          } else {
+            console.log('[ADM_VENDAS→CARTEIRA] Skipped:', crRes?.erro);
+          }
+        } else {
+          console.warn('[ADM_VENDAS→CARTEIRA] _clonarParaCarteiraRecorrente não exportada pelo leadsController');
+        }
+      } catch(eCr) {
+        console.error('[ADM_VENDAS→CARTEIRA] Erro ao clonar para Carteira:', eCr.message);
+      }
+    }
 
     return res.json({ sucesso: true, etapa, etapa_label: ETAPAS_LABELS[etapa], status: novoStatus, etapa_atualizada_em: now });
   } catch(e) {
@@ -340,25 +375,29 @@ async function clonarDeLeadGanho(leadData, responsavelId, sb, isSupa, sqlite) {
     const agr = agora();
     const dataVenda = agr.slice(0, 10);
 
-    // Idempotência: verifica se já existe card ativo para este lead
+    // Idempotência: verifica se já existe card para este lead NO MESMO DIA
+    // (permite novos ciclos em datas diferentes — recompras)
+    const diaVenda = agr.slice(0, 10);
     let existente = null;
     if (isSupa) {
       const { data } = await sb.from('adm_vendas')
         .select('id')
         .eq('lead_original_id', leadData.id)
+        .gte('data_venda', diaVenda)
+        .lte('data_venda', diaVenda)
         .neq('status', 'cancelado')
         .limit(1);
       existente = data?.[0] || null;
     } else {
       try {
         existente = sqlite.prepare(
-          `SELECT id FROM adm_vendas WHERE lead_original_id=? AND status != 'cancelado' LIMIT 1`
-        ).get(leadData.id);
+          `SELECT id FROM adm_vendas WHERE lead_original_id=? AND data_venda=? AND status != 'cancelado' LIMIT 1`
+        ).get(leadData.id, diaVenda);
       } catch { existente = null; }
     }
 
     if (existente) {
-      console.log(`[ADM_VENDAS] Lead ${leadData.id} já tem card ativo (${existente.id}) — não duplicar.`);
+      console.log(`[ADM_VENDAS] Lead ${leadData.id} já tem card para ${diaVenda} (${existente.id}) — skip.`);
       return { sucesso: true, criado: false, id: existente.id };
     }
 
@@ -383,7 +422,9 @@ async function clonarDeLeadGanho(leadData, responsavelId, sb, isSupa, sqlite) {
       origem:            leadData.origem            || null,
       tags:              leadData.tags ? (typeof leadData.tags === 'string' ? leadData.tags : JSON.stringify(leadData.tags)) : null,
       observacoes:       leadData.observacoes       || null,
-      data_venda:        dataVenda,
+      previsao_proxima_compra:      leadData.previsao_proxima_compra      || null,
+      data_prevista_proxima_compra: leadData.data_prevista_proxima_compra || null,
+      data_venda:        diaVenda,
       data_entrega_prevista: null,
       etapa:   'acompanhamento',
       status:  'ativo',
