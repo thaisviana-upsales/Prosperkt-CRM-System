@@ -3,6 +3,7 @@
  * Corrige: filtros de data, status case-insensitive, valor_venda, ganho real.
  */
 const { getProvider } = require('../database/dbProvider');
+const { ETAPAS_CARTEIRA_REMOVIDAS } = require('./funisController');
 
 // ── Helpers de período ────────────────────────────────────────────────────────
 function calcPeriodo(dataTipo, dataPeriodo, dataInicio, dataFim) {
@@ -212,6 +213,11 @@ async function resumo(req, res) {
           .eq('funil_id', funil_id)
           .order('ordem', { ascending: true });
         etapasEstrutura = etFunil || [];
+        // Filtra etapas removidas se for Carteira Recorrente
+        const { data: funilSel } = await sb.from('funis').select('nome').eq('id', funil_id).single();
+        if (/carteira\s*recorrente/i.test(funilSel?.nome || '')) {
+          etapasEstrutura = etapasEstrutura.filter(e => !ETAPAS_CARTEIRA_REMOVIDAS.includes(e.nome));
+        }
         console.log('[DASHBOARD_PIPELINE_SELECTED]', funil_id, '| etapas:', etapasEstrutura.length,
           '|', etapasEstrutura.map(e => `${e.ordem}:${e.nome}`).join(', '));
       } else {
@@ -487,6 +493,11 @@ async function resumo(req, res) {
       if (pipeRow) {
         etapas = db.prepare(`SELECT e.id,e.nome,e.cor,e.ordem,e.is_ganho,e.is_perdido
           FROM etapas e WHERE e.pipeline_id=? ORDER BY e.ordem ASC`).all(pipeRow.id);
+      }
+      // Filtra etapas removidas se for Carteira Recorrente
+      const funilSelSql = db.prepare('SELECT nome FROM funis WHERE id=? LIMIT 1').get(funil_id);
+      if (/carteira\s*recorrente/i.test(funilSelSql?.nome || '')) {
+        etapas = etapas.filter(e => !ETAPAS_CARTEIRA_REMOVIDAS.includes(e.nome));
       }
       // Mapa nome→[id] — sem dedup necessária (pipeline única)
       etapas.forEach(e => { etapaNomeParaIds[e.nome] = [e.id]; });

@@ -22,15 +22,15 @@ const ETAPAS_PADRAO = [
   { nome:'Perdidos',            ordem:12, cor:'#FF3B5C', probabilidade:0,   is_ganho:0, is_perdido:1 },
 ];
 
-// Etapas específicas para Carteira Recorrente
+// Etapas da Carteira Recorrente (14 oficiais — preserva as "Previsão Carteira X")
 const ETAPAS_CARTEIRA_RECORRENTE = [
-  { nome:'Previsão Carteira 15-30 dias',  ordem:1,  cor:'#6CFF4E', probabilidade:10,  is_ganho:0, is_perdido:0 },
-  { nome:'Previsão Carteira 30-60 dias',  ordem:2,  cor:'#5BE89E', probabilidade:10,  is_ganho:0, is_perdido:0 },
-  { nome:'Previsão Carteira 60-90 dias',  ordem:3,  cor:'#3B8BFF', probabilidade:15,  is_ganho:0, is_perdido:0 },
-  { nome:'Previsão Carteira 3 - 6 meses', ordem:4,  cor:'#6C47FF', probabilidade:20,  is_ganho:0, is_perdido:0 },
-  { nome:'Previsão Carteira 6 - 9 meses', ordem:5,  cor:'#9B59B6', probabilidade:20,  is_ganho:0, is_perdido:0 },
-  { nome:'Previsão Carteira 9 - 18 meses',ordem:6,  cor:'#FFB627', probabilidade:25,  is_ganho:0, is_perdido:0 },
-  { nome:'Previsão Carteira +18 meses',   ordem:7,  cor:'#F5A623', probabilidade:25,  is_ganho:0, is_perdido:0 },
+  { nome:'Previsão Carteira 15-30 dias',  ordem:1,  cor:'#1a3a52', probabilidade:10,  is_ganho:0, is_perdido:0 },
+  { nome:'Previsão Carteira 30-60 dias',  ordem:2,  cor:'#1e4460', probabilidade:10,  is_ganho:0, is_perdido:0 },
+  { nome:'Previsão Carteira 60-90 dias',  ordem:3,  cor:'#234f6e', probabilidade:15,  is_ganho:0, is_perdido:0 },
+  { nome:'Previsão Carteira 3 - 6 meses', ordem:4,  cor:'#285a7c', probabilidade:20,  is_ganho:0, is_perdido:0 },
+  { nome:'Previsão Carteira 6 - 9 meses', ordem:5,  cor:'#2d658a', probabilidade:20,  is_ganho:0, is_perdido:0 },
+  { nome:'Previsão Carteira 9 - 18 meses',ordem:6,  cor:'#327098', probabilidade:25,  is_ganho:0, is_perdido:0 },
+  { nome:'Previsão Carteira +18 meses',   ordem:7,  cor:'#377ba6', probabilidade:25,  is_ganho:0, is_perdido:0 },
   { nome:'Orçamento Enviado',             ordem:8,  cor:'#3B8BFF', probabilidade:55,  is_ganho:0, is_perdido:0 },
   { nome:'Orçamento Aprovado',            ordem:9,  cor:'#5BE89E', probabilidade:70,  is_ganho:0, is_perdido:0 },
   { nome:'Layout Virtual',                ordem:10, cor:'#6CFF4E', probabilidade:75,  is_ganho:0, is_perdido:0 },
@@ -168,7 +168,18 @@ async function seedFunis() {
   } catch(e) { console.error('[seedFunis]', e.message); }
 }
 
-// Garante as 14 etapas da Carteira Recorrente — sem duplicar (SQLite)
+// Etapas obsoletas da Carteira Recorrente — sem prefixo "Previsão Carteira"
+// Essas variantes de nome existiam antes da padronização e devem ser ocultadas.
+const ETAPAS_CARTEIRA_REMOVIDAS = [
+  'Carteira 15-30 dias',
+  'Carteira 30-60 dias',
+  'Carteira 60-90 dias',
+  'Carteira 6 - 9 meses',
+  'Carteira 9 - 18 meses',
+  'Carteira +18 meses',
+];
+
+// Garante as 14 etapas oficiais da Carteira Recorrente — sem duplicar (SQLite)
 function _seedEtapasCarteiraRecorrente_SQLite(db) {
   const funilCart = db.prepare(`SELECT id FROM funis WHERE nome LIKE '%Carteira Recorrente%' AND ativo=1 LIMIT 1`).get();
   if (!funilCart) return;
@@ -188,7 +199,7 @@ function _seedEtapasCarteiraRecorrente_SQLite(db) {
   console.log('[Seed] Etapas Carteira Recorrente verificadas (SQLite).');
 }
 
-// Garante as 14 etapas da Carteira Recorrente — sem duplicar (Supabase)
+// Garante as 14 etapas oficiais da Carteira Recorrente — sem duplicar (Supabase)
 async function _seedEtapasCarteiraRecorrente_Supa(sb) {
   const { data: funisCart } = await sb.from('funis').select('id').ilike('nome','%Carteira Recorrente%').eq('ativo',1).limit(1);
   if (!funisCart?.length) return;
@@ -307,13 +318,23 @@ async function buscarPorId(req, res) {
         const { data: etapasData } = await sb.from('etapas').select('*').eq('pipeline_id', pipelineId).order('ordem');
         etapas = etapasData || [];
       }
+      // Filtra etapas removidas se for Carteira Recorrente
+      const isCarteira = /carteira\s*recorrente/i.test(funil.nome || '');
+      if (isCarteira) {
+        etapas = etapas.filter(e => !ETAPAS_CARTEIRA_REMOVIDAS.includes(e.nome));
+      }
       return res.json({ sucesso:true, dados:{ ...funil, pipeline_id: pipelineId, etapas } });
     }
     const { getDb } = require('../database/db');
     const db = getDb();
     const funil = db.prepare(`SELECT f.*, p.id as pipeline_id FROM funis f LEFT JOIN pipelines p ON p.funil_id=f.id WHERE f.id=?`).get(req.params.id);
     if (!funil) return res.status(404).json({ sucesso:false, erro:'Funil não encontrado.' });
-    const etapas = db.prepare(`SELECT e.* FROM etapas e JOIN pipelines p ON e.pipeline_id=p.id WHERE p.funil_id=? ORDER BY e.ordem`).all(req.params.id);
+    let etapas = db.prepare(`SELECT e.* FROM etapas e JOIN pipelines p ON e.pipeline_id=p.id WHERE p.funil_id=? ORDER BY e.ordem`).all(req.params.id);
+    // Filtra etapas removidas se for Carteira Recorrente
+    const isCarteira = /carteira\s*recorrente/i.test(funil.nome || '');
+    if (isCarteira) {
+      etapas = etapas.filter(e => !ETAPAS_CARTEIRA_REMOVIDAS.includes(e.nome));
+    }
     return res.json({ sucesso:true, dados:{ ...funil, etapas } });
   } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
 }
@@ -394,4 +415,5 @@ async function deletar(req, res) {
   } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
 }
 
-module.exports = { listar, buscarPorId, criar, atualizar, deletar, seedFunis };
+module.exports = { listar, buscarPorId, criar, atualizar, deletar, seedFunis, ETAPAS_CARTEIRA_REMOVIDAS };
+
