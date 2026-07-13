@@ -23,6 +23,31 @@ let _leadProdutos = []; // itens persistidos no banco (com id)
 let _leadProdutosNovas = []; // linhas ainda não salvas no banco
 let _leadIdAberto = null; // id do lead cujo modal está aberto
 
+// ── Indicador de carregamento discreto ───────────────────────────────────────
+// Não trava a tela; apenas mostra feedback visual enquanto fetches estão em curso
+let _loadingCount = 0;
+function _setLoadingState(on) {
+  _loadingCount = Math.max(0, _loadingCount + (on ? 1 : -1));
+  const isLoading = _loadingCount > 0;
+  // Barra de status discreta no topo da pipeline
+  let bar = document.getElementById('_crm-loading-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = '_crm-loading-bar';
+    bar.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:2px;background:var(--green,#6CFF4E);z-index:9999;transition:opacity .3s;pointer-events:none;';
+    document.body.appendChild(bar);
+  }
+  bar.style.opacity = isLoading ? '1' : '0';
+  // Spinner no botão "Aplicar" se existir
+  const btnAplicar = document.getElementById('btn-aplicar');
+  if (btnAplicar) {
+    btnAplicar.style.opacity = isLoading ? '.6' : '1';
+    btnAplicar.style.cursor  = isLoading ? 'wait' : '';
+  }
+}
+
+
+
 // ── Init ──────────────────────────────────────────────────────
 async function init() {
   _usuario = await Sidebar.init('pipeline');
@@ -96,16 +121,25 @@ function popularSelResp() {
 async function aplicarFiltros() {
   const funilId = _filtros.funil;
   _nomeParaIds = {};
+  const t0 = performance.now();
+  console.log('[CRM_FILTER_APPLY_START] funil:', funilId || 'todos-novos');
+
+  // Feedback visual discreto imediato (não trava tela)
+  _setLoadingState(true);
 
   if (funilId) {
     document.getElementById('page-title').textContent = `Pipeline — ${_funis.find(x=>x.id===funilId)?.nome||''}`;
     document.getElementById('page-sub').textContent = `Leads do funil ${_funis.find(x=>x.id===funilId)?.nome||''}`;
-    // Carrega funil com sua pipeline e etapas
-    const rd = await Auth.api('GET',`/funis/${funilId}`);
+
+    // ── Paraleliza: busca etapas + leads simultaneamente ──────────────
+    const [rd, rLeads] = await Promise.all([
+      Auth.api('GET', `/funis/${funilId}`),
+      Auth.api('GET', construirURL()),
+    ]);
+
     if (rd?.ok) {
       _pipelineAtivo = rd.data.dados.pipeline_id;
       _etapas = rd.data.dados.etapas || [];
-      // Modo funil específico: mapeamento direto por id
       _nomeParaIds = {};
       _etapas.forEach(e => { _nomeParaIds[e.nome] = [e.id]; });
     } else {
@@ -113,47 +147,51 @@ async function aplicarFiltros() {
       _pipelineAtivo = null;
       _etapas = [];
     }
+    _leads = rLeads?.data?.dados || [];
   } else {
     document.getElementById('page-title').textContent = 'Pipeline — Todos os Funis (Novos)';
     document.getElementById('page-sub').textContent = 'Leads de novos funis comerciais (excluindo Carteira Recorrente)';
     _pipelineAtivo = null;
 
-    // Carrega TODAS as etapas de funis que NÃO são Carteira Recorrente
-    const re = await Auth.api('GET', '/etapas');
+    // ── Paraleliza: busca etapas + leads simultaneamente ──────────────
+    const [re, rLeads] = await Promise.all([
+      Auth.api('GET', '/etapas'),
+      Auth.api('GET', construirURL()),
+    ]);
     const todasEtapas = re?.data?.dados || [];
 
-    // Deduplica por nome, excluindo etapas de pipelines da Carteira Recorrente
     const seen = new Set();
     const etapasDedup = [];
     for (const e of todasEtapas.sort((a, b) => a.ordem - b.ordem)) {
-      // Exclui etapas cujo funil_nome é Carteira Recorrente
       if (isCarteiraRecorrente(e.funil_nome || '')) continue;
       if (!_nomeParaIds[e.nome]) _nomeParaIds[e.nome] = [];
       _nomeParaIds[e.nome].push(e.id);
-      if (!seen.has(e.nome)) {
-        seen.add(e.nome);
-        etapasDedup.push(e);
-      }
+      if (!seen.has(e.nome)) { seen.add(e.nome); etapasDedup.push(e); }
     }
-
     _etapas = etapasDedup;
+    _leads  = rLeads?.data?.dados || [];
 
-    if (!_etapas.length) {
-      console.warn('[pipeline] Nenhuma etapa encontrada via /etapas');
-    }
+    if (!_etapas.length) console.warn('[pipeline] Nenhuma etapa encontrada via /etapas');
   }
 
-  await carregarLeads();
-  // Inicia lembretes de atividades no footer
+  _setLoadingState(false);
+  renderKanban();
+  const ms = Math.round(performance.now() - t0);
+  console.log('[CRM_FILTER_API_SUCCESS] tempo:', ms, 'ms');
+  console.log('[CRM_RENDER_DONE] etapas:', _etapas.length, '| leads:', _leads.length);
   if (window.Atividades) window.Atividades.iniciarLembretes();
 }
 
 
 async function carregarLeads() {
   const url = construirURL();
+  _setLoadingState(true);
+  const t0 = performance.now();
   const r = await Auth.api('GET', url);
   _leads = r?.data?.dados || [];
+  _setLoadingState(false);
   renderKanban();
+  console.log('[CRM_RENDER_DONE] leads:', _leads.length, '| tempo fetch:', Math.round(performance.now()-t0), 'ms');
 }
 
 function construirURL() {
@@ -386,20 +424,47 @@ async function moverLead(etapaId) {
 }
 
 async function _executarMover(leadId, etapaId, pid, etapaDest, motivo) {
+  const t0 = performance.now();
+  console.log('[CRM_MOVE_CARD_START] lead:', leadId, '-> etapa:', etapaId);
+
+  const isPerd = etapaDest?.is_perdido || etapaDest?.nome?.toLowerCase().includes('perdid') || etapaDest?.nome?.toLowerCase().includes('desqualif');
+  const isGan  = etapaDest?.is_ganho  || etapaDest?.probabilidade >= 100;
+
+  // ── ATUALIZAÇÃO OTIMISTA: move card no DOM imediatamente ─────────────────────
+  // Salva posição original para rollback em caso de erro
+  const leadIdx = _leads.findIndex(l => l.id === leadId);
+  const leadOriginal = leadIdx >= 0 ? { ..._leads[leadIdx] } : null;
+  const etapaOriginalId = leadOriginal?.etapa_id;
+
+  if (leadIdx >= 0) {
+    // Atualiza estado local imediatamente
+    _leads[leadIdx] = { ..._leads[leadIdx], etapa_id: etapaId, pipeline_id: pid || _leads[leadIdx].pipeline_id };
+    renderKanban(); // tela responde imediatamente
+    console.log('[CRM_MOVE_CARD_UI_UPDATED] tempo DOM:', Math.round(performance.now()-t0), 'ms');
+  }
+
+  // ── Envia para backend em segundo plano ──────────────────────────────────────
   const payload = { etapa_id:etapaId, pipeline_id:pid };
   if (motivo) payload.motivo_perda = motivo;
-  const r = await Auth.api('PATCH',`/leads/${leadId}/mover`, payload);
+  const r = await Auth.api('PATCH', `/leads/${leadId}/mover`, payload);
+  console.log('[CRM_MOVE_CARD_API_SUCCESS] tempo total:', Math.round(performance.now()-t0), 'ms | ok:', r?.ok);
+
   if (r?.ok) {
-    const isPerd = etapaDest?.is_perdido || etapaDest?.nome?.toLowerCase().includes('perdid') || etapaDest?.nome?.toLowerCase().includes('desqualif');
-    const isGan  = etapaDest?.is_ganho  || etapaDest?.probabilidade >= 100;
     Toast.show(isGan?'🎉 Lead ganho!':isPerd?'Lead marcado como perdido.':'Lead movido!', isGan?'success':isPerd?'error':'success');
-    // Atualiza datas automáticas de produção se a etapa destino corresponder
     if (window.Producao && etapaDest?.nome) {
       window.Producao.atualizarDatasEtapa(leadId, etapaDest.nome).catch(() => {});
     }
-    await carregarLeads();
+    // Reload silencioso em background para sincronizar dados do servidor
+    // (status, ganho_em, campos atualizados pelo backend) sem travar a tela
+    carregarLeads().catch(() => {});
   } else {
-    Toast.show(r?.data?.erro||'Erro ao mover.','error');
+    // ── ROLLBACK: desfaz atualização otimista ────────────────────────────────
+    Toast.show(r?.data?.erro||'Erro ao mover lead. Revertendo.','error');
+    if (leadIdx >= 0 && leadOriginal) {
+      _leads[leadIdx] = leadOriginal;
+      renderKanban(); // restaura posição visual
+    }
+    console.warn('[CRM_MOVE_CARD_ROLLBACK] lead restaurado para etapa:', etapaOriginalId);
   }
 }
 
@@ -884,8 +949,10 @@ async function salvarLead() {
           await Auth.api('PATCH',`/leads/${id}/mover`,payload);
         }
         Toast.show('Lead atualizado!','success');
+        // Atualiza card local imediatamente via backend response (se disponível)
+        // e recarrega em background sem bloquear o usuário
         fecharModal();
-        await carregarLeads();
+        carregarLeads().catch(() => {}); // background refresh
       } else {
         alertEl.className='alert alert-error'; alertEl.textContent=r?.data?.erro||'Erro.'; alertEl.style.display='';
       }
@@ -895,7 +962,7 @@ async function salvarLead() {
       if (r?.ok) {
         Toast.show('Lead criado!','success');
         fecharModal();
-        await carregarLeads();
+        carregarLeads().catch(() => {}); // background refresh
       } else {
         alertEl.className='alert alert-error'; alertEl.textContent=r?.data?.erro||'Erro.'; alertEl.style.display='';
       }
@@ -911,7 +978,7 @@ async function excluirLead() {
   const id=document.getElementById('fl-id').value;
   if (!id || !confirm('Excluir este lead permanentemente?')) return;
   const r=await Auth.api('DELETE',`/leads/${id}`);
-  if (r?.ok) { Toast.show('Lead excluído.','success'); fecharModal(); await carregarLeads(); }
+  if (r?.ok) { Toast.show('Lead excluído.','success'); fecharModal(); carregarLeads().catch(()=>{}); }
   else Toast.show(r?.data?.erro||'Erro ao excluir.','error');
 }
 
@@ -937,7 +1004,7 @@ async function clonarLead() {
     if (r?.ok) {
       Toast.show(`Lead clonado: ${r.data.dados?.nome || ''} — somente Dados Principais copiados.`, 'success');
       fecharModal();
-      await carregarLeads();
+      carregarLeads().catch(()=>{}); // background refresh
       // Abre o lead clonado automaticamente
       if (r.data.dados?.id) setTimeout(() => abrirLead(r.data.dados.id), 400);
     } else {
