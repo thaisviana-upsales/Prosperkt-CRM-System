@@ -209,23 +209,41 @@ async function resumo(req, res) {
       console.log('[DASHBOARD_FUNIL_CONVERSAO_START] funil_id:', funil_id || 'todos-novos', '| modo:', funil_id ? 'especifico' : 'todos-novos');
 
       if (funil_id) {
-        // ── FUNIL ESPECÍFICO: carrega etapas diretamente do funil, ordenadas por ordem ──
+        // ── FUNIL ESPECÍFICO ──
+        // Busca etapas pela PIPELINE vinculada ao funil (fonte primária — seeded via funisController).
+        // Fallback: funil_id direto na tabela etapas (etapas criadas via API etapasController).
         console.log('[DASHBOARD_FUNIL_FILTRO_RECEBIDO] funil_id:', funil_id);
+        const { data: funilSel } = await sb.from('funis').select('id,nome').eq('id', funil_id).single();
+        // 1. Tenta via pipeline
+        const { data: pipesF } = await sb.from('pipelines').select('id').eq('funil_id', funil_id).order('criado_em', { ascending: true }).limit(1);
+        const pipeIdF = pipesF?.[0]?.id || null;
+        console.log('[DASHBOARD_PIPELINES_ENCONTRADAS] funil_id:', funil_id, '| pipeline:', pipeIdF || 'não encontrada');
+        if (pipeIdF) {
+          const { data: etPipe } = await sb.from('etapas')
+            .select('id,nome,cor,ordem,probabilidade,is_ganho,is_perdido')
+            .eq('pipeline_id', pipeIdF)
+            .order('ordem', { ascending: true });
+          etapasEstrutura = etPipe || [];
+        }
+        // 2. Fallback: também carrega etapas com funil_id direto e mescla (evita duplicatas por nome)
         const { data: etFunil } = await sb.from('etapas')
           .select('id,nome,cor,ordem,probabilidade,is_ganho,is_perdido')
           .eq('funil_id', funil_id)
           .order('ordem', { ascending: true });
-        etapasEstrutura = etFunil || [];
+        const nomesPipeline = new Set(etapasEstrutura.map(e => e.nome));
+        for (const e of (etFunil || [])) {
+          if (!nomesPipeline.has(e.nome)) {
+            etapasEstrutura.push(e);
+            nomesPipeline.add(e.nome);
+          }
+        }
+        etapasEstrutura.sort((a, b) => a.ordem - b.ordem);
         // Filtra etapas obsoletas se for Carteira Recorrente
-        const { data: funilSel } = await sb.from('funis').select('nome').eq('id', funil_id).single();
         if (/carteira\s*recorrente/i.test(funilSel?.nome || '')) {
           etapasEstrutura = etapasEstrutura.filter(e => !ETAPAS_CARTEIRA_REMOVIDAS.includes(e.nome));
         }
-        // Monta mapa nome→[id] (sem dedup — funil único)
-        etapasEstrutura.forEach(e => {
-          nomeParaIds[e.nome] = [e.id];
-        });
-        console.log('[DASHBOARD_PIPELINES_ENCONTRADAS] funil_id:', funil_id, '| 1 pipeline');
+        // Monta mapa nome→[id] (funil único, sem dedup)
+        etapasEstrutura.forEach(e => { nomeParaIds[e.nome] = [e.id]; });
         console.log('[DASHBOARD_ETAPAS_ENCONTRADAS] funil_id:', funil_id, '| etapas:', etapasEstrutura.length, '|', etapasEstrutura.map(e => `${e.ordem}:${e.nome}`).join(', '));
       } else {
         // ── TODOS - NOVOS: agrega etapas de todos os funis ativos, exceto Carteira Recorrente ──
@@ -240,13 +258,38 @@ async function resumo(req, res) {
 
         if (funisAtivos.length) {
           const funilIds = funisAtivos.map(f => f.id);
-          const { data: ets } = await sb.from('etapas')
+          // Busca etapas via PIPELINE (fonte primária) e via funil_id (fallback), mescla tudo
+          const { data: pipesT } = await sb.from('pipelines').select('id,funil_id').in('funil_id', funilIds);
+          const pipeIdsT = (pipesT || []).map(p => p.id);
+          console.log('[DASHBOARD_PIPELINES_ENCONTRADAS] todos-novos | pipelines:', pipeIdsT.length);
+
+          let todasEtapasT = [];
+          // 1. Via pipeline_id (etapas seeded)
+          if (pipeIdsT.length) {
+            const { data: etsPipe } = await sb.from('etapas')
+              .select('id,nome,cor,ordem,probabilidade,is_ganho,is_perdido,pipeline_id')
+              .in('pipeline_id', pipeIdsT)
+              .order('ordem', { ascending: true });
+            todasEtapasT = etsPipe || [];
+          }
+          // 2. Via funil_id direto (fallback para etapas criadas via API)
+          const { data: etsFunil } = await sb.from('etapas')
             .select('id,nome,cor,ordem,probabilidade,is_ganho,is_perdido,funil_id')
             .in('funil_id', funilIds)
             .order('ordem', { ascending: true });
+          // Mescla sem duplicar por id
+          const idsJaAdicionados = new Set(todasEtapasT.map(e => e.id));
+          for (const e of (etsFunil || [])) {
+            if (!idsJaAdicionados.has(e.id)) {
+              todasEtapasT.push(e);
+              idsJaAdicionados.add(e.id);
+            }
+          }
+          todasEtapasT.sort((a, b) => a.ordem - b.ordem);
+
           // Dedup por nome: agrega ids de etapas com mesmo nome entre funis
           const seen = new Set();
-          for (const e of (ets || [])) {
+          for (const e of todasEtapasT) {
             if (!nomeParaIds[e.nome]) nomeParaIds[e.nome] = [];
             nomeParaIds[e.nome].push(e.id);
             if (!seen.has(e.nome)) {
