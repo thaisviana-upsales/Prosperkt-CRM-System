@@ -181,15 +181,15 @@ async function resumo(req, res) {
         taxa_conversao,
       };
 
-      // ── 4. Funil Visual ─────────────────────────────────────────────────────
-      // Carrega leads sem filtro de data para posição no funil (posição atual, não histórico)
-      // MAS mantém filtro de funil, vendedor e funis inativos
+      // ── 4. Funil Visual ─────────────────────────────────────────────────
+      // Carrega a estrutura de etapas da pipeline real.
+      // Leads são contados por etapa depois; etapas com 0 são preservadas.
+      // Para posicionamento no funil: usa leads sem filtro de data, mas COM filtro de funil/vendedor.
       let leadsParaFunil = leads;
       if (periodo?.ini || periodo?.fim) {
         let qFunil = sb.from('leads').select('id,etapa_id,funil_id,status,ganho_em,perdido_em,valor,valor_venda');
         if (funil_id)         qFunil = qFunil.eq('funil_id', funil_id);
         if (carteiraFunilId)  qFunil = qFunil.neq('funil_id', carteiraFunilId);
-        // Exclui funis inativos (Tráfego Pago etc.)
         if (funisInativosIds.length) {
           const idsExcl = funisInativosIds.filter(id => id !== carteiraFunilId);
           if (idsExcl.length) qFunil = qFunil.not('funil_id', 'in', `(${idsExcl.join(',')})`);
@@ -201,36 +201,42 @@ async function resumo(req, res) {
       }
       console.log('[DASHBOARD_RESULT_COUNTS] leads KPIs (filtrados):', leads.length, '| leads funil visual (sem filtro data):', leadsParaFunil.length);
 
-      // ── Carrega etapas estruturais da pipeline do funil selecionado ──────────
+      // ── Carrega etapas estruturais da pipeline do funil selecionado ─────────────
       // ARQUITETURA Supabase: etapas.funil_id → funis.id (sem pipeline_id na tabela etapas)
       let etapasEstrutura = [];
+      const nomeParaIds = {}; // nome → [ids de etapas com esse nome]
+
+      console.log('[DASHBOARD_FUNIL_CONVERSAO_START] funil_id:', funil_id || 'todos-novos', '| modo:', funil_id ? 'especifico' : 'todos-novos');
 
       if (funil_id) {
         // ── FUNIL ESPECÍFICO: carrega etapas diretamente do funil, ordenadas por ordem ──
-        console.log('[DASHBOARD_FUNIL_SELECTED]', funil_id);
+        console.log('[DASHBOARD_FUNIL_FILTRO_RECEBIDO] funil_id:', funil_id);
         const { data: etFunil } = await sb.from('etapas')
           .select('id,nome,cor,ordem,probabilidade,is_ganho,is_perdido')
           .eq('funil_id', funil_id)
           .order('ordem', { ascending: true });
         etapasEstrutura = etFunil || [];
-        // Filtra etapas removidas se for Carteira Recorrente
+        // Filtra etapas obsoletas se for Carteira Recorrente
         const { data: funilSel } = await sb.from('funis').select('nome').eq('id', funil_id).single();
         if (/carteira\s*recorrente/i.test(funilSel?.nome || '')) {
           etapasEstrutura = etapasEstrutura.filter(e => !ETAPAS_CARTEIRA_REMOVIDAS.includes(e.nome));
         }
-        console.log('[DASHBOARD_PIPELINE_SELECTED]', funil_id, '| etapas:', etapasEstrutura.length,
-          '|', etapasEstrutura.map(e => `${e.ordem}:${e.nome}`).join(', '));
+        // Monta mapa nome→[id] (sem dedup — funil único)
+        etapasEstrutura.forEach(e => {
+          nomeParaIds[e.nome] = [e.id];
+        });
+        console.log('[DASHBOARD_PIPELINES_ENCONTRADAS] funil_id:', funil_id, '| 1 pipeline');
+        console.log('[DASHBOARD_ETAPAS_ENCONTRADAS] funil_id:', funil_id, '| etapas:', etapasEstrutura.length, '|', etapasEstrutura.map(e => `${e.ordem}:${e.nome}`).join(', '));
       } else {
         // ── TODOS - NOVOS: agrega etapas de todos os funis ativos, exceto Carteira Recorrente ──
-        console.log('[DASHBOARD_FUNIL_SELECTED] todos-novos');
+        console.log('[DASHBOARD_FUNIL_FILTRO_RECEBIDO] modo: todos-novos');
         let { data: funisAtivos } = await sb.from('funis').select('id,nome').eq('ativo', true);
         funisAtivos = (funisAtivos || []).filter(f => {
           if (f.id === carteiraFunilId) return false; // exclui Carteira Recorrente
-          if (funisInativosIds.includes(f.id)) return false; // exclui inativos (Tráfego Pago)
+          if (funisInativosIds.includes(f.id)) return false; // exclui inativos
           return true;
         });
-        console.log('[DASHBOARD_PIPELINE_SELECTED] todos-novos | funis ativos comerciais:',
-          funisAtivos.map(f => f.nome).join(', '));
+        console.log('[DASHBOARD_PIPELINES_ENCONTRADAS] todos-novos | funis comerciais ativos:', funisAtivos.map(f => f.nome).join(', '));
 
         if (funisAtivos.length) {
           const funilIds = funisAtivos.map(f => f.id);
@@ -238,57 +244,30 @@ async function resumo(req, res) {
             .select('id,nome,cor,ordem,probabilidade,is_ganho,is_perdido,funil_id')
             .in('funil_id', funilIds)
             .order('ordem', { ascending: true });
-          etapasEstrutura = ets || [];
-        }
-        console.log('[DASHBOARD_ETAPAS_PIPELINE_COUNT] todos-novos | total etapas brutas:', etapasEstrutura.length);
-      }
-
-      // ── Deduplica etapas por nome (para consolidar pipelines equivalentes) ───
-      // Para funil específico: sem dedup necessária (uma pipeline só)
-      // Para todos-novos: agrupa etapas de mesmo nome para somar leads
-      const nomeParaIds = {}; // nome → [ids de etapas com esse nome]
-      const etapasDedup = [];
-      const seen = new Set();
-
-      for (const e of etapasEstrutura) {
-        if (!nomeParaIds[e.nome]) nomeParaIds[e.nome] = [];
-        nomeParaIds[e.nome].push(e.id);
-        if (!seen.has(e.nome)) {
-          seen.add(e.nome);
-          etapasDedup.push(e);
-        }
-      }
-      // Mantém ordenação: para funil único, já vem ordenado por ordem
-      // Para todos-novos, a ordem vem da pipeline com menor ordem para aquele nome
-      etapasDedup.sort((a, b) => a.ordem - b.ordem);
-
-      // ── Incluir etapas onde leads existem mas não estão na estrutura (dados órfãos) ──
-      const etapaIdsReais = [...new Set(leadsParaFunil.map(l => l.etapa_id).filter(Boolean))];
-      const etapaIdsEstrutura = new Set(etapasDedup.map(e => e.id));
-      const etapaIdsOrfaos = etapaIdsReais.filter(id => {
-        // Só é órfão se não estiver em NENHUMA das etapas pelo id
-        return !etapaIdsEstrutura.has(id) && !Object.values(nomeParaIds).flat().includes(id);
-      });
-      if (etapaIdsOrfaos.length) {
-        const { data: extras } = await sb.from('etapas')
-          .select('id,nome,cor,ordem,probabilidade,is_ganho,is_perdido')
-          .in('id', etapaIdsOrfaos);
-        for (const e of (extras || [])) {
-          if (!nomeParaIds[e.nome]) nomeParaIds[e.nome] = [];
-          nomeParaIds[e.nome].push(e.id);
-          if (!seen.has(e.nome)) {
-            seen.add(e.nome);
-            etapasDedup.push(e);
+          // Dedup por nome: agrega ids de etapas com mesmo nome entre funis
+          const seen = new Set();
+          for (const e of (ets || [])) {
+            if (!nomeParaIds[e.nome]) nomeParaIds[e.nome] = [];
+            nomeParaIds[e.nome].push(e.id);
+            if (!seen.has(e.nome)) {
+              seen.add(e.nome);
+              etapasEstrutura.push(e);
+            }
           }
+          etapasEstrutura.sort((a, b) => a.ordem - b.ordem);
         }
-        etapasDedup.sort((a, b) => a.ordem - b.ordem);
+        console.log('[DASHBOARD_ETAPAS_ENCONTRADAS] todos-novos | etapas dedup:', etapasEstrutura.length, '|', etapasEstrutura.map(e => `${e.ordem}:${e.nome}`).join(', '));
       }
 
-      console.log('[DASHBOARD_ETAPAS_PIPELINE_COUNT]', funil_id ? `funil ${funil_id}` : 'todos-novos',
-        '| etapas finais:', etapasDedup.length, '|', etapasDedup.map(e => `${e.ordem}:${e.nome}`).join(', '));
+      // ⚠️ NÃO adiciona etapas "órfãs" (leads cujas etapas não estão na pipeline do funil selecionado).
+      // Isso causava contaminacao do funil com etapas de outros funis.
+      // Etapas com 0 leads JA aparecem porque a estrutura de etapas vem da pipeline, não dos leads.
 
-      // ── Conta leads por etapa (respeitando todos os filtros) ─────────────────
-      const funil_visual_raw = etapasDedup.map(e => {
+      console.log('[DASHBOARD_PIPELINE_SELECTED]', funil_id || 'todos-novos', '| etapas finais:', etapasEstrutura.length, '|', etapasEstrutura.map(e => `${e.ordem}:${e.nome}`).join(', '));
+
+      // ── Conta leads por etapa (respeitando todos os filtros) ────────────────────
+      // Etapas com 0 leads SEMPRE aparecem porque a estrutura vem da pipeline
+      const funil_visual_raw = etapasEstrutura.map(e => {
         const ids = nomeParaIds[e.nome] || [e.id];
         const qty = leadsParaFunil.filter(l => ids.includes(l.etapa_id)).length;
         const isG = e.is_ganho || e.probabilidade >= 100 || /venda|vendas|ganho|fechad|fechamento/i.test(e.nome||'');
@@ -298,10 +277,12 @@ async function resumo(req, res) {
 
       const funil_visual = funil_visual_raw.map((e, i) => {
         const prev = i > 0 ? funil_visual_raw[i-1].quantidade : null;
-
         const taxa_entrada = prev != null && prev > 0 ? ((e.quantidade/prev)*100).toFixed(0) : null;
         return { ...e, taxa_entrada };
       });
+
+      console.log('[DASHBOARD_FUNIL_CONVERSAO_RESULTADO]',
+        funil_visual.map(e => `${e.nome}:${e.quantidade}(${e.taxa_entrada ?? '—'}%)`).join(' → '));
 
       // ── 5. Ranking vendedores ─────────────────────────────────────────────────
       // Carrega SOMENTE usuários ativos
@@ -483,13 +464,15 @@ async function resumo(req, res) {
     const taxa_conversao = kpis.total_leads > 0 ? ((kpis.total_ganhos/kpis.total_leads)*100).toFixed(1) : '0.0';
 
     // ── Funil Visual (SQLite) — lê dinamicamente do banco, sem hardcode ─────────
-    console.log('[DASHBOARD_FUNIL_SELECTED]', funil_id || 'todos-novos');
+    console.log('[DASHBOARD_FUNIL_CONVERSAO_START] funil_id:', funil_id || 'todos-novos', '| modo:', funil_id ? 'especifico' : 'todos-novos');
     let etapas = [];
     let etapaNomeParaIds = {}; // nome → [ids] para agregação "Todos - Novos"
 
     if (funil_id) {
       // ── FUNIL ESPECÍFICO: carrega etapas da pipeline vinculada ao funil ──
+      console.log('[DASHBOARD_FUNIL_FILTRO_RECEBIDO] funil_id:', funil_id);
       const pipeRow = db.prepare(`SELECT id FROM pipelines WHERE funil_id=? ORDER BY ordem ASC LIMIT 1`).get(funil_id);
+      console.log('[DASHBOARD_PIPELINES_ENCONTRADAS] funil_id:', funil_id, '| pipeline:', pipeRow?.id || 'não encontrada');
       if (pipeRow) {
         etapas = db.prepare(`SELECT e.id,e.nome,e.cor,e.ordem,e.is_ganho,e.is_perdido
           FROM etapas e WHERE e.pipeline_id=? ORDER BY e.ordem ASC`).all(pipeRow.id);
@@ -501,11 +484,11 @@ async function resumo(req, res) {
       }
       // Mapa nome→[id] — sem dedup necessária (pipeline única)
       etapas.forEach(e => { etapaNomeParaIds[e.nome] = [e.id]; });
-      console.log('[DASHBOARD_PIPELINE_SELECTED]', funil_id, '| pipeline:', pipeRow?.id || 'não encontrada',
-        '| etapas:', etapas.map(e => `${e.ordem}:${e.nome}`).join(', '));
+      console.log('[DASHBOARD_ETAPAS_ENCONTRADAS] funil_id:', funil_id, '| etapas:', etapas.length, '|', etapas.map(e => `${e.ordem}:${e.nome}`).join(', '));
     } else {
       // ── TODOS - NOVOS: agrega etapas de todos os pipelines comerciais ativos ──
       // Exclui: Carteira Recorrente, funis inativos (Tráfego Pago)
+      console.log('[DASHBOARD_FUNIL_FILTRO_RECEBIDO] modo: todos-novos');
       let pipeQuery = `SELECT p.id, p.funil_id FROM pipelines p
         JOIN funis f ON p.funil_id = f.id
         WHERE f.ativo = 1`;
@@ -521,6 +504,7 @@ async function resumo(req, res) {
       }
       const pipes = db.prepare(pipeQuery).all(...pipeParams);
       const pipeIds = pipes.map(p => p.id);
+      console.log('[DASHBOARD_PIPELINES_ENCONTRADAS] todos-novos | pipelines encontradas:', pipeIds.length);
 
       const todasEtapas = pipeIds.length
         ? db.prepare(`SELECT e.id,e.nome,e.cor,e.ordem,e.is_ganho,e.is_perdido
@@ -536,10 +520,10 @@ async function resumo(req, res) {
         if (!seen.has(e.nome)) seen.set(e.nome, e);
       });
       etapas = Array.from(seen.values()).sort((a, b) => a.ordem - b.ordem);
-      console.log('[DASHBOARD_PIPELINE_SELECTED] todos-novos | pipelines:', pipeIds.length,
-        '| etapas dedup:', etapas.map(e => `${e.ordem}:${e.nome}`).join(', '));
+      console.log('[DASHBOARD_ETAPAS_ENCONTRADAS] todos-novos | etapas dedup:', etapas.length, '|', etapas.map(e => `${e.ordem}:${e.nome}`).join(', '));
     }
-    console.log('[DASHBOARD_ETAPAS_PIPELINE_COUNT]', funil_id || 'todos-novos', '| etapas finais:', etapas.length);
+    console.log('[DASHBOARD_PIPELINE_SELECTED]', funil_id || 'todos-novos', '| etapas finais:', etapas.length);
+
 
     // Conta leads por etapa (ou grupo de etapas com mesmo nome), respeitando todos os filtros
     const funil_visual = etapas.map((e, i) => {
@@ -576,8 +560,9 @@ async function resumo(req, res) {
       return { id: e.id, nome: e.nome, cor: e.cor, ordem: e.ordem,
         is_ganho: isG ? 1 : 0, is_perdido: isP ? 1 : 0, quantidade: countRow.c, taxa_entrada };
     });
-    console.log('[DASHBOARD_FUNIL_CONVERSAO_RESULT]',
+    console.log('[DASHBOARD_FUNIL_CONVERSAO_RESULTADO]',
       funil_visual.map(e => `${e.nome}:${e.quantidade}(${e.taxa_entrada ?? '—'}%)`).join(' → '));
+
 
 
     // Ranking: quando filtro é por fechamento, precisamos do total de leads (sem filtro de data)
