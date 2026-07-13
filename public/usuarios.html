@@ -270,11 +270,11 @@ function renderTabela(lista) {
     const acoesTd  = _isSuperAdmin ? `
       <td>
         <div class="action-btns">
-          <button class="btn btn-ghost btn-sm" onclick="abrirEditar('${u.id}')" title="Editar">
+          <button class="btn btn-ghost btn-sm btn-editar-user" data-id="${u.id}" title="Editar">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           </button>
           ${u.id !== _currentUser.id ? `
-          <button class="btn btn-danger btn-sm" onclick="confirmarDelete('${u.id}','${u.nome}')" title="Desativar">
+          <button class="btn btn-danger btn-sm btn-del-user" data-id="${u.id}" data-nome="${(u.nome||'').replace(/"/g,'&quot;')}" title="Desativar">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
           </button>` : ''}
         </div>
@@ -298,6 +298,17 @@ function renderTabela(lista) {
 
 function roleBadgeClass(role) {
   return { SUPER_ADMIN:'badge badge-pink', GESTOR:'badge badge-warning', VENDEDOR:'badge badge-green' }[role] || 'badge badge-muted';
+}
+
+// ── Event delegation para botões da tabela ───────────────────
+function bindTabelaEvents() {
+  const tbody = document.getElementById('usuarios-tbody');
+  tbody.addEventListener('click', e => {
+    const btnEdit = e.target.closest('.btn-editar-user');
+    const btnDel  = e.target.closest('.btn-del-user');
+    if (btnEdit) { abrirEditar(btnEdit.dataset.id); }
+    if (btnDel)  { confirmarDelete(btnDel.dataset.id, btnDel.dataset.nome); }
+  });
 }
 
 // ── Search ────────────────────────────────────────────────────
@@ -461,6 +472,7 @@ function bindEvents() {
     document.getElementById('confirm-overlay').classList.remove('open'));
   document.getElementById('confirm-ok').addEventListener('click', executarDelete);
   bindSearch();
+  bindTabelaEvents();
 
   // ── Avatar upload / remove ──────────────────────────────────
   document.getElementById('btn-avatar-upload').addEventListener('click', () => {

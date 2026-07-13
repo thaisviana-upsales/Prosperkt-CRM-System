@@ -491,6 +491,11 @@ async function _executarMover(leadId, etapaId, pid, etapaDest, motivo) {
 
   if (r?.ok) {
     Toast.show(isGan?'🎉 Lead ganho!':isPerd?'Lead marcado como perdido.':'Lead movido!', isGan?'success':isPerd?'error':'success');
+    // 🎉 Animação de celebração ao fechar venda
+    if (isGan && typeof celebrarVenda === 'function') {
+      const leadObj2 = _leads?.find?.(l => l.id === leadId);
+      celebrarVenda(leadObj2?.nome || '', leadObj2?.valor_venda || 0);
+    }
     if (window.Producao && etapaDest?.nome) {
       window.Producao.atualizarDatasEtapa(leadId, etapaDest.nome).catch(() => {});
     }

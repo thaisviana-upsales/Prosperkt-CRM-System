@@ -30,6 +30,10 @@ async function init() {
   document.getElementById('f-mes').value = `${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}`;
 
   await Promise.all([carregarFunis(), carregarUsuarios()]);
+  // Inicializa cartão de débito PROSPEKT
+  if (typeof inicializarCartao === 'function') {
+    inicializarCartao(_usuario.nome || 'VENDEDOR');
+  }
   await Promise.all([carregarPainel(), carregarRegras()]);
   bindEvents();
   setInterval(carregarPainel, 60000);
@@ -101,6 +105,10 @@ function renderPainel(d) {
          <div class="sum-label">Salário Fixo</div>
          <div class="sum-val">${fmtR(salario)}</div>
        </div>`;
+
+  // Atualiza cartão de débito e verifica chuva de dinheiro
+  if (typeof atualizarCartao === 'function') atualizarCartao(totalRec);
+  if (typeof animarDinheiro === 'function') animarDinheiro(totalRec);
 
   document.getElementById('summary-bar').innerHTML = `
     <div class="sum-card">
