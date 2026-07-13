@@ -11,15 +11,14 @@ const ETAPAS_PADRAO = [
   { nome:'Lead Recebido',       ordem:1,  cor:'#6CFF4E', probabilidade:10,  is_ganho:0, is_perdido:0 },
   { nome:'Contato Realizado',   ordem:2,  cor:'#3B8BFF', probabilidade:25,  is_ganho:0, is_perdido:0 },
   { nome:'Lead Desqualificado', ordem:3,  cor:'#FF3B5C', probabilidade:5,   is_ganho:0, is_perdido:1 },
-  { nome:'Em Tratativa',        ordem:4,  cor:'#FFB627', probabilidade:40,  is_ganho:0, is_perdido:0 },
-  { nome:'Orçamento Enviado',   ordem:5,  cor:'#6C47FF', probabilidade:55,  is_ganho:0, is_perdido:0 },
-  { nome:'Orçamento Aprovado',  ordem:6,  cor:'#5BE89E', probabilidade:70,  is_ganho:0, is_perdido:0 },
-  { nome:'Layout Virtual',      ordem:7,  cor:'#9B59B6', probabilidade:75,  is_ganho:0, is_perdido:0 },
-  { nome:'Amostra Física',      ordem:8,  cor:'#FFB627', probabilidade:80,  is_ganho:0, is_perdido:0 },
-  { nome:'Amostra Aprovada',    ordem:9,  cor:'#F5A623', probabilidade:90,  is_ganho:0, is_perdido:0 },
-  { nome:'Follow-Up',           ordem:10, cor:'#FF8C00', probabilidade:50,  is_ganho:0, is_perdido:0 },
-  { nome:'Vendas',              ordem:11, cor:'#6CFF4E', probabilidade:100, is_ganho:1, is_perdido:0 },
-  { nome:'Perdidos',            ordem:12, cor:'#FF3B5C', probabilidade:0,   is_ganho:0, is_perdido:1 },
+  { nome:'Orçamento Enviado',   ordem:4,  cor:'#6C47FF', probabilidade:55,  is_ganho:0, is_perdido:0 },
+  { nome:'Orçamento Aprovado',  ordem:5,  cor:'#5BE89E', probabilidade:70,  is_ganho:0, is_perdido:0 },
+  { nome:'Layout Virtual',      ordem:6,  cor:'#9B59B6', probabilidade:75,  is_ganho:0, is_perdido:0 },
+  { nome:'Amostra Física',      ordem:7,  cor:'#FFB627', probabilidade:80,  is_ganho:0, is_perdido:0 },
+  { nome:'Amostra Aprovada',    ordem:8,  cor:'#F5A623', probabilidade:90,  is_ganho:0, is_perdido:0 },
+  { nome:'Follow-Up',           ordem:9,  cor:'#FF8C00', probabilidade:50,  is_ganho:0, is_perdido:0 },
+  { nome:'Vendas',              ordem:10, cor:'#6CFF4E', probabilidade:100, is_ganho:1, is_perdido:0 },
+  { nome:'Perdidos',            ordem:11, cor:'#FF3B5C', probabilidade:0,   is_ganho:0, is_perdido:1 },
 ];
 
 // Etapas da Carteira Recorrente (14 oficiais — preserva as "Previsão Carteira X")
@@ -179,6 +178,16 @@ const ETAPAS_CARTEIRA_REMOVIDAS = [
   'Carteira +18 meses',
 ];
 
+// Etapas globalmente removidas de TODOS os funis (variações de "Tratativa em andamento").
+// Não devem aparecer na Pipeline, no Dashboard nem no Funil de Conversão.
+const ETAPAS_GLOBAIS_REMOVIDAS = [
+  'Em Tratativa',
+  'Tratativa em andamento',
+  'Tratativa em Andamento',
+  'Tratativa',
+  'Contato em Tratativa',
+];
+
 // Garante as 14 etapas oficiais da Carteira Recorrente — sem duplicar (SQLite)
 function _seedEtapasCarteiraRecorrente_SQLite(db) {
   const funilCart = db.prepare(`SELECT id FROM funis WHERE nome LIKE '%Carteira Recorrente%' AND ativo=1 LIMIT 1`).get();
@@ -318,11 +327,12 @@ async function buscarPorId(req, res) {
         const { data: etapasData } = await sb.from('etapas').select('*').eq('pipeline_id', pipelineId).order('ordem');
         etapas = etapasData || [];
       }
-      // Filtra etapas removidas se for Carteira Recorrente
+      // Filtra etapas removidas: Carteira Recorrente e globais (Tratativa)
       const isCarteira = /carteira\s*recorrente/i.test(funil.nome || '');
       if (isCarteira) {
         etapas = etapas.filter(e => !ETAPAS_CARTEIRA_REMOVIDAS.includes(e.nome));
       }
+      etapas = etapas.filter(e => !ETAPAS_GLOBAIS_REMOVIDAS.includes(e.nome));
       return res.json({ sucesso:true, dados:{ ...funil, pipeline_id: pipelineId, etapas } });
     }
     const { getDb } = require('../database/db');
@@ -330,11 +340,12 @@ async function buscarPorId(req, res) {
     const funil = db.prepare(`SELECT f.*, p.id as pipeline_id FROM funis f LEFT JOIN pipelines p ON p.funil_id=f.id WHERE f.id=?`).get(req.params.id);
     if (!funil) return res.status(404).json({ sucesso:false, erro:'Funil não encontrado.' });
     let etapas = db.prepare(`SELECT e.* FROM etapas e JOIN pipelines p ON e.pipeline_id=p.id WHERE p.funil_id=? ORDER BY e.ordem`).all(req.params.id);
-    // Filtra etapas removidas se for Carteira Recorrente
+    // Filtra etapas removidas: Carteira Recorrente e globais (Tratativa)
     const isCarteira = /carteira\s*recorrente/i.test(funil.nome || '');
     if (isCarteira) {
       etapas = etapas.filter(e => !ETAPAS_CARTEIRA_REMOVIDAS.includes(e.nome));
     }
+    etapas = etapas.filter(e => !ETAPAS_GLOBAIS_REMOVIDAS.includes(e.nome));
     return res.json({ sucesso:true, dados:{ ...funil, etapas } });
   } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
 }
@@ -415,5 +426,6 @@ async function deletar(req, res) {
   } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
 }
 
-module.exports = { listar, buscarPorId, criar, atualizar, deletar, seedFunis, ETAPAS_CARTEIRA_REMOVIDAS };
+module.exports = { listar, buscarPorId, criar, atualizar, deletar, seedFunis, ETAPAS_CARTEIRA_REMOVIDAS, ETAPAS_GLOBAIS_REMOVIDAS };
+
 

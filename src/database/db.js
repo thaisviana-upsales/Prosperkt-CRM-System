@@ -409,8 +409,41 @@ function initSchema(db) {
     // ── Adm Vendas — data de entrada na etapa ────────────────────────────────
     `ALTER TABLE adm_vendas ADD COLUMN etapa_atualizada_em TEXT`,
     `CREATE INDEX IF NOT EXISTS idx_admv_etapa_atualizada_em ON adm_vendas(etapa_atualizada_em)`,
+
+    // ── Etapas — campo oculta (para ocultar sem deletar) ────────────────────
+    `ALTER TABLE etapas ADD COLUMN oculta INTEGER NOT NULL DEFAULT 0`,
+    `CREATE INDEX IF NOT EXISTS idx_etapas_oculta ON etapas(oculta)`,
   ];
   migrations.forEach(sql => { try { db.exec(sql); } catch(_){} });
+
+  // ── Migração pós-migrations: realoca leads de "Tratativa" e oculta etapas ──
+  // Idempotente: só age se ainda houver etapas de Tratativa não-ocultadas
+  try {
+    const tratativaNames = ['Em Tratativa','Tratativa em andamento','Tratativa em Andamento','Tratativa','Contato em Tratativa'];
+    const ph = tratativaNames.map(() => '?').join(',');
+    const tratativaEtapas = db.prepare(
+      `SELECT e.id, e.nome, p.funil_id FROM etapas e
+       JOIN pipelines p ON e.pipeline_id = p.id
+       WHERE e.nome IN (${ph}) AND e.oculta = 0`
+    ).all(...tratativaNames);
+
+    for (const et of tratativaEtapas) {
+      const destino =
+        db.prepare(`SELECT e2.id FROM etapas e2 JOIN pipelines p2 ON e2.pipeline_id=p2.id
+          WHERE p2.funil_id=? AND e2.nome='Contato Realizado' AND COALESCE(e2.oculta,0)=0 LIMIT 1`).get(et.funil_id) ||
+        db.prepare(`SELECT e2.id FROM etapas e2 JOIN pipelines p2 ON e2.pipeline_id=p2.id
+          WHERE p2.funil_id=? AND e2.nome='Lead Recebido' AND COALESCE(e2.oculta,0)=0 LIMIT 1`).get(et.funil_id) ||
+        db.prepare(`SELECT e2.id FROM etapas e2 JOIN pipelines p2 ON e2.pipeline_id=p2.id
+          WHERE p2.funil_id=? AND e2.is_perdido=0 AND e2.is_ganho=0 AND e2.id<>? AND COALESCE(e2.oculta,0)=0
+          ORDER BY e2.ordem ASC LIMIT 1`).get(et.funil_id, et.id);
+      if (destino) {
+        const moved = db.prepare(`UPDATE leads SET etapa_id=?, atualizado_em=datetime('now') WHERE etapa_id=?`).run(destino.id, et.id);
+        if (moved.changes > 0) console.log('[Migration Tratativa]', moved.changes, 'lead(s) realocado(s) de "' + et.nome + '"');
+      }
+      db.prepare(`UPDATE etapas SET oculta=1, atualizado_em=datetime('now') WHERE id=?`).run(et.id);
+      console.log('[Migration Tratativa] Etapa "' + et.nome + '" marcada como oculta.');
+    }
+  } catch(e) { console.warn('[Migration Tratativa]', e.message); }
 
   // Seed
   seedSuperAdmin(db);
