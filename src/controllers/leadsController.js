@@ -1544,35 +1544,39 @@ async function removerTag(req, res) {
 async function alertasRecompra(req, res) {
   const { sb, isSupa, sqlite } = getProvider();
   try {
-    const hoje   = new Date().toISOString().slice(0,10);
+    // Janela: inclui alertas vencidos (30 dias atras, ainda nao vistos) + proximos 7 dias
     const em7d   = new Date(); em7d.setDate(em7d.getDate() + 7);
+    const ha30d  = new Date(); ha30d.setDate(ha30d.getDate() - 30);
     const limite = em7d.toISOString().slice(0,10);
+    const inicio = ha30d.toISOString().slice(0,10);
     const isVendedor = req.usuario.role === 'VENDEDOR';
 
     if (isSupa) {
       let q = sb.from('leads')
-        .select('id,nome,empresa,responsavel_id,alerta_recompra_em,data_prevista_proxima_compra,previsao_proxima_compra,alerta_recompra_enviado,funil_id')
+        .select('id,nome,empresa,responsavel_id,alerta_recompra_em,data_prevista_proxima_compra,previsao_proxima_compra,alerta_recompra_enviado,funil_id,etapa_id')
         .eq('tipo_clone', 'carteira_recorrente')
         .eq('status', 'ABERTO')
-        .gte('alerta_recompra_em', hoje)
-        .lte('alerta_recompra_em', limite)
+        .eq('alerta_recompra_enviado', 0)       // so alertas pendentes (nao vistos)
+        .gte('alerta_recompra_em', inicio)       // inclui vencidos (ate 30 dias atras)
+        .lte('alerta_recompra_em', limite)       // ate +7 dias a frente
         .order('alerta_recompra_em');
       if (isVendedor) q = q.eq('responsavel_id', req.usuario.id);
       const { data, error } = await q;
       if (error) throw error;
-      return res.json({ sucesso:true, dados: data || [] });
+      return res.json({ sucesso:true, dados: data || [], total: (data||[]).length });
     }
 
     // SQLite
     let sql = `SELECT id,nome,empresa,responsavel_id,alerta_recompra_em,data_prevista_proxima_compra,
-      previsao_proxima_compra,alerta_recompra_enviado,funil_id
+      previsao_proxima_compra,alerta_recompra_enviado,funil_id,etapa_id
       FROM leads WHERE tipo_clone='carteira_recorrente' AND status='ABERTO'
+      AND alerta_recompra_enviado=0
       AND alerta_recompra_em>=? AND alerta_recompra_em<=?`;
-    const params = [hoje, limite];
+    const params = [inicio, limite];
     if (isVendedor) { sql += ' AND responsavel_id=?'; params.push(req.usuario.id); }
     sql += ' ORDER BY alerta_recompra_em';
     const dados = sqlite.prepare(sql).all(...params);
-    return res.json({ sucesso:true, dados });
+    return res.json({ sucesso:true, dados, total: dados.length });
   } catch(e) {
     console.error('[alertasRecompra]', e.message);
     return res.status(500).json({ sucesso:false, erro:e.message });

@@ -314,45 +314,82 @@ async function carregarAlertasRecompra() {
 }
 
 function renderAlertasRecompra() {
-  const n = _alertasRecompra.length;
-  // Badge no menu/nav
+  const pendentes = _alertasRecompra.filter(a => !a.alerta_recompra_enviado);
+  const n = pendentes.length;
+
+  // Badge no painel dashboard
   const badge = document.getElementById('badge-alertas-recompra');
   if (badge) { badge.textContent = n; badge.style.display = n > 0 ? '' : 'none'; }
+
+  // Badge global na sidebar (todas as páginas via sidebar.js hook)
+  const badgeGlobal = document.getElementById('sidebar-badge-recompra');
+  if (badgeGlobal) { badgeGlobal.textContent = n; badgeGlobal.style.display = n > 0 ? '' : 'none'; }
 
   const el = document.getElementById('alertas-recompra-list');
   if (!el) return;
   if (!n) {
-    el.innerHTML = '<div class="empty" style="font-size:.75rem">Nenhum alerta de recompra nos próximos 7 dias.</div>';
+    el.innerHTML = '<div class="empty" style="font-size:.73rem">✅ Nenhum alerta de recompra pendente.</div>';
     return;
   }
+
+  const hoje = new Date().toISOString().slice(0,10);
+
   el.innerHTML = _alertasRecompra.map(a => {
-    const dataStr = a.alerta_recompra_em
-      ? new Date(a.alerta_recompra_em + 'T00:00:00').toLocaleDateString('pt-BR') : '?';
-    const previsao = a.previsao_proxima_compra || '';
-    const visto   = a.alerta_recompra_enviado;
-    return `<div class="alerta-recompra-row${visto ? ' visto' : ''}" data-id="${a.id}">
-      <div class="ar-icon">🔄</div>
+    const alertaDate = a.alerta_recompra_em || '';
+    const prevDate   = a.data_prevista_proxima_compra || '';
+    const previsao   = a.previsao_proxima_compra || '';
+    const vencido    = alertaDate && alertaDate < hoje;
+
+    const alertaStr  = alertaDate ? new Date(alertaDate  + 'T00:00:00').toLocaleDateString('pt-BR') : '?';
+    const prevStr    = prevDate   ? new Date(prevDate     + 'T00:00:00').toLocaleDateString('pt-BR') : previsao || '?';
+
+    const urgencia   = vencido
+      ? '<span style="color:#ff4d4d;font-weight:700;font-size:.6rem">⚠ VENCIDO</span> '
+      : '';
+
+    return `<div class="alerta-recompra-row${vencido?' ar-vencido':''}" data-id="${a.id}">
+      <div class="ar-icon" style="color:${vencido?'#ff4d4d':'#F5A623'}">🔄</div>
       <div class="ar-info">
-        <div class="ar-nome">${escHtml(a.nome)}${a.empresa ? ' · '+escHtml(a.empresa) : ''}</div>
-        <div class="ar-meta">Previsão: <b>${escHtml(previsao)}</b> · Alerta: ${dataStr}</div>
+        <div class="ar-nome">${urgencia}${escHtml(a.nome)}${a.empresa ? ' <span style=opacity:.55>· '+escHtml(a.empresa)+'</span>' : ''}</div>
+        <div class="ar-meta">
+          ${previsao ? 'Faixa: <b>'+escHtml(previsao)+'</b> · ' : ''}
+          Próxima compra: <b>${prevStr}</b><br>
+          Alerta desde: ${alertaStr}
+        </div>
       </div>
       <div class="ar-actions">
-        ${!visto ? `<button class="btn-sm" onclick="marcarAlertaVisto('${a.id}')" title="Marcar como visto">✔</button>` : '<span style="color:var(--text-muted);font-size:.7rem">visto</span>'}
-        <button class="btn-sm" onclick="abrirLeadAlerta('${a.id}')" title="Abrir lead">→</button>
+        <button class="btn-sm ar-btn-visto" data-lead="${a.id}" title="Marcar como visto">✔</button>
+        <button class="btn-sm ar-btn-abrir" data-lead="${a.id}" title="Abrir card na Carteira">→</button>
       </div>
     </div>`;
   }).join('');
+
+  // Bind via addEventListener — seguro e sem XSS
+  el.querySelectorAll('.ar-btn-visto').forEach(btn => {
+    btn.addEventListener('click', () => marcarAlertaVisto(btn.dataset.lead));
+  });
+  el.querySelectorAll('.ar-btn-abrir').forEach(btn => {
+    btn.addEventListener('click', () => abrirLeadAlerta(btn.dataset.lead));
+  });
 }
 
 async function marcarAlertaVisto(leadId) {
-  await Auth.api('PATCH', `/leads/${leadId}/alerta-recompra-visto`);
-  _alertasRecompra = _alertasRecompra.map(a => a.id === leadId ? {...a, alerta_recompra_enviado: 1} : a);
-  renderAlertasRecompra();
+  const btn = document.querySelector(`.ar-btn-visto[data-lead="${leadId}"]`);
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+  const r = await Auth.api('PATCH', `/leads/${leadId}/alerta-recompra-visto`);
+  if (r?.ok || r?.data?.sucesso) {
+    _alertasRecompra = _alertasRecompra.filter(a => a.id !== leadId); // remove da lista
+    renderAlertasRecompra();
+    if (typeof Toast !== 'undefined') Toast.show('Alerta marcado como visto.', 'success');
+  } else {
+    if (btn) { btn.disabled = false; btn.textContent = '✔'; }
+    if (typeof Toast !== 'undefined') Toast.show('Erro ao marcar alerta.', 'error');
+  }
 }
 
 function abrirLeadAlerta(leadId) {
-  // Abre pipeline com o lead destacado
-  window.open(`/pipeline.html?lead_id=${leadId}`, '_self');
+  // Abre pipeline com filtro Carteira Recorrente e lead destacado
+  window.open(`/pipeline.html?lead_id=${leadId}`, '_blank');
 }
 
 

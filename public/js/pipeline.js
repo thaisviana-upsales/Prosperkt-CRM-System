@@ -63,6 +63,46 @@ async function init() {
   document.getElementById('sel-funil').value = _filtros.funil;
   await aplicarFiltros();
   bindEvents();
+
+  // Verifica alertas de recompra pendentes e notifica na Pipeline
+  setTimeout(() => _verificarAlertasPipeline(), 1500);
+}
+
+async function _verificarAlertasPipeline() {
+  try {
+    const r = await Auth.api('GET', '/leads/alertas-recompra').catch(() => null);
+    if (!r?.ok) return;
+    const pendentes = (r.data?.dados || []).filter(a => !a.alerta_recompra_enviado);
+    if (!pendentes.length) return;
+
+    const hoje = new Date().toISOString().slice(0,10);
+    const vencidos = pendentes.filter(a => a.alerta_recompra_em && a.alerta_recompra_em < hoje);
+    const msg = vencidos.length > 0
+      ? '⚠️ ' + vencidos.length + ' alerta(s) de recompra vencido(s)!' + (pendentes.length > vencidos.length ? ' + ' + (pendentes.length - vencidos.length) + ' próximo(s).' : '')
+      : '🔔 ' + pendentes.length + ' alerta(s) de recompra nos próximos 7 dias.';
+
+    let banner = document.getElementById('banner-alertas-recompra');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'banner-alertas-recompra';
+      banner.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9000;background:linear-gradient(135deg,#b87d00,#F5A623);color:#000;padding:10px 16px;border-radius:12px;font-size:.78rem;font-weight:700;max-width:320px;cursor:pointer;box-shadow:0 4px 24px rgba(245,166,35,.35);display:flex;align-items:center;gap:10px';
+      document.body.appendChild(banner);
+    }
+    banner.innerHTML = '';
+    const spanMsg = document.createElement('span');
+    spanMsg.textContent = msg;
+    const btnVer = document.createElement('button');
+    btnVer.textContent = 'Ver →';
+    btnVer.style.cssText = 'background:#000;color:#F5A623;border:none;border-radius:8px;padding:4px 10px;font-size:.7rem;font-weight:700;cursor:pointer;white-space:nowrap';
+    btnVer.onclick = () => window.open('/dashboard.html', '_self');
+    const btnX = document.createElement('button');
+    btnX.textContent = '✕';
+    btnX.style.cssText = 'background:none;border:none;color:#000;font-size:1rem;cursor:pointer;line-height:1';
+    btnX.onclick = () => banner.remove();
+    banner.append(spanMsg, btnVer, btnX);
+
+    setTimeout(() => { const b = document.getElementById('banner-alertas-recompra'); if(b) {b.style.transition='opacity .4s'; b.style.opacity='0'; setTimeout(()=>b?.remove(),400);} }, 12000);
+  } catch(e) { /* silencioso */ }
 }
 
 async function carregarFunis() {

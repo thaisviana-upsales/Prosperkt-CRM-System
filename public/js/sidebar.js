@@ -10,7 +10,7 @@ const Sidebar = (() => {
   const STORAGE_KEY = 'prospekt_sidebar_collapsed';
 
   const NAV = [
-    { id:'dashboard', href:'/dashboard.html', label:'Dashboard', roles:['SUPER_ADMIN','GESTOR','VENDEDOR'],
+    { id:'dashboard', href:'/dashboard.html', label:'Dashboard', badge:'recompra', roles:['SUPER_ADMIN','GESTOR','VENDEDOR'],
       icon:`<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>` },
     { id:'pipeline', href:'/pipeline.html', label:'Pipeline / CRM', roles:['SUPER_ADMIN','GESTOR','VENDEDOR'],
       icon:`<path d="M4 6h16M4 10h16M4 14h16M4 18h16"/>` },
@@ -45,9 +45,13 @@ const Sidebar = (() => {
         return `<span class="nav-section-label">${item.section}</span>`;
       }
       if (!canSee(item.roles)) return '';
+      const badgeHtml = item.badge === 'recompra'
+        ? `<span id="sidebar-badge-recompra" style="background:#F5A623;color:#000;border-radius:99px;font-size:.55rem;padding:0 5px;font-weight:700;display:none;margin-left:auto;line-height:1.6;flex-shrink:0">0</span>`
+        : '';
       return `<a href="${item.href}" class="nav-item${item.id===activeId?' active':''}" id="nav-${item.id}" title="${item.label}">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${item.icon}</svg>
         <span class="nav-label">${item.label}</span>
+        ${badgeHtml}
       </a>`;
     }).join('');
 
@@ -136,7 +140,21 @@ const Sidebar = (() => {
     if (el) el.innerHTML = render(activeId, usuario);
     document.getElementById('btn-logout')?.addEventListener('click', () => Auth.logout());
     setupToggle();
+    // Badge global: carrega alertas de recompra pendentes em todas as páginas
+    setTimeout(() => _carregarBadgeRecompra(), 800);
     return usuario;
+  }
+
+  // Carrega e exibe badge de alertas de recompra pendentes na sidebar
+  async function _carregarBadgeRecompra() {
+    try {
+      const r = await Auth.api('GET', '/leads/alertas-recompra').catch(() => null);
+      if (!r?.ok) return;
+      const dados = r.data?.dados || [];
+      const n = dados.filter(a => !a.alerta_recompra_enviado).length;
+      const badge = document.getElementById('sidebar-badge-recompra');
+      if (badge) { badge.textContent = n; badge.style.display = n > 0 ? '' : 'none'; }
+    } catch { /* silencioso — nao bloqueia init */ }
   }
 
   return { render, init };
