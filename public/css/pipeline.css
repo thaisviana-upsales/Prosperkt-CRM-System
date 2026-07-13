@@ -55,6 +55,43 @@
 .col-title { font-size: 0.8125rem; font-weight: 700; flex: 1; }
 .col-count { background: rgba(255,255,255,.12); border-radius: 20px; padding: 1px 7px; font-size: 0.6875rem; color: #fff; font-weight: 800; }
 .col-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+/* ── Carteira Recorrente: título de etapa em 2 linhas ───────────
+   Aplicado apenas quando o funil for Carteira Recorrente.
+   Não afeta nenhum outro funil. ──────────────────────────────── */
+.carteira-stage-title {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  line-height: 1.15;
+  gap: 1px;
+  white-space: normal;
+}
+.carteira-stage-title-main {
+  font-size: 0.675rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  text-transform: none;
+  white-space: nowrap;
+}
+.carteira-stage-title-range {
+  font-size: 0.875rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  white-space: nowrap;
+  letter-spacing: -0.01em;
+}
+/* col-header quando contém título de 2 linhas: centraliza verticalmente */
+.col-header:has(.carteira-stage-title) {
+  align-items: center;
+  padding: 8px 10px;
+  min-height: 46px;
+}
+/* col-title precisa de overflow visível para o título em 2 linhas */
+.col-title { font-size: 0.8125rem; font-weight: 700; flex: 1; overflow: visible; }
 .col-body { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 7px; min-height: 50px; }
 .col-body.drag-over { background: rgba(91,222,62,0.06); outline: 2px dashed var(--green); border-radius: 8px; }
 

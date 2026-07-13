@@ -173,6 +173,23 @@ function construirURL() {
 }
 
 // ── Kanban ────────────────────────────────────────────────────
+// ── Formata nome da etapa para exibição visual (sem alterar o dado real) ─────
+// Quando o funil for Carteira Recorrente e o nome começar com "Previsão Carteira",
+// divide em duas linhas: "Previsão Carteira" / "faixa de tempo".
+// Para todos os outros funis, retorna o nome como plain text.
+function formatarNomeEtapa(nomeEtapa) {
+  const funilAtivo = _funis.find(f => f.id === _filtros.funil);
+  const ehCarteira = funilAtivo && isCarteiraRecorrente(funilAtivo.nome);
+  if (ehCarteira && nomeEtapa.startsWith('Previsão Carteira ')) {
+    const faixa = nomeEtapa.replace('Previsão Carteira ', '').trim();
+    return `<span class="carteira-stage-title">
+      <span class="carteira-stage-title-main">Previsão Carteira</span>
+      <span class="carteira-stage-title-range">${faixa}</span>
+    </span>`;
+  }
+  return `<span class="col-title-text">${nomeEtapa}</span>`;
+}
+
 function renderKanban() {
   const wrap = document.getElementById('kanban');
   wrap.innerHTML = '';
@@ -199,7 +216,7 @@ function renderKanban() {
     col.innerHTML = `
       <div class="col-header">
         <div class="col-dot" style="background:${etapa.cor}"></div>
-        <span class="col-title">${etapa.nome}</span>
+        <span class="col-title">${formatarNomeEtapa(etapa.nome)}</span>
         <span class="col-count">${leads.length}</span>
       </div>
       <div class="col-body" data-etapa="${etapa.id}">
