@@ -167,13 +167,38 @@ async function resumo(req, res) {
       const perdidos = leads.filter(l => isPerdidoLead(l, etapaMap));
       const abertos  = leads.filter(l => !isGanhoLead(l, etapaMap) && !isPerdidoLead(l, etapaMap));
 
-      const faturamento  = ganhos.reduce((s,l) => s + valorVenda(l), 0);
-      const ticket_medio = ganhos.length ? faturamento / ganhos.length : 0;
+      let faturamento  = ganhos.reduce((s,l) => s + valorVenda(l), 0);
+      let totalGanhos  = ganhos.length;
+
+      // ── Regra de negócio: no modo "Todos - Novos", soma vendas+faturamento
+      // da Carteira Recorrente (mas não inclui leads/funil/conversão da Carteira)
+      if (excluiCarteira && carteiraFunilId) {
+        let qCart = sb.from('leads')
+          .select('id,status,valor,valor_venda,etapa_id,ganho_em')
+          .eq('funil_id', carteiraFunilId);
+        if (responsavel_id) qCart = qCart.eq('responsavel_id', responsavel_id);
+        if (req.usuario.role === 'VENDEDOR') qCart = qCart.eq('responsavel_id', req.usuario.id);
+        if (periodo?.ini || periodo?.fim) {
+          const campo = campoData(data_tipo);
+          if (periodo.ini) qCart = qCart.gte(campo, periodo.ini + 'T00:00:00');
+          if (periodo.fim) qCart = qCart.lte(campo, periodo.fim + 'T23:59:59');
+        }
+        const { data: leadsCart } = await qCart;
+        const ganhosCart = (leadsCart || []).filter(l => isGanhoLead(l, etapaMap));
+        if (ganhosCart.length) {
+          const fatCart = ganhosCart.reduce((s,l) => s + valorVenda(l), 0);
+          faturamento += fatCart;
+          totalGanhos += ganhosCart.length;
+          console.log('[DASHBOARD_CARTEIRA_VENDAS] vendas Carteira somadas ao Todos:', ganhosCart.length, '| fat +', fatCart.toFixed(2));
+        }
+      }
+
+      const ticket_medio   = totalGanhos ? faturamento / totalGanhos : 0;
       const taxa_conversao = leads.length > 0 ? ((ganhos.length/leads.length)*100).toFixed(1) : '0.0';
 
       const kpis = {
         total_leads:    leads.length,
-        total_ganhos:   ganhos.length,
+        total_ganhos:   totalGanhos,
         total_perdidos: perdidos.length,
         total_abertos:  abertos.length,
         faturamento,
@@ -569,6 +594,30 @@ async function resumo(req, res) {
       AVG(CASE WHEN ${ganhoExpr} THEN ${valorExpr} ELSE NULL END) as ticket_medio
       ${base}${baseFilter}`).get(...params);
 
+    // ── Regra de negócio: no modo "Todos - Novos", soma vendas+faturamento da Carteira Recorrente
+    let kpisCarteira = { total_ganhos: 0, faturamento: 0 };
+    if (excluiCarteira && carteiraFunilIdSql) {
+      let cartBaseFilter = ` AND p.funil_id=?`;
+      const cartParams = [carteiraFunilIdSql];
+      if (responsavel_id) { cartBaseFilter += ' AND l.responsavel_id=?'; cartParams.push(responsavel_id); }
+      if (req.usuario.role === 'VENDEDOR') { cartBaseFilter += ' AND l.responsavel_id=?'; cartParams.push(req.usuario.id); }
+      if (periodo?.ini || periodo?.fim) {
+        const campo = campoData(data_tipo);
+        if (periodo.ini) { cartBaseFilter += ` AND l.${campo}>=?`; cartParams.push(periodo.ini + 'T00:00:00'); }
+        if (periodo.fim) { cartBaseFilter += ` AND l.${campo}<=?`; cartParams.push(periodo.fim + 'T23:59:59'); }
+      }
+      kpisCarteira = db.prepare(`SELECT
+        SUM(CASE WHEN ${ganhoExpr} THEN 1 ELSE 0 END) as total_ganhos,
+        SUM(CASE WHEN ${ganhoExpr} THEN ${valorExpr} ELSE 0 END) as faturamento
+        ${base}${cartBaseFilter}`).get(...cartParams) || { total_ganhos: 0, faturamento: 0 };
+      if (kpisCarteira.total_ganhos > 0) {
+        console.log('[DASHBOARD_CARTEIRA_VENDAS_SQL] vendas Carteira somadas:', kpisCarteira.total_ganhos, '| fat +', kpisCarteira.faturamento);
+      }
+    }
+    const totalGanhosFinal  = (kpis.total_ganhos || 0) + (kpisCarteira.total_ganhos || 0);
+    const faturamentoFinal  = (kpis.faturamento  || 0) + (kpisCarteira.faturamento  || 0);
+    const ticket_medioFinal = totalGanhosFinal ? faturamentoFinal / totalGanhosFinal : 0;
+
     const taxa_conversao = kpis.total_leads > 0 ? ((kpis.total_ganhos/kpis.total_leads)*100).toFixed(1) : '0.0';
 
     // ── Funil Visual (SQLite) — lê dinamicamente do banco, sem hardcode ─────────
@@ -765,13 +814,20 @@ async function resumo(req, res) {
     ).all(...params);
 
     return res.json({ sucesso:true, dados:{
-      kpis: { ...kpis, taxa_conversao },
+      kpis: {
+        ...kpis,
+        total_ganhos:  totalGanhosFinal,
+        faturamento:   faturamentoFinal,
+        ticket_medio:  ticket_medioFinal,
+        taxa_conversao,
+      },
       funil_visual,
       por_funil,
       ranking,
       tempo_resposta: { media_minutos: null, leads_com_resposta: 0 },
       leads_por_dia,
     }});
+
 
   } catch(e) {
     console.error('[dashboard.resumo]', e.message);

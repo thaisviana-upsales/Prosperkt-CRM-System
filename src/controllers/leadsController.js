@@ -633,13 +633,21 @@ async function _clonarParaCarteiraRecorrente(sb, isSupa, sqlite, leadData, previ
         return { sucesso: false, erro: 'Funil Carteira Recorrente não encontrado' };
       }
 
-      // Busca etapa pelo funil_id e nome (arquitetura Supabase: etapas.funil_id, sem pipeline_id)
-      const { data: etapas } = await sb.from('etapas')
-        .select('id,nome').eq('funil_id', funilCartId).eq('nome', nomeEtapa).limit(1);
-      const etapaId = etapas?.[0]?.id || null;
-
+      // Busca etapa pelo pipeline vinculado ao funil (arquitetura Supabase: etapas.pipeline_id)
+      // Fallback: tenta funil_id direto (etapas criadas via API)
+      let etapaId = null;
+      const { data: pipes } = await sb.from('pipelines').select('id').eq('funil_id', funilCartId).limit(1);
+      const pipeCartId = pipes?.[0]?.id;
+      if (pipeCartId) {
+        const { data: etapasPipe } = await sb.from('etapas')
+          .select('id,nome').eq('pipeline_id', pipeCartId).eq('nome', nomeEtapa).limit(1);
+        etapaId = etapasPipe?.[0]?.id || null;
+      }
       if (!etapaId) {
-        console.warn('[CARTEIRA_RECORRENTE] Etapa não encontrada:', nomeEtapa, '| funil:', funilCartId);
+        // Fallback: etapas criadas diretamente com funil_id
+        const { data: etapasFunil } = await sb.from('etapas')
+          .select('id,nome').eq('funil_id', funilCartId).eq('nome', nomeEtapa).limit(1);
+        etapaId = etapasFunil?.[0]?.id || null;
       }
 
       const novoId = crypto.randomBytes(16).toString('hex');
