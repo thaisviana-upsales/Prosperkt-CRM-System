@@ -857,9 +857,17 @@ function atualizarBotoesStatus(status) {
 }
 
 // ─── Utilidades ───────────────────────────────────────────────────────────────
-function scrollToBottom() {
+function scrollToBottom(smooth = false) {
   const el = document.getElementById('wa-messages');
-  if (el) setTimeout(() => { el.scrollTop = el.scrollHeight; }, 50);
+  if (!el) return;
+  // Usa requestAnimationFrame para garantir render antes de rolar
+  requestAnimationFrame(() => {
+    if (smooth) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
+  });
 }
 
 function fmtHora(isoStr) {
