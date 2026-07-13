@@ -454,8 +454,32 @@ async function enviarMensagem(req, res) {
     }
     if (!conversa) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
 
-    if (req.usuario.role === 'VENDEDOR' && conversa.vendedor_id !== req.usuario.id)
-      return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
+    // Permissão VENDEDOR: pode enviar se for o vendedor_id, se vendedor_id for null,
+    // ou se for o responsavel_id do lead vinculado
+    if (req.usuario.role === 'VENDEDOR' && conversa.vendedor_id && conversa.vendedor_id !== req.usuario.id) {
+      let podeEnviar = false;
+      if (conversa.lead_id) {
+        try {
+          if (isSupa) {
+            const { data: ld } = await sb.from('leads').select('responsavel_id').eq('id', conversa.lead_id).single();
+            podeEnviar = ld?.responsavel_id === req.usuario.id;
+          } else {
+            const dbAux = getDb();
+            const ld = dbAux.prepare('SELECT responsavel_id FROM leads WHERE id = ?').get(conversa.lead_id);
+            podeEnviar = ld?.responsavel_id === req.usuario.id;
+          }
+        } catch { podeEnviar = false; }
+      }
+      if (!podeEnviar) return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
+    }
+    // VENDEDOR assume conversa sem vendedor_id
+    if (req.usuario.role === 'VENDEDOR' && !conversa.vendedor_id) {
+      try {
+        if (isSupa) await sb.from('conversas_whatsapp').update({ vendedor_id: req.usuario.id, atualizado_em: new Date().toISOString() }).eq('id', id).then(()=>{});
+        else getDb().prepare('UPDATE conversas_whatsapp SET vendedor_id=?, atualizado_em=? WHERE id=?').run(req.usuario.id, new Date().toISOString(), id);
+        conversa.vendedor_id = req.usuario.id;
+      } catch { /* não crítico */ }
+    }
 
     // ── 2. Normaliza telefone da conversa ────────────────────────────────────
     const telNormalizado = normalizePhone(conversa.telefone);
@@ -707,42 +731,85 @@ async function criarOuAbrirConversa(req, res) {
     const { telefone, lead_id, nome_contato, vendedor_id } = req.body;
     if (!telefone) return res.status(400).json({ sucesso: false, erro: 'Telefone obrigatório.' });
     const tel = normalizePhone(telefone);
+    if (!tel || tel.length < 10) return res.status(400).json({ sucesso: false, erro: 'Telefone inválido ou muito curto.' });
     const agora = new Date().toISOString();
+    const nomeContato = nome_contato || null;
+
+    console.log('WHATSAPP_CONVERSA_RESOLVE_START', { tel, lead_id, nomeContato });
 
     if (isSupa) {
-      // Busca conversa ativa
-      const { data: existing } = await sb.from('conversas_whatsapp')
-        .select('*').eq('telefone', tel).neq('status', 'FECHADA')
-        .order('criado_em', { ascending: false }).limit(1);
-      let conversa = existing?.[0] || null;
+      // ── Busca por todas as variantes de telefone para evitar duplicatas ──────
+      let conversa = null;
+      const variantes = phoneVariants(tel);
+      for (const v of variantes) {
+        const { data } = await sb.from('conversas_whatsapp')
+          .select('*').eq('telefone', v).neq('status', 'FECHADA')
+          .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
+        if (data?.[0]) { conversa = data[0]; break; }
+      }
+
+      // Se ainda não existe, tenta por lead_id
+      if (!conversa && lead_id) {
+        const { data: byLead } = await sb.from('conversas_whatsapp')
+          .select('*').eq('lead_id', lead_id).neq('status', 'FECHADA')
+          .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
+        if (byLead?.[0]) { conversa = byLead[0]; console.log('WHATSAPP_CONVERSA_FOUND_BY_LEAD', conversa.id); }
+      }
 
       if (!conversa) {
+        // Cria nova conversa vinculada ao lead e telefone
         const novaId = crypto.randomBytes(16).toString('hex');
         const { data: nova, error } = await sb.from('conversas_whatsapp').insert({
           id: novaId, lead_id: lead_id || null, telefone: tel,
-          nome_contato: nome_contato || null,
+          nome_contato: nomeContato,
           vendedor_id: vendedor_id || req.usuario.id,
-          origem: 'MANUAL', criado_em: agora, atualizado_em: agora,
+          origem: 'MANUAL', status: 'ABERTA', criado_em: agora, atualizado_em: agora,
         }).select().single();
         if (error) throw error;
         conversa = nova;
-      } else if (lead_id && !conversa.lead_id) {
-        await sb.from('conversas_whatsapp').update({ lead_id }).eq('id', conversa.id);
-        conversa.lead_id = lead_id;
+        console.log('WHATSAPP_CONVERSA_CREATED', { id: conversa.id, tel, lead_id });
+      } else {
+        // Atualiza lead_id e/ou nome_contato se estiverem ausentes
+        const upd = {};
+        if (lead_id && !conversa.lead_id)         upd.lead_id      = lead_id;
+        if (nomeContato && !conversa.nome_contato) upd.nome_contato = nomeContato;
+        if (Object.keys(upd).length) {
+          await sb.from('conversas_whatsapp').update({ ...upd, atualizado_em: agora }).eq('id', conversa.id);
+          Object.assign(conversa, upd);
+        }
+        console.log('WHATSAPP_CONVERSA_FOUND_BY_PHONE', { id: conversa.id, tel: conversa.telefone });
       }
+
       req.log({ acao: 'WHATSAPP_OPEN', entidade: 'conversas_whatsapp', entidade_id: conversa.id, depois: { telefone: tel, lead_id } });
       return res.json({ sucesso: true, dados: conversa });
     }
 
+    // ── SQLite path ────────────────────────────────────────────────────────────
     const db = getDb();
-    let conversa = db.prepare(`SELECT * FROM conversas_whatsapp WHERE telefone = ? AND status != 'FECHADA' ORDER BY criado_em DESC LIMIT 1`).get(tel);
+    let conversa = null;
+    // Tenta variantes de telefone
+    const variantesSql = phoneVariants(tel);
+    for (const v of variantesSql) {
+      const row = db.prepare(`SELECT * FROM conversas_whatsapp WHERE telefone = ? AND status != 'FECHADA' ORDER BY COALESCE(ultima_msg_em, criado_em) DESC LIMIT 1`).get(v);
+      if (row) { conversa = row; break; }
+    }
+    // Tenta por lead_id
+    if (!conversa && lead_id) {
+      conversa = db.prepare(`SELECT * FROM conversas_whatsapp WHERE lead_id = ? AND status != 'FECHADA' ORDER BY COALESCE(ultima_msg_em, criado_em) DESC LIMIT 1`).get(lead_id);
+      if (conversa) console.log('WHATSAPP_CONVERSA_FOUND_BY_LEAD (SQLite):', conversa.id);
+    }
     if (!conversa) {
       const id = crypto.randomBytes(16).toString('hex');
-      db.prepare(`INSERT INTO conversas_whatsapp (id, lead_id, telefone, nome_contato, vendedor_id, origem, criado_em, atualizado_em) VALUES (?,?,?,?,?,?,?,?)`)
-        .run(id, lead_id || null, tel, nome_contato || null, vendedor_id || req.usuario.id, 'MANUAL', agora, agora);
+      db.prepare(`INSERT INTO conversas_whatsapp (id, lead_id, telefone, nome_contato, vendedor_id, origem, status, criado_em, atualizado_em) VALUES (?,?,?,?,?,?,?,?,?)`)
+        .run(id, lead_id || null, tel, nomeContato, vendedor_id || req.usuario.id, 'MANUAL', 'ABERTA', agora, agora);
       conversa = db.prepare('SELECT * FROM conversas_whatsapp WHERE id = ?').get(id);
-    } else if (lead_id && !conversa.lead_id) {
-      db.prepare('UPDATE conversas_whatsapp SET lead_id = ? WHERE id = ?').run(lead_id, conversa.id);
+      console.log('WHATSAPP_CONVERSA_CREATED (SQLite):', id);
+    } else {
+      if (lead_id && !conversa.lead_id)
+        db.prepare('UPDATE conversas_whatsapp SET lead_id = ?, atualizado_em = ? WHERE id = ?').run(lead_id, agora, conversa.id);
+      if (nomeContato && !conversa.nome_contato)
+        db.prepare('UPDATE conversas_whatsapp SET nome_contato = ?, atualizado_em = ? WHERE id = ?').run(nomeContato, agora, conversa.id);
+      console.log('WHATSAPP_CONVERSA_FOUND_BY_PHONE (SQLite):', conversa.id);
     }
     req.log({ acao: 'WHATSAPP_OPEN', entidade: 'conversas_whatsapp', entidade_id: conversa.id, depois: { telefone: tel, lead_id } });
     return res.json({ sucesso: true, dados: conversa });

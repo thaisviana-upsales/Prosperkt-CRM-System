@@ -7,11 +7,24 @@
 function normalizePhone(tel) {
   if (!tel) return '';
   let t = String(tel).split('@')[0];
-  t = t.split(':')[0]; // remove sufixo de dispositivo WA (ex: :13 em 5511964634949:13@s.whatsapp.net)
+  t = t.split(':')[0]; // remove sufixo de dispositivo WA
   t = t.replace(/\D/g, '');
-  // 10-11 dígitos sem código de país → adiciona 55 (Brasil)
   if (t.length === 10 || t.length === 11) t = '55' + t;
   return t;
+}
+
+// Compara dois telefones considerando variantes com/sem DDI 55 e com/sem nono dígito
+function phonesMatch(a, b) {
+  if (!a || !b) return false;
+  const na = normalizePhone(a), nb = normalizePhone(b);
+  if (na === nb) return true;
+  const sa = na.startsWith('55') ? na.slice(2) : na;
+  const sb = nb.startsWith('55') ? nb.slice(2) : nb;
+  if (sa === sb) return true;
+  const rm9 = n => (n.length === 13 && n.startsWith('55') && n[4] === '9') ? n.slice(0,4)+n.slice(5) : n;
+  if (rm9(na) === rm9(nb)) return true;
+  const rm9s = n => (n.length === 11 && n[2] === '9') ? n.slice(0,2)+n.slice(3) : n;
+  return rm9s(sa) === rm9s(sb);
 }
 
 // ─── Estado ───────────────────────────────────────────────────────────────────
@@ -242,6 +255,11 @@ async function resolverConversaLead(leadId, tel, nome) {
   const telNorm = normalizePhone(tel);
 
   // ── LOGS OBRIGATÓRIOS ──────────────────────────────────────────────────────
+  console.log('WHATSAPP_OPEN_BY_URL_START', { leadId, telRaw: tel, telNorm });
+  console.log('WHATSAPP_OPEN_BY_URL_LEAD_ID', leadId || 'sem_lead_id');
+  console.log('WHATSAPP_OPEN_BY_URL_PHONE_RAW', tel);
+  console.log('WHATSAPP_OPEN_BY_URL_PHONE_NORMALIZED', telNorm);
+  console.log('WHATSAPP_CONVERSA_RESOLVE_START', { leadId, tel: telNorm, nome });
   console.log('WHATSAPP_PAGE_URL_PARAMS', {
     leadId: new URLSearchParams(window.location.search).get('lead_id'),
     phone:  new URLSearchParams(window.location.search).get('phone'),
@@ -271,18 +289,12 @@ async function resolverConversaLead(leadId, tel, nome) {
         const candidata = r.data.dados;
         const telCandidato = normalizePhone(candidata.telefone);
 
-        // VALIDAÇÃO OBRIGATÓRIA: a conversa retornada deve ter o mesmo telefone da URL
-        if (telNorm && telCandidato !== telNorm) {
-          console.warn('WHATSAPP_SELECTED_CONVERSATION — TELEFONE DIVERGENTE, ignorando:', {
-            conversaId: candidata.id, telefoneDaConversa: telCandidato,
-            nomeDaConversa: candidata.nome_contato, telEsperado: telNorm
-          });
-          // NÃO usa essa conversa — é de outro lead/teste
+        // VALIDAÇÃO: aceita variantes de formato (com/sem 55, com/sem nono dígito)
+        if (telNorm && !phonesMatch(telCandidato, telNorm)) {
+          console.warn('WHATSAPP_CONVERSA_TELEFONE_DIVERGENTE:', { conversaId: candidata.id, telefoneDaConversa: telCandidato, telEsperado: telNorm });
         } else {
           conv = { ...candidata, lead_nome: nome };
-          console.log('WHATSAPP_SELECTED_CONVERSATION', {
-            conversaId: conv.id, telefoneDaConversa: telCandidato, nomeDaConversa: conv.nome_contato
-          });
+          console.log('WHATSAPP_CONVERSA_FOUND_BY_LEAD', { conversaId: conv.id, telefone: telCandidato, nome: conv.nome_contato });
         }
       }
     } catch (e) {
@@ -295,13 +307,10 @@ async function resolverConversaLead(leadId, tel, nome) {
     try {
       const r2 = await Auth.api('GET', '/whatsapp/conversas?limit=200');
       const lista = r2?.ok ? (r2.data.dados || []) : [];
-      const porTel = lista.find(c => normalizePhone(c.telefone) === telNorm);
+      const porTel = lista.find(c => phonesMatch(c.telefone, telNorm));
       if (porTel) {
         conv = { ...porTel, lead_nome: nome };
-        console.log('WHATSAPP_SELECTED_CONVERSATION', {
-          conversaId: conv.id, telefoneDaConversa: normalizePhone(conv.telefone),
-          nomeDaConversa: conv.nome_contato, metodo: 'busca_exata_local'
-        });
+        console.log('WHATSAPP_CONVERSA_FOUND_BY_PHONE', { conversaId: conv.id, telefone: normalizePhone(conv.telefone), nome: conv.nome_contato });
         // Vincula lead_id se ausente
         if (leadId && !porTel.lead_id) {
           Auth.api('POST', '/whatsapp/conversas', { telefone: telNorm, lead_id: leadId, nome_contato: nome }).catch(() => {});
@@ -324,10 +333,7 @@ async function resolverConversaLead(leadId, tel, nome) {
       });
       if (rc?.ok && rc.data.dados) {
         conv = { ...rc.data.dados, lead_nome: nome };
-        console.log('WHATSAPP_SELECTED_CONVERSATION', {
-          conversaId: conv.id, telefoneDaConversa: conv.telefone,
-          nomeDaConversa: conv.nome_contato, criada: true
-        });
+        console.log('WHATSAPP_CONVERSA_CREATED', { conversaId: conv.id, telefone: conv.telefone, nome: conv.nome_contato });
         Toast.show('Conversa iniciada!', 'success');
       }
     } catch (e) {
@@ -494,9 +500,15 @@ async function abrirOuCriarConversaLead(leadId, tel, nome) {
 // ─── Carregar mensagens ───────────────────────────────────────────────────────
 async function carregarMensagens(convId, silencioso = false) {
   const r = await Auth.api('GET', `/whatsapp/conversas/${convId}/mensagens?limit=200`);
-  if (!r?.ok) { if (!silencioso) Toast.show('Erro ao carregar mensagens.', 'error'); return; }
-
+  if (!r?.ok) {
+    if (!silencioso) {
+      console.error('WHATSAPP_MESSAGES_LOAD_ERROR', r?.data?.erro||'sem resposta', 'convId:', convId);
+      Toast.show('Erro ao carregar mensagens.', 'error');
+    }
+    return;
+  }
   _mensagens = r.data.dados || [];
+  console.log('WHATSAPP_MESSAGES_LOADED', _mensagens.length, 'msgs | convId:', convId);
   renderMensagens();
 }
 
@@ -658,6 +670,9 @@ async function enviarMensagem() {
   input.disabled = true;
 
   // Log diagnóstico: payload enviado
+  console.log('CRM_SEND_WHATSAPP_START', { conversaId: _convAtiva.id, leadId: _convAtiva.lead_id||null, phoneNorm: normalizePhone(_convAtiva.telefone) });
+  console.log('CRM_SEND_WHATSAPP_CONVERSA_ID', _convAtiva.id);
+  console.log('CRM_SEND_WHATSAPP_PHONE_NORMALIZED', normalizePhone(_convAtiva.telefone));
   console.log('FRONTEND_SEND_START', {
     conversaId:   _convAtiva.id,
     telefone:     _convAtiva.telefone,
@@ -683,6 +698,10 @@ async function enviarMensagem() {
   input.focus();
 
   // Log diagnóstico: resposta completa
+  const _hs = r?.status||(r===null?'NULL':'UNKNOWN');
+  console.log('EVOLUTION_SEND_RESPONSE_STATUS', _hs, '| ok:', r?.ok, '| sucesso:', r?.data?.sucesso);
+  if (r?.ok||r?.data?.sucesso) console.log('EVOLUTION_SEND_SUCCESS');
+  else console.error('EVOLUTION_SEND_ERROR', r?.data?.erro||'sem resposta do servidor');
   console.log('FRONTEND_SEND_RESPONSE', {
     r_ok:     r?.ok,
     r_status: r?.status,
