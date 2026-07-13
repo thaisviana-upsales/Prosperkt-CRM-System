@@ -308,11 +308,72 @@ async function resumo(req, res) {
 
       console.log('[DASHBOARD_PIPELINE_SELECTED]', funil_id || 'todos-novos', '| etapas finais:', etapasEstrutura.length, '|', etapasEstrutura.map(e => `${e.ordem}:${e.nome}`).join(', '));
 
-      // ── Conta leads por etapa (respeitando todos os filtros) ────────────────────
-      // Etapas com 0 leads SEMPRE aparecem porque a estrutura vem da pipeline
+      // ── Conta leads que PASSARAM por cada etapa (via logs de movimentação) ──────
+      // Fonte: tabela logs, acao IN ('MOVER','CREATE') + etapa_id no JSON depois/antes
+      // Garante COUNT DISTINCT lead_id por etapa — cada lead conta 1x por etapa.
+      //
+      // Todos os ids de etapas conhecidas (para busca eficiente nos logs)
+      const todosEtapaIds = [...new Set(Object.values(nomeParaIds).flat())];
+
+      // Busca logs de MOVER/CREATE para leads dos funis relevantes
+      // Filtros: funil_id (via leads), responsavel_id, período/data
+      let passagemMap = {}; // etapa_id → Set(lead_ids)
+
+      if (todosEtapaIds.length) {
+        // Busca todos os logs de movimentação de leads no escopo
+        // Lead scope = mesmo filtro aplicado em leadsParaFunil
+        const leadIdsEscopo = new Set(leadsParaFunil.map(l => l.id));
+
+        // Busca logs MOVER (destino = depois.etapa_id) — passagem para a etapa
+        // Busca logs CREATE (etapa inicial = depois.etapa_id)
+        // Limite razoável para performance; usa leadsParaFunil que já está filtrado
+        let logsQ = sb.from('logs')
+          .select('entidade_id,depois,acao')
+          .eq('entidade', 'leads')
+          .in('acao', ['MOVER','CREATE']);
+        if (periodo?.ini) logsQ = logsQ.gte('criado_em', periodo.ini + 'T00:00:00');
+        if (periodo?.fim) logsQ = logsQ.lte('criado_em', periodo.fim + 'T23:59:59');
+        if (!periodo?.ini && !periodo?.fim) {
+          // Sem filtro de data: usa criado_em do lead mais antigo como limite (perf)
+          logsQ = logsQ.order('criado_em', { ascending: false }).limit(50000);
+        }
+        const { data: logsMovimento } = await logsQ;
+
+        // Processa logs: para cada log de lead no escopo, registra passagem pela etapa de destino
+        for (const lg of (logsMovimento || [])) {
+          const leadId = lg.entidade_id;
+          if (!leadIdsEscopo.has(leadId)) continue; // só leads no escopo filtrado
+          let dep = lg.depois;
+          if (typeof dep === 'string') { try { dep = JSON.parse(dep); } catch(_) { dep = null; } }
+          const etapaDestId = dep?.etapa_id;
+          if (!etapaDestId) continue;
+          if (!passagemMap[etapaDestId]) passagemMap[etapaDestId] = new Set();
+          passagemMap[etapaDestId].add(leadId);
+        }
+
+        console.log('[DASHBOARD_LEADS_CONTADOS] passagem via logs | etapas com dados:', Object.keys(passagemMap).length);
+
+        // Fallback: se logs não retornaram dados (ex: sistema novo sem histórico),
+        // usa etapa_atual do lead como posição mínima (lead passou pela etapa atual)
+        const totalPassagem = Object.values(passagemMap).reduce((s, set) => s + set.size, 0);
+        if (totalPassagem === 0 && leadsParaFunil.length > 0) {
+          console.log('[DASHBOARD_LEADS_CONTADOS] fallback: sem histórico nos logs, usando etapa atual');
+          for (const l of leadsParaFunil) {
+            if (!l.etapa_id) continue;
+            if (!passagemMap[l.etapa_id]) passagemMap[l.etapa_id] = new Set();
+            passagemMap[l.etapa_id].add(l.id);
+          }
+        }
+      }
+
       const funil_visual_raw = etapasEstrutura.map(e => {
         const ids = nomeParaIds[e.nome] || [e.id];
-        const qty = leadsParaFunil.filter(l => ids.includes(l.etapa_id)).length;
+        // Soma passagens únicas (por lead) em todas as etapas com mesmo nome
+        const leadIdsPassaram = new Set();
+        for (const eid of ids) {
+          for (const lid of (passagemMap[eid] || [])) leadIdsPassaram.add(lid);
+        }
+        const qty = leadIdsPassaram.size;
         const isG = e.is_ganho || e.probabilidade >= 100 || /venda|vendas|ganho|fechad|fechamento/i.test(e.nome||'');
         const isP = e.is_perdido || /perdid|desqualif/i.test(e.nome||'');
         return { ...e, is_ganho: isG?1:0, is_perdido: isP?1:0, quantidade: qty };
@@ -568,40 +629,75 @@ async function resumo(req, res) {
     console.log('[DASHBOARD_PIPELINE_SELECTED]', funil_id || 'todos-novos', '| etapas finais:', etapas.length);
 
 
-    // Conta leads por etapa (ou grupo de etapas com mesmo nome), respeitando todos os filtros
-    const funil_visual = etapas.map((e, i) => {
-      // Para "Todos - Novos": usa todos os ids de etapas com mesmo nome
-      const idsEtapa = funil_id ? [e.id] : (etapaNomeParaIds[e.nome] || [e.id]);
-      const placeholders = idsEtapa.map(() => '?').join(',');
+    // ── Conta leads que PASSARAM por cada etapa (histórico via tabela logs) ─────
+    // Usa acao IN ('MOVER','CREATE') com etapa_id no JSON de 'dados_depois'.
+    // COUNT DISTINCT lead_id por etapa — cada lead conta 1x por etapa.
+    const todosEtapaIdsSql = [...new Set(Object.values(etapaNomeParaIds).flat())];
+    const passagemMapSql = {}; // etapa_id → Set(lead_ids)
 
-      const cntSql = `SELECT COUNT(*) as c FROM leads l
+    if (todosEtapaIdsSql.length) {
+      // Busca leads no escopo (mesmos filtros de funil/vendedor/data já aplicados em leads)
+      const leadsScopeSql = db.prepare(`
+        SELECT l.id FROM leads l
         LEFT JOIN pipelines p ON l.pipeline_id=p.id
-        WHERE l.etapa_id IN (${placeholders})
-        ${funil_id ? 'AND p.funil_id=?' : ''}
-        ${baseFilter.replace(/^\s*AND /, 'AND ')}`;
-      const cntFinalParams = funil_id
-        ? [...idsEtapa, funil_id, ...baseParams]
-        : [...idsEtapa, ...baseParams];
-      const countRow = db.prepare(cntSql).get(...cntFinalParams);
+        WHERE 1=1${baseFilter}
+      `).all(...baseParams);
+      const leadIdsEscopoSql = new Set(leadsScopeSql.map(r => r.id));
 
-      // Taxa de conversão em relação à etapa anterior
-      let taxa_entrada = null;
-      if (i > 0) {
-        const anterior = etapas[i - 1];
-        const idsAnt = funil_id ? [anterior.id] : (etapaNomeParaIds[anterior.nome] || [anterior.id]);
-        const antPh = idsAnt.map(() => '?').join(',');
-        const antSql = `SELECT COUNT(*) as c FROM leads l LEFT JOIN pipelines p ON l.pipeline_id=p.id
-          WHERE l.etapa_id IN (${antPh})
-          ${funil_id ? 'AND p.funil_id=?' : ''}
-          ${baseFilter.replace(/^\s*AND /, 'AND ')}`;
-        const antParams = funil_id ? [...idsAnt, funil_id, ...baseParams] : [...idsAnt, ...baseParams];
-        const ac = db.prepare(antSql).get(...antParams);
-        taxa_entrada = ac.c > 0 ? ((countRow.c / ac.c) * 100).toFixed(0) : null;
+      // Busca logs de movimentação
+      let logSql = `SELECT entidade_id, dados_depois, acao FROM logs
+        WHERE entidade = 'leads' AND acao IN ('MOVER','CREATE')`;
+      const logParams = [];
+      if (periodo?.ini) { logSql += ` AND criado_em >= ?`; logParams.push(periodo.ini + 'T00:00:00'); }
+      if (periodo?.fim) { logSql += ` AND criado_em <= ?`; logParams.push(periodo.fim + 'T23:59:59'); }
+      logSql += ` ORDER BY criado_em ASC LIMIT 100000`;
+
+      const logsMovSql = db.prepare(logSql).all(...logParams);
+      for (const lg of logsMovSql) {
+        const leadId = lg.entidade_id;
+        if (!leadIdsEscopoSql.has(leadId)) continue;
+        let dep = null;
+        try { dep = JSON.parse(lg.dados_depois || 'null'); } catch(_) {}
+        const etapaDestId = dep?.etapa_id;
+        if (!etapaDestId) continue;
+        if (!passagemMapSql[etapaDestId]) passagemMapSql[etapaDestId] = new Set();
+        passagemMapSql[etapaDestId].add(leadId);
       }
+      console.log('[DASHBOARD_LEADS_CONTADOS] passagem via logs SQLite | etapas com dados:', Object.keys(passagemMapSql).length);
+
+      // Fallback: sem histórico → etapa atual do lead como posição mínima
+      const totalPassSql = Object.values(passagemMapSql).reduce((s, st) => s + st.size, 0);
+      if (totalPassSql === 0 && leadIdsEscopoSql.size > 0) {
+        console.log('[DASHBOARD_LEADS_CONTADOS] fallback SQLite: usando etapa atual');
+        const leadsComEtapaSql = db.prepare(`
+          SELECT l.id, l.etapa_id FROM leads l
+          LEFT JOIN pipelines p ON l.pipeline_id=p.id
+          WHERE l.etapa_id IS NOT NULL${baseFilter}
+        `).all(...baseParams);
+        for (const l of leadsComEtapaSql) {
+          if (!passagemMapSql[l.etapa_id]) passagemMapSql[l.etapa_id] = new Set();
+          passagemMapSql[l.etapa_id].add(l.id);
+        }
+      }
+    }
+
+    const funil_visual_raw_sql = etapas.map(e => {
+      const idsEtapa = funil_id ? [e.id] : (etapaNomeParaIds[e.nome] || [e.id]);
+      const leadIdsPassaram = new Set();
+      for (const eid of idsEtapa) {
+        for (const lid of (passagemMapSql[eid] || [])) leadIdsPassaram.add(lid);
+      }
+      const qty = leadIdsPassaram.size;
       const isG = e.is_ganho || /venda|vendas|ganho|fechad|fechamento/i.test(e.nome || '');
       const isP = e.is_perdido || /perdid|desqualif/i.test(e.nome || '');
       return { id: e.id, nome: e.nome, cor: e.cor, ordem: e.ordem,
-        is_ganho: isG ? 1 : 0, is_perdido: isP ? 1 : 0, quantidade: countRow.c, taxa_entrada };
+        is_ganho: isG ? 1 : 0, is_perdido: isP ? 1 : 0, quantidade: qty };
+    });
+
+    const funil_visual = funil_visual_raw_sql.map((e, i) => {
+      const prev = i > 0 ? funil_visual_raw_sql[i-1].quantidade : null;
+      const taxa_entrada = prev != null && prev > 0 ? ((e.quantidade / prev) * 100).toFixed(0) : null;
+      return { ...e, taxa_entrada };
     });
     console.log('[DASHBOARD_FUNIL_CONVERSAO_RESULTADO]',
       funil_visual.map(e => `${e.nome}:${e.quantidade}(${e.taxa_entrada ?? '—'}%)`).join(' → '));
