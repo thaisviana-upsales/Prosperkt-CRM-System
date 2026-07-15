@@ -112,9 +112,12 @@ async function carregarFunis() {
 
 async function carregarUsuarios() {
   const r = await Auth.api('GET','/usuarios');
-  // Filtra apenas VENDEDORs ativos (SUPER_ADMIN e GESTOR não têm leads próprios para filtrar)
-  _usuarios = (r?.data?.dados||[]).filter(u => u.ativo && u.role === 'VENDEDOR');
-  console.log('[FILTRO_VENDEDOR_SELECT_LOAD] pipeline | vendedores no select:', _usuarios.length, _usuarios.map(u => u.nome).join(', '));
+  // Carrega todos os usuários ativos — sem filtro rígido por role
+  // SUPER_ADMIN, GESTOR e VENDEDOR podem ser responsáveis por leads
+  const todos = r?.data?.dados || [];
+  _usuarios = todos.filter(u => u.ativo === true || u.ativo === 1);
+  console.log('[FILTRO_VENDEDOR_USUARIOS_API_RESPONSE] pipeline | total API:', todos.length, '| ativos:', _usuarios.length);
+  console.log('[FILTRO_VENDEDOR_SELECT_LOAD] pipeline | usuários:', _usuarios.map(u => u.nome + ' (' + u.role + ')').join(', '));
 }
 
 async function carregarMotivos() {
@@ -157,6 +160,7 @@ function popularSelResp() {
   }
   sel.innerHTML = '<option value="">Todos</option>' +
     _usuarios.map(u=>`<option value="${u.id}">${u.nome}</option>`).join('');
+  console.log('[FILTRO_VENDEDOR_TOTAL_RENDERIZADO] pipeline |', sel.options.length, 'opções no select (incluindo Todos)');
 }
 
 // ── Filtros ───────────────────────────────────────────────────

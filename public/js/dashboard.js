@@ -54,15 +54,22 @@ async function carregarUsuarios() {
     return;
   }
   const r = await Auth.api('GET', '/usuarios');
-  // Filtra apenas usuários ativos com role VENDEDOR ou GESTOR (SUPER_ADMIN não possui leads)
-  const users = (r?.data?.dados || []).filter(u => u.ativo && (u.role === 'VENDEDOR' || u.role === 'GESTOR'));
-  console.log('[FILTRO_VENDEDOR_SELECT_LOAD] total usuários no select:', users.length, users.map(u => u.nome + '(' + u.role + ')').join(', '));
+  // Carrega todos os usuários ativos que podem ser responsáveis por leads
+  // Não filtra por role de forma rígida — SUPER_ADMIN, GESTOR e VENDEDOR podem ter leads
+  const todos = r?.data?.dados || [];
+  const users = todos.filter(u => {
+    const ativo = u.ativo === true || u.ativo === 1;
+    return ativo;
+  });
+  console.log('[FILTRO_VENDEDOR_USUARIOS_API_RESPONSE] total retornados pela API:', todos.length, '| ativos no select:', users.length);
+  console.log('[FILTRO_VENDEDOR_SELECT_LOAD] usuários:', users.map(u => u.nome + ' (' + u.role + ')').join(', '));
   const sel = document.getElementById('f-resp');
   sel.innerHTML = '<option value="">Todos</option>' +
     users.map(u => `<option value="${u.id}">${u.nome}</option>`).join('');
-  // Log quando o select muda — diagnóstico
+  console.log('[FILTRO_VENDEDOR_TOTAL_RENDERIZADO]', sel.options.length, 'opções no select (incluindo Todos)');
+  // Log de diagnóstico ao selecionar
   sel.addEventListener('change', e => {
-    console.log('[FILTRO_VENDEDOR_SELECT_CHANGE] valor selecionado:', e.target.value, '| texto:', sel.selectedOptions[0]?.text);
+    console.log('[FILTRO_VENDEDOR_SELECT_CHANGE] valor:', e.target.value, '| nome:', sel.selectedOptions[0]?.text);
   });
 }
 
