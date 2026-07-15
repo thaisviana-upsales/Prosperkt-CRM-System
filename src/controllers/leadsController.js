@@ -4,6 +4,7 @@
  */
 const crypto = require('crypto');
 const { getProvider } = require('../database/dbProvider');
+const etapaHistorico = require('../services/etapaHistoricoService');
 
 // SLA Contato 1 — importação lazy para evitar dependência circular
 let _automacaoSvc = null;
@@ -473,6 +474,13 @@ async function criar(req, res) {
       if (error) throw error;
       // observacoes salva diretamente em leads.observacoes — nao duplicar em mensagens
       req.log({ acao:'CREATE', entidade:'leads', entidade_id:id, depois:{ nome, etapa_id, funil_id:fId } });
+      // Registra passagem pela etapa inicial no histórico do Funil de Conversão
+      if (etapa_id) {
+        setImmediate(() => etapaHistorico.registrarPassagem({
+          leadId: id, etapaId: etapa_id, funilId: fId, responsavelId: respId, origem: 'create',
+          entrou_em: row.criado_em,
+        }).catch(e => console.error('[FUNIL_HISTORICO_CREATE]', e.message)));
+      }
       // Dispara SLA Contato 1 de forma assíncrona (não bloqueia resposta)
       setImmediate(() => {
         getAutomacaoSvc().enviarSlaContato1({ id, nome: nome.trim(), telefone: telefone || null, responsavel_id: respId })
@@ -493,6 +501,13 @@ async function criar(req, res) {
     );
     // observacoes salva em leads.observacoes — nao duplicar em mensagens
     req.log({ acao:'CREATE', entidade:'leads', entidade_id:id, depois:{ nome, pipeline_id, etapa_id } });
+    // Registra passagem pela etapa inicial no histórico do Funil de Conversão
+    if (etapa_id) {
+      setImmediate(() => etapaHistorico.registrarPassagem({
+        leadId: id, etapaId: etapa_id, funilId: null, responsavelId: respId, origem: 'create',
+        entrou_em: new Date().toISOString(),
+      }).catch(e => console.error('[FUNIL_HISTORICO_CREATE_SQLite]', e.message)));
+    }
     // Dispara SLA Contato 1 de forma assíncrona
     setImmediate(() => {
       getAutomacaoSvc().enviarSlaContato1({ id, nome: nome.trim(), telefone: telefone || null, responsavel_id: respId })
@@ -899,6 +914,15 @@ async function mover(req, res) {
         depois:{ etapa_id, status:novoStatus, etapa_nome:etapa.nome,
           layout_virtual_entrada_em: isLayoutVirtual ? agora : undefined,
           layout_virtual_aprovado_em: upd.layout_virtual_aprovado_em || undefined } });
+      // Registra passagem pela etapa de destino no histórico do Funil de Conversão
+      setImmediate(() => etapaHistorico.registrarPassagem({
+        leadId: id,
+        etapaId: etapa_id,
+        funilId: funilIdUpd || lead.funil_id || null,
+        responsavelId: lead.responsavel_id || null,
+        origem: 'mover',
+        entrou_em: agora,
+      }).catch(e => console.error('[FUNIL_HISTORICO_MOVER]', e.message)));
 
       // Log especial de etapas de Layout Virtual na timeline
       if (isLayoutVirtual) {

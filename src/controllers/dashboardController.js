@@ -4,6 +4,7 @@
  */
 const { getProvider } = require('../database/dbProvider');
 const { ETAPAS_CARTEIRA_REMOVIDAS, ETAPAS_GLOBAIS_REMOVIDAS } = require('./funisController');
+const etapaHistoricoSvc = require('../services/etapaHistoricoService');
 
 // ── Helpers de período ────────────────────────────────────────────────────────
 function calcPeriodo(dataTipo, dataPeriodo, dataInicio, dataFim) {
@@ -338,62 +339,64 @@ async function resumo(req, res) {
 
       console.log('[DASHBOARD_PIPELINE_SELECTED]', funil_id || 'todos-novos', '| etapas finais:', etapasEstrutura.length, '|', etapasEstrutura.map(e => `${e.ordem}:${e.nome}`).join(', '));
 
-      // ── Conta leads que PASSARAM por cada etapa (via logs de movimentação) ──────
-      // Fonte: tabela logs, acao IN ('MOVER','CREATE') + etapa_id no JSON depois/antes
-      // Garante COUNT DISTINCT lead_id por etapa — cada lead conta 1x por etapa.
+      // ── Conta leads que PASSARAM por cada etapa ─────────────────────────────
+      // FONTE PRIMÁRIA: tabela lead_etapa_historico (1 registro por lead+etapa)
+      // FALLBACK: logs de auditoria (compat com dados antes da nova tabela)
       //
-      // Todos os ids de etapas conhecidas (para busca eficiente nos logs)
       const todosEtapaIds = [...new Set(Object.values(nomeParaIds).flat())];
-
-      // Busca logs de MOVER/CREATE para leads dos funis relevantes
-      // Filtros: funil_id (via leads), responsavel_id, período/data
+      const leadIdsEscopo = new Set(leadsParaFunil.map(l => l.id));
       let passagemMap = {}; // etapa_id → Set(lead_ids)
 
-      if (todosEtapaIds.length) {
-        // Busca todos os logs de movimentação de leads no escopo
-        // Lead scope = mesmo filtro aplicado em leadsParaFunil
-        const leadIdsEscopo = new Set(leadsParaFunil.map(l => l.id));
+      if (todosEtapaIds.length && leadIdsEscopo.size > 0) {
+        // Fonte 1: lead_etapa_historico
+        passagemMap = await etapaHistoricoSvc.buscarPassagensPorEtapa({
+          etapaIds: todosEtapaIds,
+          leadIds:  [...leadIdsEscopo],
+          dataIni:  periodo?.ini || null,
+          dataFim:  periodo?.fim || null,
+        });
+        const totalHistorico = Object.values(passagemMap).reduce((s, set) => s + set.size, 0);
+        console.log('[DASHBOARD_FUNIL_CONVERSAO] fonte: lead_etapa_historico | registros:', totalHistorico);
 
-        // Busca logs MOVER (destino = depois.etapa_id) — passagem para a etapa
-        // Busca logs CREATE (etapa inicial = depois.etapa_id)
-        // Limite razoável para performance; usa leadsParaFunil que já está filtrado
-        let logsQ = sb.from('logs')
-          .select('entidade_id,depois,acao')
-          .eq('entidade', 'leads')
-          .in('acao', ['MOVER','CREATE']);
-        if (periodo?.ini) logsQ = logsQ.gte('criado_em', periodo.ini + 'T00:00:00');
-        if (periodo?.fim) logsQ = logsQ.lte('criado_em', periodo.fim + 'T23:59:59');
-        if (!periodo?.ini && !periodo?.fim) {
-          // Sem filtro de data: usa criado_em do lead mais antigo como limite (perf)
-          logsQ = logsQ.order('criado_em', { ascending: false }).limit(50000);
-        }
-        const { data: logsMovimento } = await logsQ;
+        // Fallback: se histórico vazio (sistema anterior sem a tabela),
+        // usa logs de auditoria como segunda fonte
+        if (totalHistorico === 0) {
+          console.warn('[DASHBOARD_FUNIL_CONVERSAO] histórico vazio — usando logs de auditoria como fallback...');
+          let logsQ = sb.from('logs')
+            .select('entidade_id,depois,acao')
+            .eq('entidade', 'leads')
+            .in('acao', ['MOVER','CREATE']);
+          if (periodo?.ini) logsQ = logsQ.gte('criado_em', periodo.ini + 'T00:00:00');
+          if (periodo?.fim) logsQ = logsQ.lte('criado_em', periodo.fim + 'T23:59:59');
+          if (!periodo?.ini && !periodo?.fim) logsQ = logsQ.order('criado_em', { ascending: false }).limit(50000);
+          const { data: logsMovimento } = await logsQ;
 
-        // Processa logs: para cada log de lead no escopo, registra passagem pela etapa de destino
-        for (const lg of (logsMovimento || [])) {
-          const leadId = lg.entidade_id;
-          if (!leadIdsEscopo.has(leadId)) continue; // só leads no escopo filtrado
-          let dep = lg.depois;
-          if (typeof dep === 'string') { try { dep = JSON.parse(dep); } catch(_) { dep = null; } }
-          const etapaDestId = dep?.etapa_id;
-          if (!etapaDestId) continue;
-          if (!passagemMap[etapaDestId]) passagemMap[etapaDestId] = new Set();
-          passagemMap[etapaDestId].add(leadId);
-        }
+          for (const lg of (logsMovimento || [])) {
+            const leadId = lg.entidade_id;
+            if (!leadIdsEscopo.has(leadId)) continue;
+            let dep = lg.depois;
+            if (typeof dep === 'string') { try { dep = JSON.parse(dep); } catch(_) { dep = null; } }
+            const etapaDestId = dep?.etapa_id;
+            if (!etapaDestId) continue;
+            if (!passagemMap[etapaDestId]) passagemMap[etapaDestId] = new Set();
+            passagemMap[etapaDestId].add(leadId);
+          }
+          const totalLogs = Object.values(passagemMap).reduce((s, set) => s + set.size, 0);
+          console.log('[DASHBOARD_FUNIL_CONVERSAO] fallback logs | registros:', totalLogs);
 
-        console.log('[DASHBOARD_LEADS_CONTADOS] passagem via logs | etapas com dados:', Object.keys(passagemMap).length);
-
-        // Fallback: se logs não retornaram dados (ex: sistema novo sem histórico),
-        // usa etapa_atual do lead como posição mínima (lead passou pela etapa atual)
-        const totalPassagem = Object.values(passagemMap).reduce((s, set) => s + set.size, 0);
-        if (totalPassagem === 0 && leadsParaFunil.length > 0) {
-          console.log('[DASHBOARD_LEADS_CONTADOS] fallback: sem histórico nos logs, usando etapa atual');
-          for (const l of leadsParaFunil) {
-            if (!l.etapa_id) continue;
-            if (!passagemMap[l.etapa_id]) passagemMap[l.etapa_id] = new Set();
-            passagemMap[l.etapa_id].add(l.id);
+          // Último fallback: etapa atual do lead
+          if (totalLogs === 0 && leadsParaFunil.length > 0) {
+            console.warn('[DASHBOARD_FUNIL_CONVERSAO] sem logs — usando etapa atual como mínimo.');
+            for (const l of leadsParaFunil) {
+              if (!l.etapa_id) continue;
+              if (!passagemMap[l.etapa_id]) passagemMap[l.etapa_id] = new Set();
+              passagemMap[l.etapa_id].add(l.id);
+            }
           }
         }
+      } else if (todosEtapaIds.length && leadIdsEscopo.size === 0) {
+        // Sem leads no escopo — funil vazio
+        console.log('[DASHBOARD_FUNIL_CONVERSAO] sem leads no escopo — funil zerado.');
       }
 
       const funil_visual_raw = etapasEstrutura.map(e => {

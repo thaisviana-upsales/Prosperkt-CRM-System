@@ -39,6 +39,12 @@ try { require('../services/backupService').agendarBackups(); } catch(e) { consol
 // Polling da planilha desativado — descomentar para reativar:
 // try { require('../services/planilhaLeadsService').iniciarPolling(); } catch(e) { console.warn('[Planilha] Polling não iniciado:', e.message); }
 
+// Funil de Conversão: migration de dados existentes (idempotente — roda em background)
+setTimeout(() => {
+  require('../services/etapaHistoricoService').migrarDadosExistentes()
+    .catch(e => console.warn('[FUNIL_HISTORICO_MIGRATION] Erro no startup:', e.message));
+}, 5000); // aguarda 5s para o boot do servidor + conexão Supabase estabilizar
+
 // Aplica audit middleware em todas as rotas
 router.use(auditMiddleware);
 

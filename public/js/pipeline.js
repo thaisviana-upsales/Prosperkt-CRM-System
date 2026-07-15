@@ -414,7 +414,25 @@ async function moverLead(etapaId) {
   if (!_dragLeadId || etapaId===_dragEtapaOrigem) return;
   const lead = _leads.find(l=>l.id===_dragLeadId);
   const pid  = lead?.pipeline_id || _pipelineAtivo;
-  const etapaDest = _etapas.find(e=>e.id===etapaId);
+  const etapaDest   = _etapas.find(e=>e.id===etapaId);
+  const etapaOrigem = _etapas.find(e=>e.id===_dragEtapaOrigem);
+
+  // ── Bloqueio de retrocesso: impede mover para etapa de ordem menor ─────────
+  // Exceção: SUPER_ADMIN pode corrigir erros (não bloqueia)
+  if (etapaDest && etapaOrigem && etapaDest.ordem < etapaOrigem.ordem) {
+    if (_usuario?.role !== 'SUPER_ADMIN') {
+      _dragLeadId = null; _dragEtapaOrigem = null;
+      Toast.show(
+        '🚫 Não é permitido voltar o lead para uma etapa anterior.\n' +
+        'O funil deve avançar para preservar a conversão.',
+        'error'
+      );
+      return;
+    }
+    // SUPER_ADMIN: avisa mas permite
+    console.warn('[PIPELINE_RETROCESSO] SUPER_ADMIN movendo lead para etapa anterior. Isso afeta o Funil de Conversão.');
+  }
+
   const isPerdido = etapaDest?.is_perdido || etapaDest?.probabilidade===0 ||
     etapaDest?.nome?.toLowerCase().includes('perdid') ||
     etapaDest?.nome?.toLowerCase().includes('desqualif');

@@ -413,6 +413,25 @@ function initSchema(db) {
     // ── Etapas — campo oculta (para ocultar sem deletar) ────────────────────
     `ALTER TABLE etapas ADD COLUMN oculta INTEGER NOT NULL DEFAULT 0`,
     `CREATE INDEX IF NOT EXISTS idx_etapas_oculta ON etapas(oculta)`,
+
+    // ── Funil de Conversão — histórico de passagem por etapa ────────────────
+    // UNIQUE(lead_id, etapa_id) garante contagem máx 1x por lead por etapa
+    `CREATE TABLE IF NOT EXISTS lead_etapa_historico (
+      id            TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      lead_id       TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+      etapa_id      TEXT NOT NULL REFERENCES etapas(id) ON DELETE CASCADE,
+      funil_id      TEXT REFERENCES funis(id),
+      responsavel_id TEXT REFERENCES usuarios(id),
+      entrou_em     TEXT NOT NULL DEFAULT (datetime('now')),
+      criado_em     TEXT NOT NULL DEFAULT (datetime('now')),
+      origem        TEXT DEFAULT 'manual',
+      UNIQUE(lead_id, etapa_id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_leh_lead      ON lead_etapa_historico(lead_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_leh_etapa     ON lead_etapa_historico(etapa_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_leh_funil     ON lead_etapa_historico(funil_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_leh_resp      ON lead_etapa_historico(responsavel_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_leh_entrou_em ON lead_etapa_historico(entrou_em)`,
   ];
   migrations.forEach(sql => { try { db.exec(sql); } catch(_){} });
 
