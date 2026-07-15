@@ -297,8 +297,12 @@ async function listar(req, res) {
   const { funil_id, etapa_id, responsavel_id, status, busca, excluir_carteira } = req.query;
   const excluiCarteira = excluir_carteira === 'true' && !funil_id;
 
+  // Log de diagnóstico do filtro por vendedor
+  console.log('[FILTRO_VENDEDOR_BACKEND_RECEBIDO] leads.listar | responsavel_id:', responsavel_id || '(nao enviado)', '| role:', req.usuario?.role, '| funil_id:', funil_id || '(todos)');
+
   try {
     if (isSupa) {
+
       // Resolve id da Carteira Recorrente e funis inativos se necessário
       let carteiraFunilId = null;
       let funisInativosIds = [];

@@ -217,7 +217,9 @@ async function init() {
 
 async function carregarUsuarios() {
   const r = await Auth.api('GET','/usuarios');
-  _usuarios = (r?.data?.dados||[]).filter(u=>u.ativo);
+  // Filtra apenas VENDEDORs ativos (SUPER_ADMIN e GESTOR não possuem pedidos próprios)
+  _usuarios = (r?.data?.dados||[]).filter(u => u.ativo && u.role === 'VENDEDOR');
+  console.log('[FILTRO_VENDEDOR_SELECT_LOAD] adm-vendas | vendedores:', _usuarios.length, _usuarios.map(u => u.nome).join(', '));
 }
 
 function popularSelResp() {
@@ -225,6 +227,10 @@ function popularSelResp() {
   if (_usuario.role === 'VENDEDOR') { sel.closest('div').style.display='none'; return; }
   sel.innerHTML = '<option value="">Todos</option>' +
     _usuarios.map(u=>`<option value="${u.id}">${u.nome}</option>`).join('');
+  // Log de diagnóstico ao selecionar
+  sel.addEventListener('change', e => {
+    console.log('[FILTRO_VENDEDOR_SELECT_CHANGE] adm-vendas | valor:', e.target.value, '| nome:', sel.selectedOptions[0]?.text);
+  });
 }
 
 async function carregar() {
@@ -241,6 +247,7 @@ async function carregar() {
   if (inicio) params.set('data_inicio', inicio);
   if (fim)    params.set('data_fim', fim);
   if (busca)  params.set('busca', busca);
+  console.log('[FILTRO_VENDEDOR_PAYLOAD_API] adm-vendas | responsavel_id:', resp || '(todos)', '| params:', params.toString());
   const r = await Auth.api('GET', `/adm-vendas?${params}`);
   _vendas = r?.data?.dados || [];
   renderStats();

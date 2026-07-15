@@ -39,7 +39,11 @@ async function listar(req, res) {
   const { etapa, responsavel_id, busca, status = 'ativo', data_inicio, data_fim } = req.query;
   const usuario = req.usuario;
 
+  // Log de diagnóstico
+  console.log('[FILTRO_VENDEDOR_BACKEND_RECEBIDO] adm-vendas.listar | responsavel_id:', responsavel_id || '(nao enviado)', '| role:', usuario?.role);
+
   try {
+
     if (isSupa) {
       let q = sb.from('adm_vendas').select(`
         *,

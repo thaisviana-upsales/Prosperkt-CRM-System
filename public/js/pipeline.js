@@ -112,7 +112,9 @@ async function carregarFunis() {
 
 async function carregarUsuarios() {
   const r = await Auth.api('GET','/usuarios');
-  _usuarios = (r?.data?.dados||[]).filter(u=>u.ativo);
+  // Filtra apenas VENDEDORs ativos (SUPER_ADMIN e GESTOR não têm leads próprios para filtrar)
+  _usuarios = (r?.data?.dados||[]).filter(u => u.ativo && u.role === 'VENDEDOR');
+  console.log('[FILTRO_VENDEDOR_SELECT_LOAD] pipeline | vendedores no select:', _usuarios.length, _usuarios.map(u => u.nome).join(', '));
 }
 
 async function carregarMotivos() {
@@ -247,7 +249,10 @@ function construirURL() {
     if (_filtros.dataInicio)   p.push(`data_inicio=${_filtros.dataInicio}`);
     if (_filtros.dataFim)      p.push(`data_fim=${_filtros.dataFim}`);
   }
-  return url + p.join('&');
+  const fullUrl = url + p.join('&');
+  console.log('[FILTRO_VENDEDOR_PAYLOAD_API] pipeline | URL:', fullUrl,
+    '| vendedor_id:', _filtros.resp || '(todos)');
+  return fullUrl;
 }
 
 // ── Kanban ────────────────────────────────────────────────────
@@ -1355,7 +1360,11 @@ function bindEvents() {
     _filtros.funil=e.target.value; await aplicarFiltros();
   });
   document.getElementById('sel-resp').addEventListener('change', e => {
-    _filtros.resp=e.target.value; carregarLeads();
+    _filtros.resp = e.target.value;
+    console.log('[FILTRO_VENDEDOR_SELECT_CHANGE] pipeline | valor:', e.target.value,
+      '| nome:', document.getElementById('sel-resp').selectedOptions[0]?.text);
+    console.log('[FILTRO_VENDEDOR_VALOR_SELECIONADO] resp =', _filtros.resp || '(todos)');
+    carregarLeads();
   });
   document.getElementById('sel-data-tipo').addEventListener('change', e => {
     _filtros.dataTipo=e.target.value;

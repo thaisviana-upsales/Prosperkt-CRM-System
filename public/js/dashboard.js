@@ -54,10 +54,16 @@ async function carregarUsuarios() {
     return;
   }
   const r = await Auth.api('GET', '/usuarios');
-  const users = (r?.data?.dados || []).filter(u => u.ativo);
+  // Filtra apenas usuários ativos com role VENDEDOR ou GESTOR (SUPER_ADMIN não possui leads)
+  const users = (r?.data?.dados || []).filter(u => u.ativo && (u.role === 'VENDEDOR' || u.role === 'GESTOR'));
+  console.log('[FILTRO_VENDEDOR_SELECT_LOAD] total usuários no select:', users.length, users.map(u => u.nome + '(' + u.role + ')').join(', '));
   const sel = document.getElementById('f-resp');
   sel.innerHTML = '<option value="">Todos</option>' +
     users.map(u => `<option value="${u.id}">${u.nome}</option>`).join('');
+  // Log quando o select muda — diagnóstico
+  sel.addEventListener('change', e => {
+    console.log('[FILTRO_VENDEDOR_SELECT_CHANGE] valor selecionado:', e.target.value, '| texto:', sel.selectedOptions[0]?.text);
+  });
 }
 
 function buildQuery() {
@@ -69,7 +75,10 @@ function buildQuery() {
   if (_filtros.dataPeriodo) p.push(`data_periodo=${_filtros.dataPeriodo}`);
   if (_filtros.dataInicio)  p.push(`data_inicio=${_filtros.dataInicio}`);
   if (_filtros.dataFim)     p.push(`data_fim=${_filtros.dataFim}`);
-  return '?' + p.join('&');
+  const query = '?' + p.join('&');
+  console.log('[FILTRO_VENDEDOR_PAYLOAD_API] query construída:', query,
+    '| vendedor_id:', _filtros.resp || '(todos)');
+  return query;
 }
 
 async function carregar() {
@@ -503,10 +512,12 @@ function bindEvents() {
 
     // ── Logs de diagnóstico ──────────────────────────────────────────────
     console.log('[DASHBOARD_FILTER_APPLY]', _filtros);
+    console.log('[FILTRO_VENDEDOR_VALOR_SELECIONADO]',
+      _filtros.resp || '(todos)',
+      '| nome:', document.getElementById('f-resp').selectedOptions[0]?.text || 'Todos');
     if (_filtros.funil)       console.log('[DASHBOARD_FILTER_FUNIL_SELECTED]',    _filtros.funil,    document.getElementById('f-funil').selectedOptions[0]?.text);
     if (_filtros.resp)        console.log('[DASHBOARD_FILTER_VENDEDOR_SELECTED]', _filtros.resp,     document.getElementById('f-resp').selectedOptions[0]?.text);
     if (_filtros.dataTipo)    console.log('[DASHBOARD_FILTER_DATE_SELECTED]',     _filtros.dataTipo, _filtros.dataPeriodo, _filtros.dataInicio, _filtros.dataFim);
-    console.log('[DASHBOARD_API_PARAMS] query:', buildQuery());
 
     carregar();
   });

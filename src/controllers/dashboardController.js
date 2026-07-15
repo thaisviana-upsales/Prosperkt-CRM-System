@@ -107,6 +107,7 @@ async function resumo(req, res) {
     excluiCarteira,
     usuario_role:    req.usuario?.role,
   });
+  console.log('[FILTRO_VENDEDOR_BACKEND_RECEBIDO] dashboard.resumo | responsavel_id:', responsavel_id || '(nao enviado/todos)', '| role:', req.usuario?.role);
 
   try {
     if (isSupa) {
