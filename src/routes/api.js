@@ -281,8 +281,94 @@ router.post('/admin/backups',         autenticar, exigirSuperAdmin, backupCtrl.e
 router.get ('/admin/backups/:arquivo',autenticar, exigirSuperAdmin, backupCtrl.download);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WHATSAPP — Deduplicação segura de conversas (SUPER_ADMIN)
+// ADMIN — MIGRATION: Setup tabela lead_etapa_historico (SUPER_ADMIN)
+// Roda migration + backfill via pg direto ou via Supabase JS
 // ─────────────────────────────────────────────────────────────────────────────
+router.post('/admin/setup-historico', autenticar, exigirSuperAdmin, async (req, res) => {
+  const { migrarDadosExistentes } = require('../services/etapaHistoricoService');
+  const { sb, isSupa } = require('../database/dbProvider').getProvider();
+
+  if (!isSupa) {
+    // SQLite: tabela gerenciada pelo db.js initSchema — apenas faz backfill
+    try {
+      await migrarDadosExistentes();
+      return res.json({ sucesso: true, mensagem: 'SQLite: backfill concluído.', modo: 'sqlite' });
+    } catch (e) {
+      return res.status(500).json({ sucesso: false, erro: e.message });
+    }
+  }
+
+  // Supabase: verifica se tabela existe
+  const { error: testErr } = await sb.from('lead_etapa_historico').select('id').limit(1);
+  const tabelaExiste = !testErr;
+
+  if (!tabelaExiste) {
+    // Tenta criar via pg direto (requer DATABASE_URL no .env)
+    const DATABASE_URL = process.env.DATABASE_URL;
+    if (DATABASE_URL) {
+      try {
+        const { Client } = require('pg');
+        const client = new Client({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
+        await client.connect();
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS lead_etapa_historico (
+            id             TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            lead_id        TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+            etapa_id       TEXT NOT NULL REFERENCES etapas(id) ON DELETE CASCADE,
+            funil_id       TEXT REFERENCES funis(id),
+            pipeline_id    TEXT REFERENCES pipelines(id),
+            responsavel_id TEXT REFERENCES usuarios(id),
+            entrou_em      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            criado_em      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            origem         TEXT DEFAULT 'manual',
+            UNIQUE(lead_id, etapa_id)
+          );
+          CREATE INDEX IF NOT EXISTS idx_leh_lead      ON lead_etapa_historico(lead_id);
+          CREATE INDEX IF NOT EXISTS idx_leh_etapa     ON lead_etapa_historico(etapa_id);
+          CREATE INDEX IF NOT EXISTS idx_leh_funil     ON lead_etapa_historico(funil_id);
+          CREATE INDEX IF NOT EXISTS idx_leh_resp      ON lead_etapa_historico(responsavel_id);
+          CREATE INDEX IF NOT EXISTS idx_leh_entrou_em ON lead_etapa_historico(entrou_em);
+          ALTER TABLE lead_etapa_historico DISABLE ROW LEVEL SECURITY;
+        `);
+        await client.end();
+        console.log('[SETUP_HISTORICO] Tabela criada via pg direto!');
+      } catch (pgErr) {
+        return res.status(500).json({
+          sucesso: false,
+          erro: 'Tabela não existe e pg direto falhou: ' + pgErr.message,
+          sql_necessario: true,
+          url_sql_editor: 'https://supabase.com/dashboard/project/wtuhaoyqojzelaqteclx/sql/new',
+          instrucao: 'Execute o SQL em /migrations/supabase_lead_etapa_historico.sql no Supabase SQL Editor.',
+        });
+      }
+    } else {
+      return res.status(400).json({
+        sucesso: false,
+        tabela_existe: false,
+        sql_necessario: true,
+        url_sql_editor: 'https://supabase.com/dashboard/project/wtuhaoyqojzelaqteclx/sql/new',
+        instrucao: 'Execute o SQL em /migrations/supabase_lead_etapa_historico.sql no Supabase SQL Editor e depois rode POST /admin/setup-historico novamente.',
+        sql_arquivo: 'migrations/supabase_lead_etapa_historico.sql',
+      });
+    }
+  }
+
+  // Faz backfill via JS
+  try {
+    await migrarDadosExistentes();
+    const { count } = await sb.from('lead_etapa_historico').select('*', { count: 'exact', head: true });
+    return res.json({
+      sucesso: true,
+      tabela_existe: true,
+      total_registros: count,
+      mensagem: 'Backfill concluído. Funil de Conversão agora usa histórico real.',
+    });
+  } catch (e) {
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+});
+
+
 router.get  ('/whatsapp/deduplicar',  autenticar, exigirSuperAdmin, whatsappCtrl.diagnosticarDuplicatas);
 router.post ('/whatsapp/deduplicar',  autenticar, exigirSuperAdmin, whatsappCtrl.executarDeduplicacao);
 

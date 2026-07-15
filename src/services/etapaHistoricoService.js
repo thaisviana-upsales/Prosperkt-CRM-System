@@ -70,15 +70,20 @@ async function registrarPassagem({ leadId, etapaId, funilId = null, responsavelI
     } else {
       const { getDb } = require('../database/db');
       const db = getDb();
-      db.prepare(`
+      const stmt = db.prepare(`
         INSERT OR IGNORE INTO lead_etapa_historico
           (id, lead_id, etapa_id, funil_id, responsavel_id, entrou_em, criado_em, origem)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
+      `);
+      const result = stmt.run(
         crypto.randomBytes(16).toString('hex'),
         leadId, etapaId, funilId || null, responsavelId || null,
         entradaTs, agora, origem
       );
+      if (result.changes === 0) {
+        console.log('[FUNIL_CONVERSAO_HISTORICO_DUPLICADO_IGNORADO] lead:', leadId, '+ etapa:', etapaId, '— já existe, ignorado.');
+        return; // não loga duplicata como novo registro
+      }
     }
     console.log('[FUNIL_HISTORICO_REGISTRO] lead:', leadId, '→ etapa:', etapaId, '| origem:', origem);
   } catch (e) {
@@ -86,6 +91,7 @@ async function registrarPassagem({ leadId, etapaId, funilId = null, responsavelI
     console.error('[EtapaHistorico] Erro ao registrar passagem:', e.message);
   }
 }
+
 
 /**
  * Faz migration de dados existentes:
@@ -135,21 +141,81 @@ async function migrarDadosExistentes() {
         // Usa etapa_atualizada_em ou criado_em como timestamp de entrada
         const entradaTs = lead.etapa_atualizada_em || lead.criado_em || new Date().toISOString();
 
-        await sb.from('lead_etapa_historico').insert({
-          id:             crypto.randomBytes(16).toString('hex'),
-          lead_id:        lead.id,
-          etapa_id:       lead.etapa_id,
-          funil_id:       lead.funil_id || null,
-          responsavel_id: lead.responsavel_id || null,
-          entrou_em:      entradaTs,
-          criado_em:      new Date().toISOString(),
-          origem:         'migration',
-        }).catch(() => {}); // ignora duplicatas
-
-        registrados++;
+        try {
+          await sb.from('lead_etapa_historico').insert({
+            id:             crypto.randomBytes(16).toString('hex'),
+            lead_id:        lead.id,
+            etapa_id:       lead.etapa_id,
+            funil_id:       lead.funil_id || null,
+            responsavel_id: lead.responsavel_id || null,
+            entrou_em:      entradaTs,
+            criado_em:      new Date().toISOString(),
+            origem:         'migration',
+          });
+          registrados++;
+        } catch (_eDup) { /* ignora duplicata */ }
       }
 
       console.log('[FUNIL_HISTORICO_MIGRATION_DONE] Supabase | registrados:', registrados, '| ignorados (já existiam):', ignorados);
+
+      // Backfill: Registra a PRIMEIRA etapa da pipeline para cada lead (Supabase)
+      // Garante que a 1ª etapa apareça no Funil de Conversão mesmo que o lead tenha avançado
+      try {
+        const { data: leadsComPipeline } = await sb
+          .from('leads')
+          .select('id, pipeline_id, funil_id, responsavel_id, criado_em')
+          .not('pipeline_id', 'is', null);
+
+        if (leadsComPipeline?.length) {
+          // Busca a primeira etapa de cada pipeline (menor ordem)
+          const pipelineIds = [...new Set(leadsComPipeline.map(l => l.pipeline_id))];
+          const { data: primeiraEtapas } = await sb
+            .from('etapas')
+            .select('id, pipeline_id, ordem')
+            .in('pipeline_id', pipelineIds)
+            .order('ordem', { ascending: true });
+
+          // Mapa: pipeline_id -> etapa de menor ordem
+          const primeiraEtapaMap = {};
+          for (const e of (primeiraEtapas || [])) {
+            if (!primeiraEtapaMap[e.pipeline_id]) primeiraEtapaMap[e.pipeline_id] = e;
+          }
+
+          let backfillCount = 0;
+          for (const lead of leadsComPipeline) {
+            const primeiraEtapa = primeiraEtapaMap[lead.pipeline_id];
+            if (!primeiraEtapa) continue;
+
+            // Verifica se já existe registro para este lead + primeira etapa
+            const { data: existePrimeira } = await sb
+              .from('lead_etapa_historico')
+              .select('id')
+              .eq('lead_id', lead.id)
+              .eq('etapa_id', primeiraEtapa.id)
+              .limit(1);
+
+            if ((existePrimeira || []).length > 0) continue; // já existe
+
+            try {
+              await sb.from('lead_etapa_historico').insert({
+                id:             crypto.randomBytes(16).toString('hex'),
+                lead_id:        lead.id,
+                etapa_id:       primeiraEtapa.id,
+                funil_id:       lead.funil_id || null,
+                responsavel_id: lead.responsavel_id || null,
+                entrou_em:      lead.criado_em || new Date().toISOString(),
+                criado_em:      new Date().toISOString(),
+                origem:         'migration_backfill_primeira_etapa',
+              });
+              backfillCount++;
+            } catch (_eDup2) { /* ignora duplicata */ }
+          }
+          console.log('[FUNIL_HISTORICO_MIGRATION_DONE] Supabase | primeira etapa backfill:', backfillCount);
+        }
+      } catch (eBf) {
+        console.warn('[FUNIL_HISTORICO_MIGRATION] Backfill primeira etapa (Supabase):', eBf.message);
+      }
+
 
     } else {
       // SQLite
@@ -163,12 +229,13 @@ async function migrarDadosExistentes() {
           lower(hex(randomblob(16))),
           l.id,
           l.etapa_id,
-          l.funil_id,
+          p.funil_id,
           l.responsavel_id,
           COALESCE(l.atualizado_em, l.criado_em, datetime('now')),
           datetime('now'),
           'migration'
         FROM leads l
+        LEFT JOIN pipelines p ON l.pipeline_id = p.id
         WHERE l.etapa_id IS NOT NULL
           AND NOT EXISTS (
             SELECT 1 FROM lead_etapa_historico h
@@ -176,7 +243,39 @@ async function migrarDadosExistentes() {
           )
       `).run();
 
-      console.log('[FUNIL_HISTORICO_MIGRATION_DONE] SQLite | registrados:', result.changes);
+      console.log('[FUNIL_HISTORICO_MIGRATION_DONE] SQLite | etapa atual registrada:', result.changes);
+
+      // Backfill: Registra a PRIMEIRA etapa da pipeline para cada lead que não tem registro nela
+      // Garante que Lead Recebido aparecer no funil mesmo que o lead já tenha avançado
+      const backfillResult = db.prepare(`
+        INSERT OR IGNORE INTO lead_etapa_historico
+          (id, lead_id, etapa_id, funil_id, responsavel_id, entrou_em, criado_em, origem)
+        SELECT
+          lower(hex(randomblob(16))),
+          l.id,
+          e_first.id,
+          p.funil_id,
+          l.responsavel_id,
+          COALESCE(l.criado_em, datetime('now')),
+          datetime('now'),
+          'migration_backfill_primeira_etapa'
+        FROM leads l
+        JOIN pipelines p ON l.pipeline_id = p.id
+        JOIN (
+          SELECT e.pipeline_id, e.id, e.ordem
+          FROM etapas e
+          WHERE e.ordem = (
+            SELECT MIN(e2.ordem) FROM etapas e2 WHERE e2.pipeline_id = e.pipeline_id
+          )
+        ) e_first ON e_first.pipeline_id = p.id
+        WHERE l.pipeline_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM lead_etapa_historico h
+            WHERE h.lead_id = l.id AND h.etapa_id = e_first.id
+          )
+      `).run();
+
+      console.log('[FUNIL_HISTORICO_MIGRATION_DONE] SQLite | primeira etapa backfill:', backfillResult.changes);
     }
   } catch (e) {
     console.error('[FUNIL_HISTORICO_MIGRATION] Erro:', e.message);

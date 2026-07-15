@@ -108,6 +108,8 @@ initProvider().then(() => {
 
     // Inicia automações (stale leads + SLA Contato 1 no criar)
     iniciarAutomacoes();
+    // Nota: migrarDadosExistentes() já é chamado em src/routes/api.js com delay de 5s
+
 
     // Configura webhook da Evolution API com MESSAGES_UPSERT no startup
     // Necessário para garantir que respostas do WhatsApp chegam ao CRM

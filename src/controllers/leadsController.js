@@ -476,6 +476,7 @@ async function criar(req, res) {
       req.log({ acao:'CREATE', entidade:'leads', entidade_id:id, depois:{ nome, etapa_id, funil_id:fId } });
       // Registra passagem pela etapa inicial no histórico do Funil de Conversão
       if (etapa_id) {
+        console.log('[FUNIL_CONVERSAO_HISTORICO_CREATE_LEAD] lead:', id, '→ etapa:', etapa_id, '| funil:', fId, '| origem: create');
         setImmediate(() => etapaHistorico.registrarPassagem({
           leadId: id, etapaId: etapa_id, funilId: fId, responsavelId: respId, origem: 'create',
           entrou_em: row.criado_em,
@@ -501,10 +502,20 @@ async function criar(req, res) {
     );
     // observacoes salva em leads.observacoes — nao duplicar em mensagens
     req.log({ acao:'CREATE', entidade:'leads', entidade_id:id, depois:{ nome, pipeline_id, etapa_id } });
-    // Registra passagem pela etapa inicial no histórico do Funil de Conversão
+    // Registra passagem pela etapa inicial no histórico do Funil de Conversão (SQLite)
     if (etapa_id) {
+      // Resolve funil_id via pipeline para rastreio correto
+      let funilIdCreate = null;
+      if (pipeline_id) {
+        try {
+          const { getDb: _gdb } = require('../database/db');
+          const _pr = _gdb().prepare('SELECT funil_id FROM pipelines WHERE id=? LIMIT 1').get(pipeline_id);
+          if (_pr) funilIdCreate = _pr.funil_id;
+        } catch(_) {}
+      }
+      console.log('[FUNIL_CONVERSAO_HISTORICO_CREATE_LEAD] lead:', id, '→ etapa:', etapa_id, '| funil:', funilIdCreate, '| origem: create (SQLite)');
       setImmediate(() => etapaHistorico.registrarPassagem({
-        leadId: id, etapaId: etapa_id, funilId: null, responsavelId: respId, origem: 'create',
+        leadId: id, etapaId: etapa_id, funilId: funilIdCreate, responsavelId: respId, origem: 'create',
         entrou_em: new Date().toISOString(),
       }).catch(e => console.error('[FUNIL_HISTORICO_CREATE_SQLite]', e.message)));
     }
@@ -840,7 +851,29 @@ async function mover(req, res) {
       // Resolve funil_id e pipeline_id a partir da etapa se não vierem no body
       let funilIdUpd = req.body.funil_id || lead.funil_id || null;
       if (!funilIdUpd && etapa.funil_id) funilIdUpd = etapa.funil_id;
+
+      // ── Bloqueio de retrocesso no backend ──────────────────────────────────
+      // Garante integridade do Funil de Conversão: proíbe mover para etapa de ordem menor.
+      // Exceção: SUPER_ADMIN pode corrigir erros (avisa mas permite).
+      if (lead.etapa_id && lead.etapa_id !== etapa_id) {
+        const { data: etapaAtual } = await sb.from('etapas').select('ordem').eq('id', lead.etapa_id).single();
+        if (etapaAtual && typeof etapaAtual.ordem === 'number' && typeof etapa.ordem === 'number') {
+          if (etapa.ordem < etapaAtual.ordem) {
+            if (req.usuario.role !== 'SUPER_ADMIN') {
+              console.warn('[PIPELINE_MOVE_BACKWARD_BLOCKED] lead:', id, '| de etapa ordem', etapaAtual.ordem, '→', etapa.ordem, '| bloqueado para role:', req.usuario.role);
+              return res.status(400).json({
+                sucesso: false,
+                erro: 'Não é permitido voltar o lead para uma etapa anterior. O funil deve seguir apenas para frente para preservar a conversão.',
+                retrocesso: true,
+              });
+            }
+            console.warn('[PIPELINE_MOVE_BACKWARD_BLOCKED] SUPER_ADMIN permitido | lead:', id, '| ordem', etapaAtual.ordem, '→', etapa.ordem);
+          }
+        }
+      }
+
       const upd = { etapa_id, atualizado_em: agora, status: novoStatus, etapa_atualizada_em: agora };
+
       if (funilIdUpd) upd.funil_id = funilIdUpd;
       if (pipeline_id) upd.pipeline_id = pipeline_id;
       if (isGanho && !lead.ganho_em) upd.ganho_em = agora;
@@ -914,7 +947,8 @@ async function mover(req, res) {
         depois:{ etapa_id, status:novoStatus, etapa_nome:etapa.nome,
           layout_virtual_entrada_em: isLayoutVirtual ? agora : undefined,
           layout_virtual_aprovado_em: upd.layout_virtual_aprovado_em || undefined } });
-      // Registra passagem pela etapa de destino no histórico do Funil de Conversão
+      // Registra passagem pela etapa de destino no histórico do Funil de Conversão (Supabase)
+      console.log('[FUNIL_CONVERSAO_HISTORICO_MOVE_LEAD] lead:', id, '→ etapa:', etapa_id, '| funil:', funilIdUpd || lead.funil_id || null, '| origem: mover');
       setImmediate(() => etapaHistorico.registrarPassagem({
         leadId: id,
         etapaId: etapa_id,
@@ -975,9 +1009,28 @@ async function mover(req, res) {
     if (etapa.is_perdido && !motivo_perda && !lead.motivo_perda)
       return res.status(400).json({ sucesso:false, erro:'motivo_perda é obrigatório ao mover para etapa perdida.' });
 
+    // ── Bloqueio de retrocesso no backend (SQLite) ────────────────────────────
+    if (lead.etapa_id && lead.etapa_id !== etapa_id) {
+      const etapaAtualSql = sqlite.prepare('SELECT ordem FROM etapas WHERE id=? LIMIT 1').get(lead.etapa_id);
+      if (etapaAtualSql && typeof etapaAtualSql.ordem === 'number' && typeof etapa.ordem === 'number') {
+        if (etapa.ordem < etapaAtualSql.ordem) {
+          if (req.usuario.role !== 'SUPER_ADMIN') {
+            console.warn('[PIPELINE_MOVE_BACKWARD_BLOCKED] SQLite | lead:', id, '| ordem', etapaAtualSql.ordem, '→', etapa.ordem);
+            return res.status(400).json({
+              sucesso: false,
+              erro: 'Não é permitido voltar o lead para uma etapa anterior. O funil deve seguir apenas para frente para preservar a conversão.',
+              retrocesso: true,
+            });
+          }
+          console.warn('[PIPELINE_MOVE_BACKWARD_BLOCKED] SQLite | SUPER_ADMIN permitido | lead:', id);
+        }
+      }
+    }
+
     const novoStatus = etapa.is_ganho ? 'GANHO' : etapa.is_perdido ? 'PERDIDO' : 'ABERTO';
     const agora = new Date().toISOString();
     const extras = {};
+
     if (etapa.is_ganho && !lead.data_fechamento) extras.data_fechamento = agora.slice(0,10);
     if (etapa.is_perdido && motivo_perda) extras.motivo_perda = motivo_perda;
     extras.etapa_atualizada_em = agora; // rastreia entrada na etapa
@@ -1030,6 +1083,31 @@ async function mover(req, res) {
     sqlite.prepare(`UPDATE leads SET etapa_id=?, pipeline_id=COALESCE(?,pipeline_id), status=?, atualizado_em=?${extraSets?','+extraSets:''} WHERE id=?`).run(etapa_id, pipeline_id||null, novoStatus, agora, ...Object.values(extras), id);
 
     req.log({ acao:'MOVER', entidade:'leads', entidade_id:id, antes:{ etapa_id:lead.etapa_id }, depois:{ etapa_id, status:novoStatus } });
+
+    // Registra passagem pela etapa de destino no histórico do Funil de Conversão (SQLite)
+    // Idempotente: UNIQUE(lead_id, etapa_id) impede duplicatas
+    setImmediate(() => {
+      // Resolve funil_id para o lead (via pipeline)
+      let funilIdSql = lead.funil_id || null;
+      if (!funilIdSql && (pipeline_id || lead.pipeline_id)) {
+        try {
+          const { getDb: _getDbMov } = require('../database/db');
+          const _dbMov = _getDbMov();
+          const pipeRow = _dbMov.prepare('SELECT funil_id FROM pipelines WHERE id=? LIMIT 1').get(pipeline_id || lead.pipeline_id);
+          if (pipeRow) funilIdSql = pipeRow.funil_id;
+        } catch(_) {}
+      }
+      etapaHistorico.registrarPassagem({
+        leadId: id,
+        etapaId: etapa_id,
+        funilId: funilIdSql,
+        responsavelId: lead.responsavel_id || null,
+        origem: 'mover',
+        entrou_em: agora,
+      }).then(() => {
+        console.log('[FUNIL_CONVERSAO_HISTORICO_MOVE_LEAD] lead:', id, '→ etapa:', etapa_id, '| origem: mover');
+      }).catch(e => console.error('[FUNIL_CONVERSAO_HISTORICO_MOVER_SQLite]', e.message));
+    });
 
     const valorVendaGanhoSql = Number(lead.valor_venda ?? lead.valor ?? 0);
     if (etapa.is_ganho && lead.responsavel_id && valorVendaGanhoSql > 0) {

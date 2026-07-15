@@ -109,6 +109,15 @@ async function resumo(req, res) {
     usuario_role:    req.usuario?.role,
   });
   console.log('[FILTRO_VENDEDOR_BACKEND_RECEBIDO] dashboard.resumo | responsavel_id:', responsavel_id || '(nao enviado/todos)', '| role:', req.usuario?.role);
+  console.log('[DASHBOARD_FUNIL_CONVERSAO_FILTROS_RECEBIDOS]', {
+    funil_id:        funil_id || 'todos-novos',
+    responsavel_id:  responsavel_id || 'todos',
+    data_tipo:       data_tipo || 'criacao',
+    data_periodo:    data_periodo || 'sem-periodo',
+    excluir_carteira: excluiCarteira,
+  });
+
+
 
   try {
     if (isSupa) {
@@ -207,6 +216,13 @@ async function resumo(req, res) {
         ticket_medio,
         taxa_conversao,
       };
+      console.log('[DASHBOARD_COCKPIT_LEADS_RECEBIDOS_BASE]', {
+        total_leads:    kpis.total_leads,
+        total_ganhos:   kpis.total_ganhos,
+        total_perdidos: kpis.total_perdidos,
+        funil_id:       funil_id || 'todos-novos',
+        responsavel_id: responsavel_id || 'todos',
+      });
 
       // ── 4. Funil Visual ─────────────────────────────────────────────────
       // Carrega a estrutura de etapas da pipeline real.
