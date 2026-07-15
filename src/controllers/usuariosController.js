@@ -35,6 +35,14 @@ async function listar(req, res) {
       }
       const { data, error } = await q;
       if (error) throw error;
+      // ── Diagnóstico do select de vendedor ───────────────────────────────────
+      console.log('[FILTRO_VENDEDOR_LOAD_START] usuarios.listar | role solicitante:', req.usuario?.role, '| incluirInativos:', incluirInativos);
+      console.log('[FILTRO_VENDEDOR_API_RESPONSE_TOTAL] Supabase retornou:', (data||[]).length, 'registros');
+      if ((data||[]).length > 0) {
+        const amostra = (data||[]).slice(0,3).map(u => ({ nome: u.nome, role: u.role, ativo: u.ativo }));
+        console.log('[FILTRO_VENDEDOR_API_RESPONSE_SAMPLE]', JSON.stringify(amostra));
+      }
+      // ────────────────────────────────────────────────────────────────
       return res.json({ sucesso: true, dados: data || [], total: (data || []).length });
     }
 
@@ -50,9 +58,83 @@ async function listar(req, res) {
     } else {
       usuarios = db.prepare(`SELECT ${campos} FROM usuarios WHERE ativo = 1 ORDER BY nome`).all();
     }
+    console.log('[FILTRO_VENDEDOR_LOAD_START] usuarios.listar SQLite | role:', req.usuario?.role, '| encontrados:', usuarios.length);
+    if (usuarios.length > 0) {
+      const amostra = usuarios.slice(0,3).map(u => ({ nome: u.nome, role: u.role, ativo: u.ativo }));
+      console.log('[FILTRO_VENDEDOR_API_RESPONSE_SAMPLE] SQLite:', JSON.stringify(amostra));
+    }
     return res.json({ sucesso: true, dados: usuarios, total: usuarios.length });
   } catch (e) {
     console.error('[usuarios.listar]', e.message);
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/usuarios/responsaveis
+// Fallback: retorna usuários que são responsáveis por LEADS existentes.
+// Garante que o select de vendedor sempre seja populado mesmo se /usuarios
+// retornar vazio (ex: problema de ativo/boolean no Supabase).
+// ─────────────────────────────────────────────────────────────────────────────
+async function listarResponsaveis(req, res) {
+  const { sb, isSupa, sqlite } = getProvider();
+  console.log('[FILTRO_VENDEDOR_LOAD_START] listarResponsaveis | role:', req.usuario?.role);
+
+  try {
+    if (isSupa) {
+      // Busca IDs distintos de responsavel_id nos leads
+      const { data: leads, error: e1 } = await sb
+        .from('leads')
+        .select('responsavel_id')
+        .not('responsavel_id', 'is', null);
+      if (e1) throw e1;
+
+      const ids = [...new Set((leads || []).map(l => l.responsavel_id).filter(Boolean))];
+      console.log('[FILTRO_VENDEDOR_API_RESPONSE_TOTAL] responsaveis distintos nos leads:', ids.length);
+
+      if (ids.length === 0) {
+        // Último fallback: retorna TODOS os usuários sem filtro de ativo
+        const { data: todos } = await sb.from('usuarios').select(CAMPOS_PUBLICOS_SUPA).order('nome');
+        console.log('[FILTRO_VENDEDOR_API_RESPONSE_TOTAL] fallback total sem filtro:', (todos||[]).length);
+        return res.json({ sucesso: true, dados: todos || [], total: (todos||[]).length, fallback: 'all' });
+      }
+
+      // Busca usuários por esses IDs
+      const { data: users, error: e2 } = await sb
+        .from('usuarios')
+        .select(CAMPOS_PUBLICOS_SUPA)
+        .in('id', ids)
+        .order('nome');
+      if (e2) throw e2;
+
+      console.log('[FILTRO_VENDEDOR_API_RESPONSE_TOTAL] usuarios encontrados por ids dos leads:', (users||[]).length);
+      if ((users||[]).length > 0) {
+        const amostra = users.slice(0,3).map(u => ({ nome: u.nome, role: u.role, ativo: u.ativo }));
+        console.log('[FILTRO_VENDEDOR_API_RESPONSE_SAMPLE]', JSON.stringify(amostra));
+      }
+      return res.json({ sucesso: true, dados: users || [], total: (users||[]).length, fallback: 'leads' });
+    }
+
+    // SQLite
+    const { getDb } = require('../database/db');
+    const db = getDb();
+    const responsaveis = db.prepare(`
+      SELECT DISTINCT u.id, u.nome, u.email, u.role, u.ativo, u.avatar_url, u.criado_em, u.atualizado_em
+      FROM usuarios u
+      INNER JOIN leads l ON l.responsavel_id = u.id
+      ORDER BY u.nome
+    `).all();
+    console.log('[FILTRO_VENDEDOR_API_RESPONSE_TOTAL] SQLite responsaveis dos leads:', responsaveis.length);
+
+    if (responsaveis.length === 0) {
+      // Último fallback: todos os usuários ativos
+      const todos = db.prepare('SELECT id, nome, email, role, ativo, avatar_url, criado_em, atualizado_em FROM usuarios WHERE ativo = 1 ORDER BY nome').all();
+      return res.json({ sucesso: true, dados: todos, total: todos.length, fallback: 'all' });
+    }
+
+    return res.json({ sucesso: true, dados: responsaveis, total: responsaveis.length, fallback: 'leads' });
+  } catch (e) {
+    console.error('[usuarios.listarResponsaveis]', e.message);
     return res.status(500).json({ sucesso: false, erro: e.message });
   }
 }
@@ -279,5 +361,6 @@ async function uploadAvatar(req, res) {
   }
 }
 
-module.exports = { listar, buscarPorId, criar, atualizar, deletar, uploadAvatar };
+module.exports = { listar, listarResponsaveis, buscarPorId, criar, atualizar, deletar, uploadAvatar };
+
 

@@ -54,12 +54,13 @@ router.post('/auth/trocar-senha',  authCtrl.trocarSenha); // primeiro acesso —
 // ─────────────────────────────────────────────────────────────────────────────
 // USUARIOS
 // ─────────────────────────────────────────────────────────────────────────────
-router.get   ('/usuarios',          autenticar, usuariosCtrl.listar);
-router.get   ('/usuarios/:id',      autenticar, usuariosCtrl.buscarPorId);
-router.post  ('/usuarios',          autenticar, exigirRole('GESTOR'), usuariosCtrl.criar);
-router.patch ('/usuarios/:id',      autenticar, usuariosCtrl.atualizar);
-router.post  ('/usuarios/:id/avatar', autenticar, usuariosCtrl.uploadAvatar);
-router.delete('/usuarios/:id',      autenticar, exigirSuperAdmin,     usuariosCtrl.deletar);
+router.get   ('/usuarios',              autenticar, usuariosCtrl.listar);
+router.get   ('/usuarios/responsaveis', autenticar, usuariosCtrl.listarResponsaveis); // fallback: vendedores dos leads
+router.get   ('/usuarios/:id',          autenticar, usuariosCtrl.buscarPorId);
+router.post  ('/usuarios',              autenticar, exigirRole('GESTOR'), usuariosCtrl.criar);
+router.patch ('/usuarios/:id',          autenticar, usuariosCtrl.atualizar);
+router.post  ('/usuarios/:id/avatar',   autenticar, usuariosCtrl.uploadAvatar);
+router.delete('/usuarios/:id',          autenticar, exigirSuperAdmin,     usuariosCtrl.deletar);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LOGS DE AUDITORIA

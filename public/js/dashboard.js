@@ -53,21 +53,35 @@ async function carregarUsuarios() {
     document.getElementById('f-resp').closest('.fg').style.display = 'none';
     return;
   }
+  console.log('[FILTRO_VENDEDOR_LOAD_START] dashboard | iniciando carregamento...');
+
+  // Tentativa 1: endpoint principal /usuarios
+  let users = [];
   const r = await Auth.api('GET', '/usuarios');
-  // Carrega todos os usuários ativos que podem ser responsáveis por leads
-  // Não filtra por role de forma rígida — SUPER_ADMIN, GESTOR e VENDEDOR podem ter leads
   const todos = r?.data?.dados || [];
-  const users = todos.filter(u => {
-    const ativo = u.ativo === true || u.ativo === 1;
-    return ativo;
-  });
-  console.log('[FILTRO_VENDEDOR_USUARIOS_API_RESPONSE] total retornados pela API:', todos.length, '| ativos no select:', users.length);
-  console.log('[FILTRO_VENDEDOR_SELECT_LOAD] usuários:', users.map(u => u.nome + ' (' + u.role + ')').join(', '));
+  users = todos.filter(u => u.ativo === true || u.ativo === 1);
+  console.log('[FILTRO_VENDEDOR_API_RESPONSE_TOTAL] /usuarios retornou:', todos.length, '| ativos:', users.length);
+
+  // Tentativa 2: fallback /usuarios/responsaveis (se principal vier vazio)
+  if (users.length === 0) {
+    console.warn('[FILTRO_VENDEDOR_LOAD_START] /usuarios vazio — tentando fallback /usuarios/responsaveis...');
+    const r2 = await Auth.api('GET', '/usuarios/responsaveis');
+    const fb = r2?.data?.dados || [];
+    users = fb;
+    console.log('[FILTRO_VENDEDOR_API_RESPONSE_TOTAL] fallback retornou:', users.length, 'responsaveis');
+  }
+
+  if (users.length > 0) {
+    const amostra = users.slice(0,3).map(u => u.nome + ' (' + u.role + ')');
+    console.log('[FILTRO_VENDEDOR_API_RESPONSE_SAMPLE]', amostra.join(', '));
+  }
+
   const sel = document.getElementById('f-resp');
   sel.innerHTML = '<option value="">Todos</option>' +
     users.map(u => `<option value="${u.id}">${u.nome}</option>`).join('');
-  console.log('[FILTRO_VENDEDOR_TOTAL_RENDERIZADO]', sel.options.length, 'opções no select (incluindo Todos)');
-  // Log de diagnóstico ao selecionar
+  console.log('[FILTRO_VENDEDOR_RENDER_OPTIONS_TOTAL]', sel.options.length, 'opções renderizadas (incluindo Todos)');
+
+  // Log ao selecionar
   sel.addEventListener('change', e => {
     console.log('[FILTRO_VENDEDOR_SELECT_CHANGE] valor:', e.target.value, '| nome:', sel.selectedOptions[0]?.text);
   });

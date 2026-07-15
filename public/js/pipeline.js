@@ -111,13 +111,25 @@ async function carregarFunis() {
 }
 
 async function carregarUsuarios() {
+  console.log('[FILTRO_VENDEDOR_LOAD_START] pipeline | iniciando carregamento...');
   const r = await Auth.api('GET','/usuarios');
-  // Carrega todos os usuários ativos — sem filtro rígido por role
-  // SUPER_ADMIN, GESTOR e VENDEDOR podem ser responsáveis por leads
+  // Carrega todos os usuários ativos
   const todos = r?.data?.dados || [];
   _usuarios = todos.filter(u => u.ativo === true || u.ativo === 1);
-  console.log('[FILTRO_VENDEDOR_USUARIOS_API_RESPONSE] pipeline | total API:', todos.length, '| ativos:', _usuarios.length);
-  console.log('[FILTRO_VENDEDOR_SELECT_LOAD] pipeline | usuários:', _usuarios.map(u => u.nome + ' (' + u.role + ')').join(', '));
+  console.log('[FILTRO_VENDEDOR_API_RESPONSE_TOTAL] /usuarios retornou:', todos.length, '| ativos:', _usuarios.length);
+
+  // Fallback: se /usuarios vier vazio, usa /usuarios/responsaveis
+  if (_usuarios.length === 0) {
+    console.warn('[FILTRO_VENDEDOR_LOAD_START] pipeline | /usuarios vazio — tentando /usuarios/responsaveis...');
+    const r2 = await Auth.api('GET', '/usuarios/responsaveis');
+    _usuarios = r2?.data?.dados || [];
+    console.log('[FILTRO_VENDEDOR_API_RESPONSE_TOTAL] pipeline fallback retornou:', _usuarios.length);
+  }
+
+  if (_usuarios.length > 0) {
+    const amostra = _usuarios.slice(0,3).map(u => u.nome + ' (' + u.role + ')');
+    console.log('[FILTRO_VENDEDOR_API_RESPONSE_SAMPLE] pipeline:', amostra.join(', '));
+  }
 }
 
 async function carregarMotivos() {
