@@ -216,23 +216,33 @@ async function init() {
 }
 
 async function carregarUsuarios() {
-  console.log('[FILTRO_VENDEDOR_LOAD_START] adm-vendas | iniciando carregamento...');
-  const r = await Auth.api('GET','/usuarios');
-  const todos = r?.data?.dados || [];
-  _usuarios = todos.filter(u => u.ativo === true || u.ativo === 1);
-  console.log('[FILTRO_VENDEDOR_API_RESPONSE_TOTAL] /usuarios retornou:', todos.length, '| ativos:', _usuarios.length);
+  console.log('[FILTRO_VENDEDOR_LOAD_START] adm-vendas | carregando lista de vendedores...');
 
-  // Fallback: se /usuarios vier vazio, usa /usuarios/responsaveis
-  if (_usuarios.length === 0) {
-    console.warn('[FILTRO_VENDEDOR_LOAD_START] adm-vendas | /usuarios vazio — tentando /usuarios/responsaveis...');
-    const r2 = await Auth.api('GET', '/usuarios/responsaveis');
-    _usuarios = r2?.data?.dados || [];
-    console.log('[FILTRO_VENDEDOR_API_RESPONSE_TOTAL] adm-vendas fallback retornou:', _usuarios.length);
+  function filtrarVendedoresValidos(lista, origem) {
+    const ROLES_OK = ['VENDEDOR', 'SUPER_ADMIN', 'vendedor', 'super_admin'];
+    const validos = [], descartados = [];
+    (lista || []).forEach(u => {
+      const isAtivo = u.ativo === true || u.ativo === 1 || u.ativo === '1' || u.ativo === 'true';
+      const roleOk  = ROLES_OK.includes(u.role);
+      if (isAtivo && roleOk) validos.push(u);
+      else descartados.push({ nome: u.nome, role: u.role, ativo: u.ativo, motivo: !isAtivo ? 'inativo' : 'role inválida' });
+    });
+    console.log('[FILTRO_VENDEDOR_USUARIOS_TOTAL_API]', origem, '| recebidos:', (lista||[]).length);
+    console.log('[FILTRO_VENDEDOR_USUARIOS_ATIVOS_TOTAL]', validos.length, 'válidos após filtro');
+    if (descartados.length > 0)
+      console.log('[FILTRO_VENDEDOR_USUARIO_DESCARTADO_INATIVO]', JSON.stringify(descartados));
+    return validos;
   }
 
-  if (_usuarios.length > 0) {
-    const amostra = _usuarios.slice(0,3).map(u => u.nome + ' (' + u.role + ')');
-    console.log('[FILTRO_VENDEDOR_API_RESPONSE_SAMPLE] adm-vendas:', amostra.join(', '));
+  const r = await Auth.api('GET','/usuarios');
+  const raw1 = r?.data?.dados || [];
+  _usuarios = filtrarVendedoresValidos(raw1, '/usuarios');
+
+  if (_usuarios.length === 0) {
+    console.warn('[FILTRO_VENDEDOR_LOAD_START] adm-vendas | /usuarios sem resultado — tentando /usuarios/responsaveis...');
+    const r2 = await Auth.api('GET', '/usuarios/responsaveis');
+    const raw2 = r2?.data?.dados || [];
+    _usuarios = filtrarVendedoresValidos(raw2, '/usuarios/responsaveis');
   }
 }
 
@@ -241,12 +251,12 @@ function popularSelResp() {
   if (_usuario.role === 'VENDEDOR') { sel.closest('div').style.display='none'; return; }
   sel.innerHTML = '<option value="">Todos</option>' +
     _usuarios.map(u=>`<option value="${u.id}">${u.nome}</option>`).join('');
-  console.log('[FILTRO_VENDEDOR_TOTAL_RENDERIZADO] adm-vendas |', sel.options.length, 'opções no select (incluindo Todos)');
-  // Log de diagnóstico ao selecionar
+  console.log('[FILTRO_VENDEDOR_USUARIOS_RENDERIZADOS] adm-vendas |', sel.options.length - 1, 'vendedores no select');
   sel.addEventListener('change', e => {
     console.log('[FILTRO_VENDEDOR_SELECT_CHANGE] adm-vendas | valor:', e.target.value, '| nome:', sel.selectedOptions[0]?.text);
   });
 }
+
 
 
 async function carregar() {

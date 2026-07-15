@@ -53,35 +53,49 @@ async function carregarUsuarios() {
     document.getElementById('f-resp').closest('.fg').style.display = 'none';
     return;
   }
-  console.log('[FILTRO_VENDEDOR_LOAD_START] dashboard | iniciando carregamento...');
 
-  // Tentativa 1: endpoint principal /usuarios
-  let users = [];
-  const r = await Auth.api('GET', '/usuarios');
-  const todos = r?.data?.dados || [];
-  users = todos.filter(u => u.ativo === true || u.ativo === 1);
-  console.log('[FILTRO_VENDEDOR_API_RESPONSE_TOTAL] /usuarios retornou:', todos.length, '| ativos:', users.length);
+  console.log('[FILTRO_VENDEDOR_LOAD_START] dashboard | carregando lista de vendedores...');
 
-  // Tentativa 2: fallback /usuarios/responsaveis (se principal vier vazio)
-  if (users.length === 0) {
-    console.warn('[FILTRO_VENDEDOR_LOAD_START] /usuarios vazio — tentando fallback /usuarios/responsaveis...');
-    const r2 = await Auth.api('GET', '/usuarios/responsaveis');
-    const fb = r2?.data?.dados || [];
-    users = fb;
-    console.log('[FILTRO_VENDEDOR_API_RESPONSE_TOTAL] fallback retornou:', users.length, 'responsaveis');
+  // Helper: aplica filtro ativo + role VENDEDOR/SUPER_ADMIN com logs de descarte
+  function filtrarVendedoresValidos(lista, origem) {
+    const ROLES_OK = ['VENDEDOR', 'SUPER_ADMIN', 'vendedor', 'super_admin'];
+    const validos = [];
+    const descartados = [];
+    (lista || []).forEach(u => {
+      const isAtivo = u.ativo === true || u.ativo === 1 || u.ativo === '1' || u.ativo === 'true';
+      const roleOk  = ROLES_OK.includes(u.role);
+      if (isAtivo && roleOk) {
+        validos.push(u);
+      } else {
+        descartados.push({ nome: u.nome, role: u.role, ativo: u.ativo, motivo: !isAtivo ? 'inativo' : 'role inválida' });
+      }
+    });
+    console.log('[FILTRO_VENDEDOR_USUARIOS_TOTAL_API]', origem, '| recebidos:', (lista||[]).length);
+    console.log('[FILTRO_VENDEDOR_USUARIOS_ATIVOS_TOTAL]', validos.length, 'válidos após filtro');
+    if (descartados.length > 0)
+      console.log('[FILTRO_VENDEDOR_USUARIO_DESCARTADO_INATIVO]', JSON.stringify(descartados));
+    return validos;
   }
 
-  if (users.length > 0) {
-    const amostra = users.slice(0,3).map(u => u.nome + ' (' + u.role + ')');
-    console.log('[FILTRO_VENDEDOR_API_RESPONSE_SAMPLE]', amostra.join(', '));
+  // Tentativa 1: /usuarios (backend filtra ativos)
+  let users = [];
+  const r = await Auth.api('GET', '/usuarios');
+  const raw1 = r?.data?.dados || [];
+  users = filtrarVendedoresValidos(raw1, '/usuarios');
+
+  // Tentativa 2: /usuarios/responsaveis (backend retorna VENDEDOR+SUPER_ADMIN ativos)
+  if (users.length === 0) {
+    console.warn('[FILTRO_VENDEDOR_LOAD_START] dashboard | /usuarios sem resultado — tentando /usuarios/responsaveis...');
+    const r2 = await Auth.api('GET', '/usuarios/responsaveis');
+    const raw2 = r2?.data?.dados || [];
+    users = filtrarVendedoresValidos(raw2, '/usuarios/responsaveis');
   }
 
   const sel = document.getElementById('f-resp');
   sel.innerHTML = '<option value="">Todos</option>' +
     users.map(u => `<option value="${u.id}">${u.nome}</option>`).join('');
-  console.log('[FILTRO_VENDEDOR_RENDER_OPTIONS_TOTAL]', sel.options.length, 'opções renderizadas (incluindo Todos)');
+  console.log('[FILTRO_VENDEDOR_USUARIOS_RENDERIZADOS]', sel.options.length - 1, 'vendedores + opção Todos');
 
-  // Log ao selecionar
   sel.addEventListener('change', e => {
     console.log('[FILTRO_VENDEDOR_SELECT_CHANGE] valor:', e.target.value, '| nome:', sel.selectedOptions[0]?.text);
   });

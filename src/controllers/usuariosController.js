@@ -72,67 +72,79 @@ async function listar(req, res) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/usuarios/responsaveis
-// Fallback: retorna usuários que são responsáveis por LEADS existentes.
-// Garante que o select de vendedor sempre seja populado mesmo se /usuarios
-// retornar vazio (ex: problema de ativo/boolean no Supabase).
+// Retorna usuários ativos com role VENDEDOR ou SUPER_ADMIN.
+// Estratégia: tenta filtrar direto; se vier vazio por problema de boolean/ativo,
+// busca SEM filtro de ativo e filtra no Node, garantindo robustez.
 // ─────────────────────────────────────────────────────────────────────────────
 async function listarResponsaveis(req, res) {
   const { sb, isSupa, sqlite } = getProvider();
-  console.log('[FILTRO_VENDEDOR_LOAD_START] listarResponsaveis | role:', req.usuario?.role);
+  const ROLES_VALIDAS = ['VENDEDOR', 'SUPER_ADMIN'];
+  console.log('[FILTRO_VENDEDOR_LOAD_START] listarResponsaveis | role solicitante:', req.usuario?.role);
 
   try {
     if (isSupa) {
-      // Busca IDs distintos de responsavel_id nos leads
-      const { data: leads, error: e1 } = await sb
-        .from('leads')
-        .select('responsavel_id')
-        .not('responsavel_id', 'is', null);
-      if (e1) throw e1;
-
-      const ids = [...new Set((leads || []).map(l => l.responsavel_id).filter(Boolean))];
-      console.log('[FILTRO_VENDEDOR_API_RESPONSE_TOTAL] responsaveis distintos nos leads:', ids.length);
-
-      if (ids.length === 0) {
-        // Último fallback: retorna TODOS os usuários sem filtro de ativo
-        const { data: todos } = await sb.from('usuarios').select(CAMPOS_PUBLICOS_SUPA).order('nome');
-        console.log('[FILTRO_VENDEDOR_API_RESPONSE_TOTAL] fallback total sem filtro:', (todos||[]).length);
-        return res.json({ sucesso: true, dados: todos || [], total: (todos||[]).length, fallback: 'all' });
-      }
-
-      // Busca usuários por esses IDs
-      const { data: users, error: e2 } = await sb
+      // Tenta 1: busca apenas ativos com roles válidas
+      const { data: tentativa1, error: e1 } = await sb
         .from('usuarios')
         .select(CAMPOS_PUBLICOS_SUPA)
-        .in('id', ids)
+        .eq('ativo', true)
+        .in('role', ROLES_VALIDAS)
         .order('nome');
+
+      if (!e1 && (tentativa1 || []).length > 0) {
+        console.log('[FILTRO_VENDEDOR_USUARIOS_TOTAL_API] tentativa1 (ativo=true + roles):', tentativa1.length);
+        return res.json({ sucesso: true, dados: tentativa1, total: tentativa1.length });
+      }
+
+      if (e1) console.warn('[listarResponsaveis] tentativa1 error:', e1.message);
+
+      // Tenta 2: busca todos sem filtro de ativo e filtra no Node
+      // (resolve casos onde ativo é integer 1/0 em vez de boolean no Supabase)
+      console.warn('[FILTRO_VENDEDOR_LOAD_START] tentativa1 vazia — buscando todos e filtrando no Node...');
+      const { data: todos, error: e2 } = await sb
+        .from('usuarios')
+        .select(CAMPOS_PUBLICOS_SUPA)
+        .in('role', ROLES_VALIDAS)
+        .order('nome');
+
       if (e2) throw e2;
 
-      console.log('[FILTRO_VENDEDOR_API_RESPONSE_TOTAL] usuarios encontrados por ids dos leads:', (users||[]).length);
-      if ((users||[]).length > 0) {
-        const amostra = users.slice(0,3).map(u => ({ nome: u.nome, role: u.role, ativo: u.ativo }));
-        console.log('[FILTRO_VENDEDOR_API_RESPONSE_SAMPLE]', JSON.stringify(amostra));
+      const raw = todos || [];
+      console.log('[FILTRO_VENDEDOR_USUARIOS_TOTAL_API] tentativa2 (todos com roles válidas):', raw.length);
+
+      const ativos = [];
+      const descartados = [];
+      raw.forEach(u => {
+        const isAtivo = u.ativo === true || u.ativo === 1 || u.ativo === '1' || u.ativo === 'true';
+        if (isAtivo) {
+          ativos.push(u);
+        } else {
+          descartados.push({ nome: u.nome, role: u.role, ativo: u.ativo });
+        }
+      });
+
+      console.log('[FILTRO_VENDEDOR_USUARIOS_ATIVOS_TOTAL]', ativos.length, 'ativos para o select');
+      if (descartados.length > 0) {
+        console.log('[FILTRO_VENDEDOR_USUARIO_DESCARTADO_INATIVO]', JSON.stringify(descartados));
       }
-      return res.json({ sucesso: true, dados: users || [], total: (users||[]).length, fallback: 'leads' });
+
+      return res.json({ sucesso: true, dados: ativos, total: ativos.length });
     }
 
-    // SQLite
+    // SQLite — filtra ativo=1 e role VENDEDOR ou SUPER_ADMIN
     const { getDb } = require('../database/db');
     const db = getDb();
-    const responsaveis = db.prepare(`
-      SELECT DISTINCT u.id, u.nome, u.email, u.role, u.ativo, u.avatar_url, u.criado_em, u.atualizado_em
-      FROM usuarios u
-      INNER JOIN leads l ON l.responsavel_id = u.id
-      ORDER BY u.nome
-    `).all();
-    console.log('[FILTRO_VENDEDOR_API_RESPONSE_TOTAL] SQLite responsaveis dos leads:', responsaveis.length);
+    const placeholders = ROLES_VALIDAS.map(() => '?').join(',');
+    const ativos = db.prepare(`
+      SELECT id, nome, email, role, ativo, avatar_url, criado_em, atualizado_em
+      FROM usuarios
+      WHERE ativo = 1 AND role IN (${placeholders})
+      ORDER BY nome
+    `).all(...ROLES_VALIDAS);
 
-    if (responsaveis.length === 0) {
-      // Último fallback: todos os usuários ativos
-      const todos = db.prepare('SELECT id, nome, email, role, ativo, avatar_url, criado_em, atualizado_em FROM usuarios WHERE ativo = 1 ORDER BY nome').all();
-      return res.json({ sucesso: true, dados: todos, total: todos.length, fallback: 'all' });
-    }
+    console.log('[FILTRO_VENDEDOR_USUARIOS_ATIVOS_TOTAL] SQLite:', ativos.length);
+    return res.json({ sucesso: true, dados: ativos, total: ativos.length });
 
-    return res.json({ sucesso: true, dados: responsaveis, total: responsaveis.length, fallback: 'leads' });
   } catch (e) {
     console.error('[usuarios.listarResponsaveis]', e.message);
     return res.status(500).json({ sucesso: false, erro: e.message });
