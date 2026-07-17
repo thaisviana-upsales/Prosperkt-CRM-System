@@ -326,21 +326,65 @@
           <input id="fl-qtd-pecas" class="input input-sm" type="number" min="0" readonly placeholder="0" style="background:var(--surface-2);cursor:default">
         </div>
       </div>
-      <div class="input-group-sm" style="margin-top:6px">
-        <label class="lbl-sm" style="display:flex;align-items:center;gap:6px">
+      <!-- ══ ENDEREÇO DE ENTREGA ══════════════════════════════════════════════ -->
+      <div style="margin-top:6px;padding:10px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px">
+        <div style="font-size:.7rem;font-weight:700;color:var(--green,#6CFF4E);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;display:flex;align-items:center;gap:6px">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
           Endereço de Entrega
-          <span style="background:rgba(108,255,78,.15);color:var(--green,#6CFF4E);border:1px solid rgba(108,255,78,.3);border-radius:6px;padding:1px 6px;font-size:.6rem;font-weight:700">obrigatório p/ ganho</span>
-        </label>
-        <textarea id="fl-endereco-entrega" class="input input-sm" rows="3"
-          placeholder="Informe rua, número, complemento, bairro, cidade, estado e CEP."
-          style="resize:vertical"></textarea>
+          <span style="background:rgba(108,255,78,.15);border:1px solid rgba(108,255,78,.3);border-radius:6px;padding:1px 6px;font-size:.6rem;font-weight:700">obrigatório p/ ganho</span>
+        </div>
+        <!-- CEP com busca automática -->
+        <div class="fr-compact" style="margin-bottom:4px">
+          <div class="input-group-sm" style="max-width:150px">
+            <label class="lbl-sm">CEP *</label>
+            <div style="position:relative">
+              <input id="fl-cep-entrega" class="input input-sm" placeholder="00000-000" maxlength="9" inputmode="numeric">
+              <div id="fl-cep-spinner" style="display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);width:12px;height:12px;border:2px solid var(--border);border-top-color:var(--green);border-radius:50%;animation:spin .6s linear infinite"></div>
+            </div>
+            <span id="fl-cep-msg" style="font-size:.65rem;color:var(--pink,#FF3B5C);display:none;margin-top:2px"></span>
+          </div>
+          <div class="input-group-sm" style="flex:1">
+            <label class="lbl-sm">Endereço / Rua / Logradouro *</label>
+            <input id="fl-endereco-entrega" class="input input-sm" placeholder="Rua, Av., Alameda...">
+          </div>
+        </div>
+        <div class="fr-compact" style="margin-bottom:4px">
+          <div class="input-group-sm" style="max-width:100px">
+            <label class="lbl-sm">Número *</label>
+            <input id="fl-numero-entrega" class="input input-sm" placeholder="123">
+          </div>
+          <div class="input-group-sm" style="flex:1">
+            <label class="lbl-sm">Complemento *</label>
+            <input id="fl-complemento-entrega" class="input input-sm" placeholder="Apto, Bloco, Casa...">
+          </div>
+          <div class="input-group-sm" style="flex:1">
+            <label class="lbl-sm">Referência *</label>
+            <input id="fl-referencia-entrega" class="input input-sm" placeholder="Próx. ao mercado...">
+          </div>
+        </div>
+        <div class="fr-compact">
+          <div class="input-group-sm" style="flex:1">
+            <label class="lbl-sm">Bairro *</label>
+            <input id="fl-bairro-entrega" class="input input-sm" placeholder="Bairro">
+          </div>
+          <div class="input-group-sm" style="flex:1.5">
+            <label class="lbl-sm">Cidade *</label>
+            <input id="fl-cidade-entrega" class="input input-sm" placeholder="Cidade">
+          </div>
+          <div class="input-group-sm" style="max-width:70px">
+            <label class="lbl-sm">UF *</label>
+            <input id="fl-uf-entrega" class="input input-sm" placeholder="SP" maxlength="2" style="text-transform:uppercase">
+          </div>
+        </div>
       </div>
+      <!-- ══ FIM ENDEREÇO DE ENTREGA ════════════════════════════════════════ -->
       <div class="input-group-sm" style="margin-top:6px">
         <label class="lbl-sm">Observações do Pedido</label>
         <textarea id="fl-obs-pedido" class="input input-sm" rows="2" placeholder="Detalhes, especificações, particulares do pedido..."></textarea>
       </div>
     </div>
   </div>
+
 
   <!-- ABA 4: PRODUÇÃO (renderizado via producao.js) -->
   <div id="tab-producao" class="lead-tab-content" style="display:none">

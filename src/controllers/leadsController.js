@@ -564,7 +564,10 @@ async function atualizar(req, res) {
         'nome','email','telefone','empresa','cargo','valor','origem','data_fechamento',
         'observacoes','motivo_perda','dados_extras','valor_venda','forma_pagamento',
         'quantidade_parcelas','parcelas_json','produto_id','produto_nome','produto_cor',
-        'previsao_proxima_compra', 'endereco_entrega',
+        'previsao_proxima_compra',
+        // endereço de entrega (campos separados)
+        'endereco_entrega','cep_entrega','numero_entrega','complemento_entrega',
+        'referencia_entrega','bairro_entrega','cidade_entrega','uf_entrega',
         'motivo_perda','observacoes','funil_id','etapa_id','pipeline_id',
         // campos comerciais da venda
         'valor_venda','forma_pagamento','quantidade_parcelas','parcelas_json',
@@ -586,10 +589,24 @@ async function atualizar(req, res) {
           if (!((req.body.valor_venda ?? atual.valor_venda) > 0))                  faltando.push('Valor da Venda');
           if (!(req.body.forma_pagamento || atual.forma_pagamento))                faltando.push('Forma de Pagamento');
           if (!(req.body.produto_id || atual.produto_id || req.body.produto_nome || atual.produto_nome)) faltando.push('Produto Adquirido');
-          const enderecoEntrega = req.body.endereco_entrega?.trim() || atual.endereco_entrega?.trim() || '';
-          if (!enderecoEntrega)                                                    faltando.push('Endereço de Entrega');
+          // Endereço completo de entrega
+          const _end = (f) => (req.body[f] ?? atual[f] ?? '').toString().trim();
+          if (!_end('cep_entrega') || _end('cep_entrega').replace(/\D/g,'').length < 8) faltando.push('CEP de Entrega');
+          if (!_end('endereco_entrega'))    faltando.push('Logradouro/Rua');
+          if (!_end('numero_entrega'))      faltando.push('Número');
+          if (!_end('complemento_entrega')) faltando.push('Complemento');
+          if (!_end('referencia_entrega'))  faltando.push('Referência');
+          if (!_end('bairro_entrega'))      faltando.push('Bairro');
+          if (!_end('cidade_entrega'))      faltando.push('Cidade');
+          if (!_end('uf_entrega'))          faltando.push('UF');
           if (faltando.length)
-            return res.status(400).json({ sucesso: false, erro: `Para registrar a venda, preencha: ${faltando.join(', ')}.`, campos_faltando: faltando });
+            return res.status(400).json({
+              sucesso: false,
+              erro: faltando.some(f => ['CEP de Entrega','Logradouro/Rua','Número','Complemento','Referência','Bairro','Cidade','UF'].includes(f))
+                ? 'Para concluir a venda, preencha todos os dados do Endereço de Entrega.'
+                : `Para registrar a venda, preencha: ${faltando.join(', ')}.`,
+              campos_faltando: faltando
+            });
         }
       }
 
@@ -866,18 +883,23 @@ async function mover(req, res) {
           temProduto = !!(pid || pnm);
         }
         if (!temProduto) faltando.push('Produto Adquirido');
-        // Previsão de próxima compra — obrigatória ao ganhar venda
+        // Previão de próxima compra
         const previsao = req.body.previsao_proxima_compra ?? lead.previsao_proxima_compra;
-        if (!previsao)                               faltando.push('Previsão de Próxima Compra');
-        // Endereço de entrega — obrigatório ao ganhar venda
-        const enderecoEntr = (req.body.endereco_entrega ?? lead.endereco_entrega ?? '').toString().trim();
-        if (!enderecoEntr)                           faltando.push('Endereço de Entrega');
+        if (!previsao) faltando.push('Previão de Próxima Compra');
+        // Endereço completo de entrega — todos os campos obrigatórios
+        const _e = (f) => (req.body[f] ?? lead[f] ?? '').toString().trim();
+        if (!_e('cep_entrega') || _e('cep_entrega').replace(/\D/g,'').length < 8) faltando.push('CEP de Entrega');
+        if (!_e('endereco_entrega'))    faltando.push('Logradouro/Rua');
+        if (!_e('numero_entrega'))      faltando.push('Número');
+        if (!_e('complemento_entrega')) faltando.push('Complemento');
+        if (!_e('referencia_entrega'))  faltando.push('Referência');
+        if (!_e('bairro_entrega'))      faltando.push('Bairro');
+        if (!_e('cidade_entrega'))      faltando.push('Cidade');
+        if (!_e('uf_entrega'))          faltando.push('UF');
         if (faltando.length > 0)
           return res.status(400).json({
             sucesso: false,
-            erro: faltando.includes('Endereço de Entrega')
-              ? 'Para concluir a venda, preencha o endereço de entrega do cliente.'
-              : `Para registrar a venda, preencha: ${faltando.join(', ')}.`,
+            erro: 'Para concluir a venda, preencha todos os dados do Endereço de Entrega.',
             campos_faltando: faltando,
           });
       }
@@ -1096,15 +1118,20 @@ async function mover(req, res) {
       if (!temProdutoSql) faltandoSql.push('Produto Adquirido');
       const previsaoSql = req.body.previsao_proxima_compra ?? lead.previsao_proxima_compra;
       if (!previsaoSql) faltandoSql.push('Previsão de Próxima Compra');
-      // Endereço de entrega — obrigatório ao ganhar venda
-      const enderecoSql = (req.body.endereco_entrega ?? lead.endereco_entrega ?? '').toString().trim();
-      if (!enderecoSql) faltandoSql.push('Endereço de Entrega');
+      // Endereço completo de entrega — todos os campos obrigatórios
+      const _es = (f) => (req.body[f] ?? lead[f] ?? '').toString().trim();
+      if (!_es('cep_entrega') || _es('cep_entrega').replace(/\D/g,'').length < 8) faltandoSql.push('CEP de Entrega');
+      if (!_es('endereco_entrega'))    faltandoSql.push('Logradouro/Rua');
+      if (!_es('numero_entrega'))      faltandoSql.push('Número');
+      if (!_es('complemento_entrega')) faltandoSql.push('Complemento');
+      if (!_es('referencia_entrega'))  faltandoSql.push('Referência');
+      if (!_es('bairro_entrega'))      faltandoSql.push('Bairro');
+      if (!_es('cidade_entrega'))      faltandoSql.push('Cidade');
+      if (!_es('uf_entrega'))          faltandoSql.push('UF');
       if (faltandoSql.length > 0) {
         return res.status(400).json({
           sucesso: false,
-          erro: faltandoSql.includes('Endereço de Entrega')
-            ? 'Para concluir a venda, preencha o endereço de entrega do cliente.'
-            : `Para registrar a venda, preencha: ${faltandoSql.join(', ')}.`,
+          erro: 'Para concluir a venda, preencha todos os dados do Endereço de Entrega.',
           campos_faltando: faltandoSql,
         });
       }

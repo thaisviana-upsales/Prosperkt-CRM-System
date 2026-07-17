@@ -159,6 +159,87 @@ async function carregarProdutos() {
   _produtos = r?.data?.dados || [];
 }
 
+// ── CEP: máscara + busca automática via ViaCEP ────────────────────────────────
+function formatarCep(val) {
+  const d = (val || '').replace(/\D/g,'').slice(0,8);
+  return d.length > 5 ? d.slice(0,5) + '-' + d.slice(5) : d;
+}
+
+async function buscarEnderecoViaCep(cep) {
+  const cepLimpo = (cep || '').replace(/\D/g,'');
+  if (cepLimpo.length !== 8) return null;
+  try {
+    const res = await fetch(`https://viacep.com.br/ws/${cepLimpo}/json/`, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.erro) return null;
+    return data;
+  } catch { return null; }
+}
+
+function bindCepEntrega() {
+  const cepEl    = document.getElementById('fl-cep-entrega');
+  const msgEl    = document.getElementById('fl-cep-msg');
+  const spinner  = document.getElementById('fl-cep-spinner');
+  if (!cepEl) return;
+
+  // Máscara em tempo real
+  cepEl.addEventListener('input', () => {
+    const raw   = cepEl.value.replace(/\D/g,'').slice(0,8);
+    cepEl.value = raw.length > 5 ? raw.slice(0,5) + '-' + raw.slice(5) : raw;
+    if (msgEl) msgEl.style.display = 'none';
+  });
+
+  // Busca ao completar 8 dígitos
+  cepEl.addEventListener('blur', async () => {
+    const raw = cepEl.value.replace(/\D/g,'');
+    if (raw.length !== 8) {
+      if (raw.length > 0 && raw.length < 8) {
+        if (msgEl) { msgEl.textContent = 'Informe um CEP válido com 8 dígitos.'; msgEl.style.display = ''; }
+      }
+      return;
+    }
+    if (msgEl) msgEl.style.display = 'none';
+    if (spinner) spinner.style.display = '';
+    cepEl.disabled = true;
+
+    const dados = await buscarEnderecoViaCep(raw);
+    cepEl.disabled = false;
+    if (spinner) spinner.style.display = 'none';
+
+    if (!dados) {
+      if (msgEl) {
+        msgEl.textContent = 'Não foi possível localizar o CEP automaticamente. Preencha o endereço manualmente.';
+        msgEl.style.color = 'var(--text-muted)';
+        msgEl.style.display = '';
+      }
+      return;
+    }
+
+    // Preenche automaticamente — só se o campo estiver vazio (não sobrescreve)
+    const setIfEmpty = (id, val) => {
+      const el = document.getElementById(id);
+      if (el && !el.value.trim() && val) el.value = val;
+    };
+    setIfEmpty('fl-endereco-entrega', dados.logradouro);
+    setIfEmpty('fl-bairro-entrega',   dados.bairro);
+    setIfEmpty('fl-cidade-entrega',   dados.localidade);
+    setIfEmpty('fl-uf-entrega',       (dados.uf || '').toUpperCase());
+
+    if (msgEl) {
+      msgEl.textContent = '✓ CEP encontrado — confira os dados e ajuste se necessário.';
+      msgEl.style.color = 'var(--green,#6CFF4E)';
+      msgEl.style.display = '';
+      setTimeout(() => { if (msgEl) msgEl.style.display = 'none'; }, 4000);
+    }
+    // Foca no próximo campo obrigatório vazio
+    const proximo = ['fl-endereco-entrega','fl-numero-entrega','fl-complemento-entrega']
+      .find(id => !document.getElementById(id)?.value.trim());
+    if (proximo) document.getElementById(proximo)?.focus();
+  });
+}
+
+
 // Helper compartilhado
 function isCarteiraRecorrente(nome) {
   return /carteira\s*recorrente/i.test((nome||'').trim());
@@ -629,6 +710,15 @@ async function abrirLead(id) {
   setVal('fl-obs-pedido', l.dados_extras?.obs_pedido || '');
   // Endereço de entrega
   setVal('fl-endereco-entrega', l.endereco_entrega || '');
+  // Endereço de entrega — todos os campos separados
+  setVal('fl-cep-entrega',          formatarCep(l.cep_entrega || ''));
+  setVal('fl-endereco-entrega',     l.endereco_entrega     || '');
+  setVal('fl-numero-entrega',       l.numero_entrega       || '');
+  setVal('fl-complemento-entrega',  l.complemento_entrega  || '');
+  setVal('fl-referencia-entrega',   l.referencia_entrega   || '');
+  setVal('fl-bairro-entrega',       l.bairro_entrega       || '');
+  setVal('fl-cidade-entrega',       l.cidade_entrega       || '');
+  setVal('fl-uf-entrega',           (l.uf_entrega          || '').toUpperCase());
   // Layout Virtual
   setVal('fl-layout-virtual-aprovado-em', l.layout_virtual_aprovado_em);
   setVal('fl-layout-virtual-entrada-em',  l.layout_virtual_entrada_em);
@@ -725,7 +815,12 @@ function resetModal() {
   document.getElementById('ml-title').textContent = 'Novo Lead';
   const sub = document.getElementById('ml-subtitle');
   if (sub) sub.textContent = '';
-  ['fl-id','fl-nome','fl-empresa','fl-tel','fl-email','fl-tags','fl-obs','fl-endereco-entrega'].forEach(id => document.getElementById(id).value = '');
+  ['fl-id','fl-nome','fl-empresa','fl-tel','fl-email','fl-tags','fl-obs',
+   'fl-endereco-entrega','fl-cep-entrega','fl-numero-entrega','fl-complemento-entrega',
+   'fl-referencia-entrega','fl-bairro-entrega','fl-cidade-entrega','fl-uf-entrega'
+  ].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  const cepMsg = document.getElementById('fl-cep-msg');
+  if (cepMsg) { cepMsg.style.display = 'none'; cepMsg.textContent = ''; }
   const mpSel = document.getElementById('fl-motivo-perda');
   if (mpSel) { mpSel.innerHTML = '<option value="">— Selecione (se aplicável) —</option>' + _motivosPerda.map(m => { const v = m.nome||m; return `<option value="${v}">${v}</option>`; }).join(''); }
   document.getElementById('fl-valor').value = '';
@@ -951,6 +1046,45 @@ async function salvarLead() {
       showTab('venda');
       return;
     }
+    // ── Endereço de Entrega — todos os campos OBRIGATÓRIOS para ganho ────────
+    const _endReq = [
+      { id: 'fl-cep-entrega',         label: 'CEP' },
+      { id: 'fl-endereco-entrega',     label: 'Logradouro/Rua' },
+      { id: 'fl-numero-entrega',       label: 'Número' },
+      { id: 'fl-complemento-entrega',  label: 'Complemento' },
+      { id: 'fl-referencia-entrega',   label: 'Referência' },
+      { id: 'fl-bairro-entrega',       label: 'Bairro' },
+      { id: 'fl-cidade-entrega',       label: 'Cidade' },
+      { id: 'fl-uf-entrega',           label: 'UF' },
+    ];
+    // Valida CEP (8 dígitos)
+    const cepRaw = (document.getElementById('fl-cep-entrega')?.value || '').replace(/\D/g,'');
+    const cepInvalido = cepRaw.length < 8;
+    const camposFaltandoEnd = _endReq.filter(({ id }) => {
+      const v = (document.getElementById(id)?.value || '').trim();
+      if (id === 'fl-cep-entrega') return cepInvalido || !v;
+      return !v;
+    });
+    if (camposFaltandoEnd.length > 0) {
+      alertEl.className='alert alert-error';
+      alertEl.textContent='Para concluir a venda, preencha todos os dados do Endereço de Entrega.';
+      alertEl.style.display='';
+      // Destaca o primeiro campo vazio e faz scroll
+      const primeiroFaltando = document.getElementById(camposFaltandoEnd[0].id);
+      if (primeiroFaltando) {
+        primeiroFaltando.style.outline='2px solid var(--pink,#FF3B5C)';
+        primeiroFaltando.style.borderColor='var(--pink,#FF3B5C)';
+        primeiroFaltando.scrollIntoView({ behavior:'smooth', block:'center' });
+        setTimeout(() => {
+          camposFaltandoEnd.forEach(({ id }) => {
+            const el = document.getElementById(id);
+            if (el) { el.style.outline=''; el.style.borderColor=''; }
+          });
+        }, 3000);
+      }
+      showTab('venda');
+      return;
+    }
   }
 
   // Sempre resolve pipeline_id a partir do funil selecionado (nunca usa 'todos' ou _pipelineAtivo nulo)
@@ -998,7 +1132,15 @@ async function salvarLead() {
     // Campos novos
     data_fechamento:  document.getElementById('fl-data-fechamento')?.value||undefined,
     previsao_proxima_compra: document.getElementById('fl-previsao-proxima-compra')?.value||undefined,
-    endereco_entrega: document.getElementById('fl-endereco-entrega')?.value?.trim()||undefined,
+    // Endereço de entrega completo
+    cep_entrega:         (document.getElementById('fl-cep-entrega')?.value||'').replace(/\D/g,'')||undefined,
+    endereco_entrega:    document.getElementById('fl-endereco-entrega')?.value?.trim()||undefined,
+    numero_entrega:      document.getElementById('fl-numero-entrega')?.value?.trim()||undefined,
+    complemento_entrega: document.getElementById('fl-complemento-entrega')?.value?.trim()||undefined,
+    referencia_entrega:  document.getElementById('fl-referencia-entrega')?.value?.trim()||undefined,
+    bairro_entrega:      document.getElementById('fl-bairro-entrega')?.value?.trim()||undefined,
+    cidade_entrega:      document.getElementById('fl-cidade-entrega')?.value?.trim()||undefined,
+    uf_entrega:          document.getElementById('fl-uf-entrega')?.value?.trim()?.toUpperCase()||undefined,
     dados_extras: {
       obs_pedido:   document.getElementById('fl-obs-pedido')?.value||undefined,
       num_produtos: document.getElementById('fl-num-produtos')?.value||undefined,
@@ -1430,6 +1572,8 @@ async function salvarNovoProduto() {
 
 // ── Events ────────────────────────────────────────────────────
 function bindEvents() {
+  // CEP: máscara + busca automática ViaCEP
+  bindCepEntrega();
   // Filtros
   document.getElementById('sel-funil').addEventListener('change', async e => {
     _filtros.funil=e.target.value; await aplicarFiltros();
