@@ -475,13 +475,24 @@ async function criar(req, res) {
       // observacoes salva diretamente em leads.observacoes — nao duplicar em mensagens
       req.log({ acao:'CREATE', entidade:'leads', entidade_id:id, depois:{ nome, etapa_id, funil_id:fId } });
       // Registra passagem pela etapa inicial no histórico do Funil de Conversão
-      if (etapa_id) {
-        console.log('[FUNIL_CONVERSAO_HISTORICO_CREATE_LEAD] lead:', id, '→ etapa:', etapa_id, '| funil:', fId, '| origem: create');
-        setImmediate(() => etapaHistorico.registrarPassagem({
-          leadId: id, etapaId: etapa_id, funilId: fId, responsavelId: respId, origem: 'create',
-          entrou_em: row.criado_em,
-        }).catch(e => console.error('[FUNIL_HISTORICO_CREATE]', e.message)));
-      }
+      // E também pela PRIMEIRA etapa da pipeline (garante Lead Recebido = Cockpit)
+      console.log('[FUNIL_CONVERSAO_HISTORICO_CREATE_LEAD] lead:', id, '→ etapa:', etapa_id, '| funil:', fId, '| pipeline:', pipeline_id || 'resolve-via-funil');
+      setImmediate(async () => {
+        try {
+          if (etapa_id) {
+            await etapaHistorico.registrarPassagem({
+              leadId: id, etapaId: etapa_id, funilId: fId, responsavelId: respId,
+              origem: 'create', entrou_em: row.criado_em,
+            });
+          }
+          // Garante registro na primeira etapa da pipeline do funil (Lead Recebido)
+          // Resolve divergência cockpit vs Funil de Conversão
+          await etapaHistorico.registrarPrimeiraEtapa({
+            leadId: id, funilId: fId, pipelineId: pipeline_id || null,
+            responsavelId: respId, criadoEm: row.criado_em,
+          });
+        } catch(e) { console.error('[FUNIL_HISTORICO_CREATE]', e.message); }
+      });
       // Dispara SLA Contato 1 de forma assíncrona (não bloqueia resposta)
       setImmediate(() => {
         getAutomacaoSvc().enviarSlaContato1({ id, nome: nome.trim(), telefone: telefone || null, responsavel_id: respId })
@@ -489,6 +500,7 @@ async function criar(req, res) {
       });
       return res.status(201).json({ sucesso:true, dados: normalizeLead(data) });
     }
+
 
     // SQLite
     sqlite.prepare(`INSERT INTO leads (id,nome,email,telefone,empresa,cargo,valor,pipeline_id,etapa_id,responsavel_id,origem,tags,dados_extras,observacoes,status,criado_por)
@@ -502,9 +514,8 @@ async function criar(req, res) {
     );
     // observacoes salva em leads.observacoes — nao duplicar em mensagens
     req.log({ acao:'CREATE', entidade:'leads', entidade_id:id, depois:{ nome, pipeline_id, etapa_id } });
-    // Registra passagem pela etapa inicial no histórico do Funil de Conversão (SQLite)
-    if (etapa_id) {
-      // Resolve funil_id via pipeline para rastreio correto
+    // Registra passagem pela etapa inicial + primeira etapa da pipeline (SQLite)
+    setImmediate(async () => {
       let funilIdCreate = null;
       if (pipeline_id) {
         try {
@@ -513,12 +524,20 @@ async function criar(req, res) {
           if (_pr) funilIdCreate = _pr.funil_id;
         } catch(_) {}
       }
+      const agora_ = new Date().toISOString();
       console.log('[FUNIL_CONVERSAO_HISTORICO_CREATE_LEAD] lead:', id, '→ etapa:', etapa_id, '| funil:', funilIdCreate, '| origem: create (SQLite)');
-      setImmediate(() => etapaHistorico.registrarPassagem({
-        leadId: id, etapaId: etapa_id, funilId: funilIdCreate, responsavelId: respId, origem: 'create',
-        entrou_em: new Date().toISOString(),
-      }).catch(e => console.error('[FUNIL_HISTORICO_CREATE_SQLite]', e.message)));
-    }
+      if (etapa_id) {
+        await etapaHistorico.registrarPassagem({
+          leadId: id, etapaId: etapa_id, funilId: funilIdCreate, responsavelId: respId,
+          origem: 'create', entrou_em: agora_,
+        }).catch(e => console.error('[FUNIL_HISTORICO_CREATE_SQLite]', e.message));
+      }
+      // Garante Lead Recebido = Cockpit
+      await etapaHistorico.registrarPrimeiraEtapa({
+        leadId: id, funilId: funilIdCreate, pipelineId: pipeline_id || null,
+        responsavelId: respId, criadoEm: agora_,
+      });
+    });
     // Dispara SLA Contato 1 de forma assíncrona
     setImmediate(() => {
       getAutomacaoSvc().enviarSlaContato1({ id, nome: nome.trim(), telefone: telefone || null, responsavel_id: respId })

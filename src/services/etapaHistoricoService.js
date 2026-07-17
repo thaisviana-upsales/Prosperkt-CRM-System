@@ -86,12 +86,103 @@ async function registrarPassagem({ leadId, etapaId, funilId = null, responsavelI
       }
     }
     console.log('[FUNIL_HISTORICO_REGISTRO] lead:', leadId, '→ etapa:', etapaId, '| origem:', origem);
+    return true; // registrou com sucesso
   } catch (e) {
     // Não propaga erro — registro de histórico não pode quebrar fluxo principal
     console.error('[EtapaHistorico] Erro ao registrar passagem:', e.message);
+    return false;
   }
 }
 
+
+/**
+ * Garante que um lead tem registro na PRIMEIRA etapa da pipeline do seu funil.
+ * Chame após criar ou mover um lead para o funil.
+ *
+ * Resolve: lead criado com etapa_id diferente da primeira ou sem pipeline_id
+ * que ficaria "fora" do Lead Recebido no Funil de Conversão.
+ */
+async function registrarPrimeiraEtapa({ leadId, funilId, pipelineId, responsavelId, criadoEm }) {
+  if (!leadId || (!funilId && !pipelineId)) return;
+
+  try {
+    if (MODE === 'supabase') {
+      const { sb } = getProvider();
+      if (!sb) return;
+
+      // Encontra a pipeline do funil
+      let pipeId = pipelineId;
+      if (!pipeId && funilId) {
+        const { data: pipes } = await sb.from('pipelines')
+          .select('id').eq('funil_id', funilId)
+          .order('criado_em', { ascending: true }).limit(1);
+        pipeId = pipes?.[0]?.id || null;
+      }
+      if (!pipeId) return;
+
+      // Primeira etapa (menor ordem)
+      const { data: primeiraEtapas } = await sb.from('etapas')
+        .select('id').eq('pipeline_id', pipeId)
+        .order('ordem', { ascending: true }).limit(1);
+      const primeiraEtapaId = primeiraEtapas?.[0]?.id;
+      if (!primeiraEtapaId) return;
+
+      // Verifica se já existe (idempotente)
+      const { data: existe } = await sb.from('lead_etapa_historico')
+        .select('id').eq('lead_id', leadId).eq('etapa_id', primeiraEtapaId).limit(1);
+      if ((existe || []).length > 0) {
+        console.log('[FUNIL_HISTORICO_PRIMEIRA_ETAPA] lead:', leadId, '| já registrado em etapa:', primeiraEtapaId);
+        return;
+      }
+
+      const entradaTs = criadoEm
+        ? (typeof criadoEm === 'string' ? criadoEm : criadoEm.toISOString())
+        : new Date().toISOString();
+
+      await sb.from('lead_etapa_historico').insert({
+        id:             crypto.randomBytes(16).toString('hex'),
+        lead_id:        leadId,
+        etapa_id:       primeiraEtapaId,
+        funil_id:       funilId || null,
+        pipeline_id:    pipeId,
+        responsavel_id: responsavelId || null,
+        entrou_em:      entradaTs,
+        criado_em:      new Date().toISOString(),
+        origem:         'auto_primeira_etapa',
+      });
+      console.log('[FUNIL_HISTORICO_PRIMEIRA_ETAPA] lead:', leadId, '→ primeira etapa:', primeiraEtapaId, '| pipeline:', pipeId);
+
+    } else {
+      const { getDb } = require('../database/db');
+      const db = getDb();
+      let pipeId = pipelineId;
+      if (!pipeId && funilId) {
+        const pipe = db.prepare('SELECT id FROM pipelines WHERE funil_id=? ORDER BY ordem ASC LIMIT 1').get(funilId);
+        pipeId = pipe?.id || null;
+      }
+      if (!pipeId) return;
+      const primeiraEtapa = db.prepare('SELECT id FROM etapas WHERE pipeline_id=? ORDER BY ordem ASC LIMIT 1').get(pipeId);
+      if (!primeiraEtapa) return;
+      const entradaTs = criadoEm
+        ? (typeof criadoEm === 'string' ? criadoEm : criadoEm.toISOString())
+        : new Date().toISOString();
+      const result = db.prepare(`
+        INSERT OR IGNORE INTO lead_etapa_historico
+          (id, lead_id, etapa_id, funil_id, responsavel_id, entrou_em, criado_em, origem)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        crypto.randomBytes(16).toString('hex'),
+        leadId, primeiraEtapa.id, funilId || null, responsavelId || null,
+        entradaTs, new Date().toISOString(), 'auto_primeira_etapa'
+      );
+      if (result.changes > 0) {
+        console.log('[FUNIL_HISTORICO_PRIMEIRA_ETAPA] lead:', leadId, '→ primeira etapa:', primeiraEtapa.id);
+      }
+    }
+  } catch (e) {
+    console.error('[EtapaHistorico] Erro ao registrar primeira etapa:', e.message);
+  }
+}
 
 /**
  * Faz migration de dados existentes:
@@ -348,4 +439,4 @@ async function buscarPassagensPorEtapa({ etapaIds = [], leadIds = [], dataIni = 
   return passagemMap;
 }
 
-module.exports = { registrarPassagem, migrarDadosExistentes, buscarPassagensPorEtapa };
+module.exports = { registrarPassagem, registrarPrimeiraEtapa, migrarDadosExistentes, buscarPassagensPorEtapa };
