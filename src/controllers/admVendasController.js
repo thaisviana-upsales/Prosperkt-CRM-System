@@ -442,6 +442,7 @@ async function clonarDeLeadGanho(leadData, responsavelId, sb, isSupa, sqlite) {
       observacoes:       leadData.observacoes       || null,
       previsao_proxima_compra:      leadData.previsao_proxima_compra      || null,
       data_prevista_proxima_compra: leadData.data_prevista_proxima_compra || null,
+      endereco_entrega:  leadData.endereco_entrega  || null,
       data_venda:        diaVenda,
       data_entrega_prevista: null,
       etapa:   'acompanhamento',

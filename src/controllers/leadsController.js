@@ -564,7 +564,7 @@ async function atualizar(req, res) {
         'nome','email','telefone','empresa','cargo','valor','origem','data_fechamento',
         'observacoes','motivo_perda','dados_extras','valor_venda','forma_pagamento',
         'quantidade_parcelas','parcelas_json','produto_id','produto_nome','produto_cor',
-        'previsao_proxima_compra',
+        'previsao_proxima_compra', 'endereco_entrega',
         'motivo_perda','observacoes','funil_id','etapa_id','pipeline_id',
         // campos comerciais da venda
         'valor_venda','forma_pagamento','quantidade_parcelas','parcelas_json',
@@ -586,6 +586,8 @@ async function atualizar(req, res) {
           if (!((req.body.valor_venda ?? atual.valor_venda) > 0))                  faltando.push('Valor da Venda');
           if (!(req.body.forma_pagamento || atual.forma_pagamento))                faltando.push('Forma de Pagamento');
           if (!(req.body.produto_id || atual.produto_id || req.body.produto_nome || atual.produto_nome)) faltando.push('Produto Adquirido');
+          const enderecoEntrega = req.body.endereco_entrega?.trim() || atual.endereco_entrega?.trim() || '';
+          if (!enderecoEntrega)                                                    faltando.push('Endereço de Entrega');
           if (faltando.length)
             return res.status(400).json({ sucesso: false, erro: `Para registrar a venda, preencha: ${faltando.join(', ')}.`, campos_faltando: faltando });
         }
@@ -867,10 +869,15 @@ async function mover(req, res) {
         // Previsão de próxima compra — obrigatória ao ganhar venda
         const previsao = req.body.previsao_proxima_compra ?? lead.previsao_proxima_compra;
         if (!previsao)                               faltando.push('Previsão de Próxima Compra');
+        // Endereço de entrega — obrigatório ao ganhar venda
+        const enderecoEntr = (req.body.endereco_entrega ?? lead.endereco_entrega ?? '').toString().trim();
+        if (!enderecoEntr)                           faltando.push('Endereço de Entrega');
         if (faltando.length > 0)
           return res.status(400).json({
             sucesso: false,
-            erro: `Para registrar a venda, preencha: ${faltando.join(', ')}.`,
+            erro: faltando.includes('Endereço de Entrega')
+              ? 'Para concluir a venda, preencha o endereço de entrega do cliente.'
+              : `Para registrar a venda, preencha: ${faltando.join(', ')}.`,
             campos_faltando: faltando,
           });
       }
@@ -1089,10 +1096,15 @@ async function mover(req, res) {
       if (!temProdutoSql) faltandoSql.push('Produto Adquirido');
       const previsaoSql = req.body.previsao_proxima_compra ?? lead.previsao_proxima_compra;
       if (!previsaoSql) faltandoSql.push('Previsão de Próxima Compra');
+      // Endereço de entrega — obrigatório ao ganhar venda
+      const enderecoSql = (req.body.endereco_entrega ?? lead.endereco_entrega ?? '').toString().trim();
+      if (!enderecoSql) faltandoSql.push('Endereço de Entrega');
       if (faltandoSql.length > 0) {
         return res.status(400).json({
           sucesso: false,
-          erro: `Para registrar a venda, preencha: ${faltandoSql.join(', ')}.`,
+          erro: faltandoSql.includes('Endereço de Entrega')
+            ? 'Para concluir a venda, preencha o endereço de entrega do cliente.'
+            : `Para registrar a venda, preencha: ${faltandoSql.join(', ')}.`,
           campos_faltando: faltandoSql,
         });
       }

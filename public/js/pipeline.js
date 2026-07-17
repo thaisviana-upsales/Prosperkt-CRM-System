@@ -627,6 +627,8 @@ async function abrirLead(id) {
   const selPrev = document.getElementById('fl-previsao-proxima-compra');
   if (selPrev) selPrev.value = l.previsao_proxima_compra || '';
   setVal('fl-obs-pedido', l.dados_extras?.obs_pedido || '');
+  // Endereço de entrega
+  setVal('fl-endereco-entrega', l.endereco_entrega || '');
   // Layout Virtual
   setVal('fl-layout-virtual-aprovado-em', l.layout_virtual_aprovado_em);
   setVal('fl-layout-virtual-entrada-em',  l.layout_virtual_entrada_em);
@@ -723,7 +725,7 @@ function resetModal() {
   document.getElementById('ml-title').textContent = 'Novo Lead';
   const sub = document.getElementById('ml-subtitle');
   if (sub) sub.textContent = '';
-  ['fl-id','fl-nome','fl-empresa','fl-tel','fl-email','fl-tags','fl-obs'].forEach(id => document.getElementById(id).value = '');
+  ['fl-id','fl-nome','fl-empresa','fl-tel','fl-email','fl-tags','fl-obs','fl-endereco-entrega'].forEach(id => document.getElementById(id).value = '');
   const mpSel = document.getElementById('fl-motivo-perda');
   if (mpSel) { mpSel.innerHTML = '<option value="">— Selecione (se aplicável) —</option>' + _motivosPerda.map(m => { const v = m.nome||m; return `<option value="${v}">${v}</option>`; }).join(''); }
   document.getElementById('fl-valor').value = '';
@@ -933,6 +935,22 @@ async function salvarLead() {
       showTab('venda');
       return;
     }
+    // ── Endereço de Entrega — OBRIGATÓRIO para ganho ─────────────────────
+    const endEl = document.getElementById('fl-endereco-entrega');
+    const endVal = endEl?.value?.trim() || '';
+    if (!endVal) {
+      alertEl.className='alert alert-error';
+      alertEl.textContent='Para concluir a venda, preencha o endereço de entrega do cliente.';
+      alertEl.style.display='';
+      if (endEl) {
+        endEl.style.outline='2px solid var(--pink,#FF3B5C)';
+        endEl.style.borderColor='var(--pink,#FF3B5C)';
+        endEl.scrollIntoView({ behavior:'smooth', block:'center' });
+        setTimeout(() => { endEl.style.outline=''; endEl.style.borderColor=''; }, 3000);
+      }
+      showTab('venda');
+      return;
+    }
   }
 
   // Sempre resolve pipeline_id a partir do funil selecionado (nunca usa 'todos' ou _pipelineAtivo nulo)
@@ -980,6 +998,7 @@ async function salvarLead() {
     // Campos novos
     data_fechamento:  document.getElementById('fl-data-fechamento')?.value||undefined,
     previsao_proxima_compra: document.getElementById('fl-previsao-proxima-compra')?.value||undefined,
+    endereco_entrega: document.getElementById('fl-endereco-entrega')?.value?.trim()||undefined,
     dados_extras: {
       obs_pedido:   document.getElementById('fl-obs-pedido')?.value||undefined,
       num_produtos: document.getElementById('fl-num-produtos')?.value||undefined,
