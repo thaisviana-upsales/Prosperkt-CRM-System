@@ -407,6 +407,19 @@ async function clonarDeLeadGanho(leadData, responsavelId, sb, isSupa, sqlite) {
 
     // Cria o clone
     const id = gerarId();
+    // Produtos multi-item (lead_produtos) — serializa como JSON para visualização no ADM
+    const leadProdutosArr = leadData._lead_produtos || [];
+    const leadProdutosJson = leadProdutosArr.length
+      ? JSON.stringify(leadProdutosArr.map(p => ({
+          produto_id:     p.produto_id || null,
+          produto_nome:   p.produto_nome,
+          produto_cor:    p.produto_cor || null,
+          quantidade:     p.quantidade,
+          valor_unitario: p.valor_unitario,
+          valor_total:    p.valor_total || (p.quantidade * p.valor_unitario),
+        })))
+      : null;
+
     const row = {
       id,
       lead_original_id: leadData.id,
@@ -420,9 +433,10 @@ async function clonarDeLeadGanho(leadData, responsavelId, sb, isSupa, sqlite) {
       forma_pagamento:   leadData.forma_pagamento   || null,
       quantidade_parcelas: leadData.quantidade_parcelas || 1,
       parcelas_json:     leadData.parcelas_json     || null,
-      produto_id:        leadData.produto_id        || null,
-      produto_nome:      leadData.produto_nome      || null,
-      produto_cor:       leadData.produto_cor       || null,
+      produto_id:        leadData.produto_id        || (leadProdutosArr[0]?.produto_id || null),
+      produto_nome:      leadData.produto_nome      || (leadProdutosArr[0]?.produto_nome || null),
+      produto_cor:       leadData.produto_cor       || (leadProdutosArr[0]?.produto_cor || null),
+      lead_produtos_json: leadProdutosJson,
       origem:            leadData.origem            || null,
       tags:              leadData.tags ? (typeof leadData.tags === 'string' ? leadData.tags : JSON.stringify(leadData.tags)) : null,
       observacoes:       leadData.observacoes       || null,

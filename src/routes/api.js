@@ -33,6 +33,12 @@ const admVendasCtrl      = require('../controllers/admVendasController');
 // Seed funis iniciais (só roda se vazio)
 funisCtrl.seedFunis();
 
+// Seed produtos oficiais (idempotente — não duplica)
+setTimeout(() => {
+  produtosCtrl.rodarSeedProdutos()
+    .catch(e => console.warn('[SEED_PRODUTOS_STARTUP]', e.message));
+}, 3000); // aguarda estabilização do boot
+
 // Agenda backups automáticos (diário às 3h, semanal às segundas, mensal dia 1)
 try { require('../services/backupService').agendarBackups(); } catch(e) { console.warn('[Backup] Agendador não iniciado:', e.message); }
 
@@ -260,10 +266,14 @@ router.delete('/motivos-perda/:id',    autenticar, exigirRole('GESTOR'), motivos
 // ─────────────────────────────────────────────────────────────────────────────
 // PRODUTOS
 // ─────────────────────────────────────────────────────────────────────────────
-router.get   ('/produtos',     autenticar, produtosCtrl.listar);
-router.post  ('/produtos',     autenticar, produtosCtrl.criar);
-router.patch ('/produtos/:id', autenticar, exigirRole('GESTOR'), produtosCtrl.atualizar);
-router.delete('/produtos/:id', autenticar, exigirRole('GESTOR'), produtosCtrl.deletar);
+// /produtos/todos — GESTOR+ vê todos (incluindo inativos) para gerenciar
+router.get   ('/produtos/todos', autenticar, exigirRole('GESTOR'), produtosCtrl.listarTodos);
+// /produtos — todos os usuários autenticados veem produtos ativos (para selecionar)
+router.get   ('/produtos',       autenticar, produtosCtrl.listar);
+// Criar/editar/excluir: somente GESTOR+
+router.post  ('/produtos',       autenticar, exigirRole('GESTOR'), produtosCtrl.criar);
+router.patch ('/produtos/:id',   autenticar, exigirRole('GESTOR'), produtosCtrl.atualizar);
+router.delete('/produtos/:id',   autenticar, exigirRole('GESTOR'), produtosCtrl.deletar);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AUDITORIA (GESTOR+)

@@ -455,38 +455,37 @@ async function moverLead(etapaId) {
 
   if (isGanho) {
     const leadIdLocal = _dragLeadId;
+    const etapaIdLocal = etapaId;
     const pidLocal = pid;
-    const leadObj = lead;
+    const etapaDestLocal = etapaDest;
     _dragLeadId=null; _dragEtapaOrigem=null;
     if (!leadIdLocal) return;
-    // Valida campos obrigatórios no frontend antes de chamar API
-    const faltando=[];
-    if (!leadObj?.email)        faltando.push('Email');
-    if (!leadObj?.funil_id)     faltando.push('Funil');
-    if (!(leadObj?.valor_venda>0)) faltando.push('Valor da Venda');
-    if (!leadObj?.forma_pagamento) faltando.push('Forma de Pagamento');
-    if (!leadObj?.produto_id && !leadObj?.produto_nome) faltando.push('Produto Adquirido');
-    if (faltando.length) {
-      Toast.show(`Para registrar a venda, preencha: ${faltando.join(', ')}.`,'error');
-      await abrirLead(leadIdLocal);
-      abrirSecaoComercial();
-      return;
-    }
-    // Previsão obrigatória — abre modal se não preenchida
-    if (!leadObj?.previsao_proxima_compra) {
-      Toast.show('Para concluir a venda, informe a previsão de próxima compra deste cliente.','error');
-      await abrirLead(leadIdLocal);
-      showTab('venda');
-      // Destaca o campo
-      const prevEl = document.getElementById('fl-previsao-proxima-compra');
-      if (prevEl) {
-        prevEl.style.outline='2px solid var(--pink,#FF3B5C)';
-        prevEl.scrollIntoView({ behavior:'smooth', block:'center' });
-        setTimeout(() => { prevEl.style.outline=''; }, 3000);
+
+    // Abre o modal de venda para preenchimento obrigatório dos produtos
+    // O vendedor PRECISA selecionar produto(s), valor e forma de pagamento
+    Toast.show('📋 Preencha os dados da venda para concluir. Selecione os produtos vendidos.', 'info');
+    await abrirLead(leadIdLocal);
+    showTab('venda');
+    abrirSecaoComercial();
+
+    // Garante que a etapa de destino está pré-selecionada no modal
+    const etapaSel = document.getElementById('fl-etapa');
+    if (etapaSel && etapaIdLocal) etapaSel.value = etapaIdLocal;
+
+    // Destaca campo de produto se não houver nenhum ainda
+    setTimeout(() => {
+      const lpEmpty = document.getElementById('lp-empty');
+      if (lpEmpty && lpEmpty.style.display !== 'none') {
+        // Sem produtos — destaca botão de adicionar produto
+        const btnAdd = document.getElementById('btn-add-linha-produto');
+        if (btnAdd) {
+          btnAdd.style.outline = '2px solid var(--green,#6CFF4E)';
+          btnAdd.style.boxShadow = '0 0 8px rgba(108,255,78,.5)';
+          btnAdd.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          setTimeout(() => { btnAdd.style.outline = ''; btnAdd.style.boxShadow = ''; }, 4000);
+        }
       }
-      return;
-    }
-    await _executarMover(leadIdLocal, etapaId, pidLocal, etapaDest, null);
+    }, 400);
     return;
   }
 
@@ -887,17 +886,27 @@ async function salvarLead() {
     if (!fp)      faltando.push('Forma de Pagamento');
     if (prodAtivos.length === 0) {
       alertEl.className='alert alert-error';
-      alertEl.textContent='Para registrar a venda, adicione pelo menos um produto com quantidade e valor.';
+      alertEl.textContent='Para concluir a venda, selecione ao menos um produto vendido.';
       alertEl.style.display='';
       abrirSecaoComercial();
+      showTab('venda');
+      // Destaca o botão de adicionar produto
+      const btnAddProd = document.getElementById('btn-add-linha-produto');
+      if (btnAddProd) {
+        btnAddProd.style.outline = '2px solid var(--green,#6CFF4E)';
+        btnAddProd.style.boxShadow = '0 0 8px rgba(108,255,78,.5)';
+        btnAddProd.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => { btnAddProd.style.outline = ''; btnAddProd.style.boxShadow = ''; }, 4000);
+      }
       return;
     }
-    const prodIncompleto = prodAtivos.find(p => !p.produto_nome || !(p.quantidade > 0) || !(p.valor_unitario > 0));
+    const prodIncompleto = prodAtivos.find(p => !p.produto_nome || !(p.quantidade > 0) || !(p.valor_unitario >= 0));
     if (prodIncompleto) {
       alertEl.className='alert alert-error';
-      alertEl.textContent='Preencha produto, quantidade e valor antes de registrar a venda.';
+      alertEl.textContent='Preencha o nome do produto, a quantidade e o valor unitário antes de registrar a venda.';
       alertEl.style.display='';
       abrirSecaoComercial();
+      showTab('venda');
       return;
     }
     if (vv <= 0) faltando.push('Valor da Venda (soma dos produtos deve ser > 0)');

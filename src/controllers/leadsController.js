@@ -832,9 +832,19 @@ async function mover(req, res) {
         if (!vv || Number(vv) <= 0)                  faltando.push('Valor da Venda');
         const fp = req.body.forma_pagamento ?? lead.forma_pagamento;
         if (!fp)                                     faltando.push('Forma de Pagamento');
-        const pid = req.body.produto_id ?? lead.produto_id;
-        const pnm = req.body.produto_nome ?? lead.produto_nome;
-        if (!pid && !pnm)                            faltando.push('Produto Adquirido');
+        // Verifica produtos: tenta lead_produtos (multi-produto), fallback para campo legado
+        let temProduto = false;
+        try {
+          const { data: itensProd } = await sb.from('lead_produtos')
+            .select('id').eq('lead_id', id).is('deleted_at', null).limit(1);
+          temProduto = (itensProd?.length ?? 0) > 0;
+        } catch { /* tabela pode não existir ainda */ }
+        if (!temProduto) {
+          const pid = req.body.produto_id ?? lead.produto_id;
+          const pnm = req.body.produto_nome ?? lead.produto_nome;
+          temProduto = !!(pid || pnm);
+        }
+        if (!temProduto) faltando.push('Produto Adquirido');
         // Previsão de próxima compra — obrigatória ao ganhar venda
         const previsao = req.body.previsao_proxima_compra ?? lead.previsao_proxima_compra;
         if (!previsao)                               faltando.push('Previsão de Próxima Compra');
@@ -972,6 +982,12 @@ async function mover(req, res) {
       // FLUXO CORRETO: lead ganho → Adm Vendas; Adm Vendas → Venda Concluída → Carteira Recorrente
       if (isGanho) {
         const leadGanho = { ...lead, ...upd };
+        // Carrega itens de lead_produtos para repassar ao ADM Vendas
+        try {
+          const { data: itensGanho } = await sb.from('lead_produtos')
+            .select('*').eq('lead_id', id).is('deleted_at', null).order('criado_em');
+          leadGanho._lead_produtos = itensGanho || [];
+        } catch { leadGanho._lead_produtos = []; }
         try {
           console.log('[ADM_VENDAS_CLONE_TRIGGER_START] lead:', id);
           const admRes = await getAdmVendasCtrl().clonarDeLeadGanho(leadGanho, lead.responsavel_id, sb, isSupa, null);
@@ -1030,6 +1046,38 @@ async function mover(req, res) {
     const novoStatus = etapa.is_ganho ? 'GANHO' : etapa.is_perdido ? 'PERDIDO' : 'ABERTO';
     const agora = new Date().toISOString();
     const extras = {};
+
+    // ── Validação obrigatória para etapa de ganho (SQLite) ───────────────────
+    if (etapa.is_ganho) {
+      const faltandoSql = [];
+      if (!lead.email)                                          faltandoSql.push('Email');
+      if (!(lead.funil_id || req.body.funil_id))               faltandoSql.push('Funil');
+      const vvSql = req.body.valor_venda ?? lead.valor_venda;
+      if (!vvSql || Number(vvSql) <= 0)                       faltandoSql.push('Valor da Venda');
+      const fpSql = req.body.forma_pagamento ?? lead.forma_pagamento;
+      if (!fpSql)                                              faltandoSql.push('Forma de Pagamento');
+      // Verifica lead_produtos (multi-produto), fallback para campo legado
+      let temProdutoSql = false;
+      try {
+        const itProd = sqlite.prepare(
+          `SELECT id FROM lead_produtos WHERE lead_id=? AND deleted_at IS NULL LIMIT 1`
+        ).get(id);
+        temProdutoSql = !!itProd;
+      } catch { /* tabela ainda não existe no SQLite */ }
+      if (!temProdutoSql) {
+        temProdutoSql = !!(req.body.produto_id ?? lead.produto_id ?? req.body.produto_nome ?? lead.produto_nome);
+      }
+      if (!temProdutoSql) faltandoSql.push('Produto Adquirido');
+      const previsaoSql = req.body.previsao_proxima_compra ?? lead.previsao_proxima_compra;
+      if (!previsaoSql) faltandoSql.push('Previsão de Próxima Compra');
+      if (faltandoSql.length > 0) {
+        return res.status(400).json({
+          sucesso: false,
+          erro: `Para registrar a venda, preencha: ${faltandoSql.join(', ')}.`,
+          campos_faltando: faltandoSql,
+        });
+      }
+    }
 
     if (etapa.is_ganho && !lead.data_fechamento) extras.data_fechamento = agora.slice(0,10);
     if (etapa.is_perdido && motivo_perda) extras.motivo_perda = motivo_perda;
