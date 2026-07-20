@@ -501,7 +501,21 @@ async function enviarMensagem(req, res) {
     let evoErr = null;
     let evoRes = null; // ← declarado no escopo externo para evitar ReferenceError
 
-    if (evoSvc.isConfigured() && tipo === 'texto' && mensagem) {
+    // ── Áudio: base64 vem em arquivo_url prefixado com 'data:audio' ────────────
+    if (evoSvc.isConfigured() && tipo === 'audio' && arquivo_url) {
+      console.log('WHATSAPP_AUDIO_SEND_START', { conversaId: id, telefone: telNormalizado });
+      console.log('WHATSAPP_AUDIO_SEND_PAYLOAD_SAFE', { numero: telNormalizado, base64Length: arquivo_url.length });
+      const evoAudio = await evoSvc.enviarAudio(telNormalizado, arquivo_url);
+      console.log('WHATSAPP_AUDIO_SEND_RESPONSE_STATUS', evoAudio.status || (evoAudio.sucesso ? 200 : 500));
+      if (evoAudio.sucesso || evoAudio.dados?.key?.id) {
+        evoOk = true;
+        evoRes = evoAudio;
+        console.log('WHATSAPP_AUDIO_SEND_SUCCESS', { msgId: evoAudio.dados?.key?.id });
+      } else {
+        console.error('WHATSAPP_AUDIO_SEND_ERROR', evoAudio.erro);
+        return res.status(502).json({ sucesso: false, erro: `Falha ao enviar áudio: ${evoAudio.erro || 'Erro desconhecido na Evolution.'}`, detalhe: { numero: telNormalizado } });
+      }
+    } else if (evoSvc.isConfigured() && tipo === 'texto' && mensagem) {
       const endpoint = `/message/sendText/${evoSvc.EVOLUTION_INSTANCE}`;
       const payload  = { number: telNormalizado, textMessage: { text: textoParaCliente } };
 
@@ -553,7 +567,7 @@ async function enviarMensagem(req, res) {
           detalhe: { endpoint, numero: telNormalizado, evoStatus: evoRes.status },
         });
       }
-    } else if (arquivo_url) {
+    } else if (tipo !== 'audio' && arquivo_url) {
       // Mídia: tenta enviar, mas não bloqueia se falhar
       if (evoSvc.isConfigured()) {
         const midiaRes = await evoSvc.enviarMidia(telNormalizado, {
@@ -1983,17 +1997,21 @@ async function webhookReceberMensagem(req, res) {
 
     if (isSupa && conversaId) {
       // Para mensagens RECEBIDAS: não enviar campo status — usa default do banco
-      // (o check constraint do Supabase aceita apenas: pending, sent, delivered, read, failed)
       // Para mensagens ENVIADAS: status 'sent'
       const insertPayload = {
         id: msgId, conversa_id: conversaId, lead_id: leadId || null,
-        telefone: tel, mensagem: conteudo, tipo,
+        telefone: tel, mensagem: conteudo || (tipo === 'audio' ? 'Áudio' : null), tipo,
         direcao,
         arquivo_url: midiaUrl || null, arquivo_nome: arquivoNome || null,
         criado_em: agora,
       };
+      // Campos opcionais — adicionados com try/catch para não quebrar caso a coluna ainda não exista
+      try { if (mimeType)   insertPayload.mime_type             = mimeType; }   catch{}
+      try { if (messageId)  insertPayload.evolution_message_id  = messageId; }  catch{}
       // Só adiciona status para mensagens enviadas — schema: CHECK(status IN ('enviado','entregue','lido','erro'))
       if (direcao === 'enviada') insertPayload.status = 'enviado';
+      if (tipo === 'audio') console.log('WHATSAPP_AUDIO_RECEIVED_WEBHOOK', { msgId, mimeType, midiaUrl: midiaUrl ? '(presente)' : '(ausente)', duration: null });
+      if (midiaUrl) console.log('WHATSAPP_AUDIO_MEDIA_DETECTED', { tipo, mimeType, midiaUrl: midiaUrl.slice(0,80) });
 
       const { error: errM } = await sb.from('mensagens_whatsapp').insert(insertPayload);
       msgSalva = !errM;
@@ -2329,38 +2347,6 @@ async function executarDeduplicacao(req, res) {
   }
 }
 
-module.exports = {
-  // Legado SQLite (não alterados)
-  listarConversas,
-  listarMensagens,
-  enviarMensagem,
-  criarOuAbrirConversa,
-  webhookTrafego,
-  atualizarStatus,
-  buscarConversa,
-  conversaPorLead,
-  listarPendentes,
-  // Novos — Supabase
-  conversasSupabase,
-  conversasPorLeadSupabase,
-  conversasDoLead,
-  mensagemManual,
-  webhookReceberMensagem,
-  // Integração status
-  statusIntegracao,
-  // Evolution API — gerenciamento de instância
-  evoInstanciaStatus,
-  evoCriarInstancia,
-  evoQrCode,
-  evoDesconectar,
-  evoDeletarInstancia,
-  evoConfigurarWebhook,
-  evoConsultarWebhook,
-  evoDiagRaw,
-  // Deduplicação segura de conversas
-  diagnosticarDuplicatas,
-  executarDeduplicacao,
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EVOLUTION API — Gerenciamento de Instância
@@ -2636,3 +2622,112 @@ async function evoDiagRaw(req, res) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/whatsapp/media/:conversaId/:msgId
+// Proxy seguro: serve áudio/mídia sem expor EVOLUTION_API_KEY ao frontend
+// ─────────────────────────────────────────────────────────────────────────────
+async function servirMidia(req, res) {
+  try {
+    const { conversaId, msgId } = req.params;
+    const { sb, isSupa } = getProvider();
+
+    // Busca a URL salva no banco
+    let mediaUrl = null;
+    let mimeType = 'audio/ogg';
+    if (isSupa) {
+      const { data: msg } = await sb.from('mensagens_whatsapp')
+        .select('arquivo_url, mime_type').eq('id', msgId).eq('conversa_id', conversaId).single();
+      mediaUrl = msg?.arquivo_url || null;
+      mimeType = msg?.mime_type || mimeType;
+    } else {
+      const db = getDb();
+      const msg = db.prepare('SELECT arquivo_url, mime_type FROM mensagens_whatsapp WHERE id=? AND conversa_id=? LIMIT 1').get(msgId, conversaId);
+      mediaUrl = msg?.arquivo_url || null;
+      mimeType = msg?.mime_type || mimeType;
+    }
+
+    if (!mediaUrl) {
+      return res.status(404).json({ sucesso: false, erro: 'Mídia não encontrada.' });
+    }
+
+    // Se for base64 embutido, decodifica e serve diretamente
+    if (mediaUrl.startsWith('data:')) {
+      const [header, b64data] = mediaUrl.split(',');
+      const mime = header.replace('data:','').replace(';base64','') || mimeType;
+      const buf  = Buffer.from(b64data, 'base64');
+      res.set('Content-Type', mime);
+      res.set('Content-Length', buf.length);
+      res.set('Cache-Control', 'private, max-age=3600');
+      return res.send(buf);
+    }
+
+    // Se for URL externa (Evolution), faz proxy no backend (nunca expõe apikey ao frontend)
+    const fetchOpts = evoSvc.isConfigured()
+      ? { headers: { apikey: process.env.EVOLUTION_API_KEY || '' } }
+      : {};
+
+    let upstream;
+    try {
+      upstream = await fetch(mediaUrl, fetchOpts);
+    } catch (e) {
+      // Tenta sem headers se der erro de CORS/rede
+      upstream = await fetch(mediaUrl);
+    }
+
+    if (!upstream.ok) {
+      console.warn('WHATSAPP_MEDIA_PROXY_UPSTREAM_ERROR', { status: upstream.status, url: mediaUrl.slice(0,80) });
+      return res.status(502).json({ sucesso: false, erro: 'Não foi possível buscar a mídia.' });
+    }
+
+    const contentType = upstream.headers.get('content-type') || mimeType;
+    res.set('Content-Type', contentType);
+    res.set('Cache-Control', 'private, max-age=3600');
+
+    // Stream direto
+    const { Readable } = require('stream');
+    const nodeStream = Readable.fromWeb ? Readable.fromWeb(upstream.body) : upstream.body;
+    if (nodeStream?.pipe) {
+      nodeStream.pipe(res);
+    } else {
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      res.set('Content-Length', buf.length);
+      res.send(buf);
+    }
+  } catch (e) {
+    console.error('[WA Media Proxy] Erro:', e.message);
+    res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}
+
+module.exports = {
+  // legado
+  statusIntegracao,
+  listarConversas,
+  listarMensagens,
+  enviarMensagem,
+  criarOuAbrirConversa,
+  buscarConversa,
+  conversaPorLead,
+  atualizarStatus,
+  webhookTrafego,
+  webhookReceberMensagem,
+  listarPendentes,
+  conversasSupabase,
+  conversasPorLeadSupabase,
+  mensagemManual,
+  conversasDoLead,
+  // evo
+  evoInstanciaStatus,
+  evoCriarInstancia,
+  evoQrCode,
+  evoDesconectar,
+  evoDeletarInstancia,
+  evoConfigurarWebhook,
+  evoConsultarWebhook,
+  evoDiagRaw,
+  // novo: proxy de mídia
+  servirMidia,
+  // dedup
+  diagnosticarDuplicatas,
+  executarDeduplicacao,
+};

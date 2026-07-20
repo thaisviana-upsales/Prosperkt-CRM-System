@@ -383,3 +383,90 @@ body.sidebar-collapsed .main-content.wa-main {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+/* ── Player de áudio premium ── */
+.wa-audio-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(255,255,255,.06);
+  border-radius: 12px;
+  min-width: 200px;
+  max-width: 280px;
+  border: 1px solid rgba(108,255,78,.12);
+}
+.wa-audio-play-btn {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--green, #6CFF4E);
+  color: #0D0D0D;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: transform .15s, box-shadow .15s;
+}
+.wa-audio-play-btn:hover {
+  transform: scale(1.12);
+  box-shadow: 0 0 14px rgba(108,255,78,.5);
+}
+.wa-audio-progress {
+  flex: 1;
+  height: 4px;
+  background: rgba(255,255,255,.12);
+  border-radius: 2px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+.wa-audio-bar-fill {
+  height: 100%;
+  width: 0;
+  background: var(--green, #6CFF4E);
+  border-radius: 2px;
+  transition: width .1s linear;
+}
+.wa-audio-time {
+  font-size: .68rem;
+  color: rgba(255,255,255,.5);
+  white-space: nowrap;
+  min-width: 32px;
+  text-align: right;
+}
+
+/* ── Botão microfone ── */
+.wa-mic-btn {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  border: 1px solid rgba(108,255,78,.2);
+  background: rgba(108,255,78,.06);
+  color: var(--green, #6CFF4E);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: all .2s;
+}
+.wa-mic-btn:hover {
+  background: rgba(108,255,78,.18);
+  border-color: rgba(108,255,78,.5);
+  box-shadow: 0 0 12px rgba(108,255,78,.25);
+  transform: scale(1.08);
+}
+.wa-mic-btn.recording {
+  background: rgba(255,59,92,.15);
+  border-color: rgba(255,59,92,.5);
+  color: var(--pink, #FF3B5C);
+  animation: micPulse 1s ease-in-out infinite;
+}
+@keyframes micPulse { 0%,100%{box-shadow:0 0 0 0 rgba(255,59,92,.4)} 50%{box-shadow:0 0 0 8px rgba(255,59,92,0)} }
+
+/* ── Dot de gravação animado ── */
+.wa-rec-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--pink, #FF3B5C);
+  flex-shrink: 0;
+  animation: recBlink .8s ease-in-out infinite;
+}
+@keyframes recBlink { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.8)} }

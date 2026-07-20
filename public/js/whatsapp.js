@@ -628,13 +628,28 @@ function renderMensagem(msg) {
     conteudo = `<img class="wa-img" src="${msg.arquivo_url}" alt="Imagem" onclick="window.open('${msg.arquivo_url}','_blank')">
       ${msg.mensagem ? `<div class="wa-bubble-text" style="margin-top:4px">${escHtml(msg.mensagem)}</div>` : ''}`;
   } else if (msg.tipo === 'audio') {
-    conteudo = `<div class="wa-audio">
-      <button class="wa-audio-play" onclick="toggleAudio(this,'${msg.arquivo_url}')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-      </button>
-      <div class="wa-audio-bar"><div class="wa-audio-bar-fill" id="ab-${msg.id}"></div></div>
-      <span style="font-size:.65rem;color:rgba(255,255,255,.45)">Áudio</span>
-    </div>`;
+    // URL: tenta proxy backend primeiro (esconde API key), fallback arquivo_url direto
+    const audioSrc = msg.arquivo_url
+      ? `/api/whatsapp/media/${msg.conversa_id || _convAtiva?.id}/${msg.id}`
+      : '';
+    const dur = msg.media_duration ? ` · ${Math.floor(msg.media_duration/60)}:${String(msg.media_duration%60).padStart(2,'0')}` : '';
+    conteudo = audioSrc
+      ? `<div class="wa-audio-player" data-src="${escHtml(audioSrc)}" data-id="${msg.id}">
+           <button class="wa-audio-play-btn" onclick="WAAudio.toggle(this)" title="Play/Pause">
+             <svg class="ico-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+             <svg class="ico-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="display:none"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+           </button>
+           <div class="wa-audio-progress" onclick="WAAudio.seek(this, event)">
+             <div class="wa-audio-bar-fill"></div>
+           </div>
+           <span class="wa-audio-time">0:00${dur}</span>
+           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.5;flex-shrink:0"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+         </div>`
+      : `<div class="wa-audio-player" style="opacity:.6">
+           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/></svg>
+           <span style="font-size:.75rem;color:var(--text-muted)">Áudio não disponível</span>
+         </div>`;
+    console.log('WHATSAPP_AUDIO_RENDERED', { msgId: msg.id, hasSrc: !!audioSrc, dur });
   } else if (msg.tipo === 'arquivo' || msg.tipo === 'video') {
     conteudo = `<a href="${msg.arquivo_url}" target="_blank" style="display:flex;align-items:center;gap:8px;color:var(--green);font-size:.82rem;text-decoration:none">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -954,9 +969,50 @@ function bindEvents() {
     }
   });
 
-  sendBtn.addEventListener('click', enviarMensagem);
+  sendBtn.addEventListener('click', () => {
+    // Se estiver em modo preview de áudio: envia o blob gravado
+    const recWrap = document.getElementById('wa-rec-wrap');
+    const prevWrap = document.getElementById('wa-audio-preview');
+    if (prevWrap && prevWrap.style.display === 'flex') {
+      enviarAudio(_audioBlob);
+    } else {
+      enviarMensagem();
+    }
+  });
 
-  // Anexo
+  // Botão microfone — toca/para gravação
+  const micBtn = document.getElementById('btn-mic');
+  if (micBtn) {
+    micBtn.addEventListener('click', () => {
+      if (_mediaRecorder && _mediaRecorder.state === 'recording') {
+        pararGravacao();
+      } else {
+        iniciarGravacao();
+      }
+    });
+  }
+
+  // Cancelar gravação
+  document.getElementById('btn-rec-cancel')?.addEventListener('click', cancelarGravacao);
+
+  // Cancelar preview
+  document.getElementById('btn-preview-cancel')?.addEventListener('click', cancelarGravacao);
+
+  // Anexo de arquivo de áudio
+  document.getElementById('audio-file-input')?.addEventListener('change', async function() {
+    const file = this.files?.[0];
+    if (!file || !_convAtiva) { this.value = ''; return; }
+    if (!file.type.startsWith('audio/')) { Toast.show('Formato de áudio não suportado.', 'error'); this.value = ''; return; }
+    if (file.size > 16 * 1024 * 1024) { Toast.show('Arquivo de áudio muito grande (máx 16 MB).', 'error'); this.value = ''; return; }
+    _audioBlob = file;
+    const url = URL.createObjectURL(file);
+    const prevEl = document.getElementById('wa-audio-prev-el');
+    if (prevEl) prevEl.src = url;
+    _setRecUI('preview');
+    this.value = '';
+  });
+
+  // Anexo de arquivo (imagem/video/doc) — btn-attach abre file-input
   document.getElementById('btn-attach').addEventListener('click', () => {
     document.getElementById('file-input').click();
   });
@@ -988,14 +1044,218 @@ function bindEvents() {
   });
 }
 
-// ─── Áudio (simulado) ─────────────────────────────────────────────────────────
-let _audioAtual = null;
-function toggleAudio(btn, url) {
-  if (url === '#') { Toast.show('Áudio não disponível na simulação.', 'info'); return; }
-  if (_audioAtual) { _audioAtual.pause(); _audioAtual = null; }
-  const audio = new Audio(url);
-  _audioAtual = audio;
-  audio.play().catch(() => Toast.show('Erro ao reproduzir áudio.', 'error'));
+// ─── Áudio: player premium + gravador MediaRecorder ──────────────────────────
+
+// Player global — uma instância por vez
+const WAAudio = (() => {
+  let _current = null; // { el: HTMLAudioElement, container: HTMLElement }
+
+  function _stopAll() {
+    if (_current) {
+      _current.el.pause();
+      const c = _current.container;
+      c.querySelector('.ico-play')?.style && (c.querySelector('.ico-play').style.display  = '');
+      c.querySelector('.ico-pause')?.style && (c.querySelector('.ico-pause').style.display = 'none');
+      _current = null;
+    }
+  }
+
+  function toggle(btn) {
+    const container = btn.closest('.wa-audio-player');
+    if (!container) return;
+    if (_current && _current.container === container) { _stopAll(); return; }
+    _stopAll();
+
+    const src = container.dataset.src;
+    if (!src) return;
+
+    const audioEl = new Audio();
+    const token = (typeof Auth !== 'undefined' && Auth.getToken)
+      ? Auth.getToken()
+      : (localStorage.getItem('token') || '');
+
+    fetch(src, { headers: token ? { 'Authorization': 'Bearer ' + token } : {} })
+      .then(r => r.blob())
+      .then(blob => { audioEl.src = URL.createObjectURL(blob); return audioEl.play(); })
+      .catch(() => {
+        audioEl.src = src;
+        audioEl.play().catch(() => Toast.show('Erro ao reproduzir áudio.', 'error'));
+      });
+
+    _current = { el: audioEl, container };
+
+    const fillEl   = container.querySelector('.wa-audio-bar-fill');
+    const timeEl   = container.querySelector('.wa-audio-time');
+    const btnPlay  = btn.querySelector('.ico-play');
+    const btnPause = btn.querySelector('.ico-pause');
+    if (btnPlay)  btnPlay.style.display  = 'none';
+    if (btnPause) btnPause.style.display = '';
+
+    audioEl.addEventListener('timeupdate', () => {
+      const pct = audioEl.duration ? (audioEl.currentTime / audioEl.duration) * 100 : 0;
+      if (fillEl) fillEl.style.width = pct + '%';
+      const s = Math.floor(audioEl.currentTime);
+      if (timeEl) timeEl.textContent = `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
+    });
+    audioEl.addEventListener('ended', () => { _stopAll(); if (fillEl) fillEl.style.width = '0'; });
+  }
+
+  function seek(progressEl, event) {
+    if (!_current) return;
+    const rect = progressEl.getBoundingClientRect();
+    _current.el.currentTime = ((event.clientX - rect.left) / rect.width) * (_current.el.duration || 0);
+  }
+
+  return { toggle, seek };
+})();
+
+// ─── Gravador de áudio ────────────────────────────────────────────────────────
+let _mediaRecorder = null;
+let _audioChunks   = [];
+let _audioBlob     = null;
+let _timerInterval = null;
+let _recSeconds    = 0;
+
+function _setRecUI(modo) {
+  // modo: 'idle' | 'recording' | 'preview'
+  const textWrap = document.getElementById('wa-text-wrap');
+  const recWrap  = document.getElementById('wa-rec-wrap');
+  const prevWrap = document.getElementById('wa-audio-preview');
+  const micBtn   = document.getElementById('btn-mic');
+  const sendBtn  = document.getElementById('btn-send');
+
+  if (textWrap) textWrap.style.display = modo === 'idle' ? '' : 'none';
+  if (recWrap)  recWrap.style.display  = modo === 'recording' ? 'flex' : 'none';
+  if (prevWrap) prevWrap.style.display = modo === 'preview'   ? 'flex' : 'none';
+  if (micBtn)   micBtn.style.display   = modo === 'preview'   ? 'none' : '';
+
+  if (sendBtn) sendBtn.disabled = (modo !== 'preview');
+  if (sendBtn) {
+    sendBtn.innerHTML = modo === 'preview'
+      ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0D0D0D" stroke-width="2.5"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>`
+      : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0D0D0D" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`;
+  }
+}
+
+async function iniciarGravacao() {
+  if (!_convAtiva) { Toast.show('Selecione uma conversa primeiro.', 'error'); return; }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    Toast.show('Seu navegador não suporta gravação de áudio.', 'error'); return;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    Toast.show(
+      e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError'
+        ? 'Permita o acesso ao microfone para gravar áudio.'
+        : 'Não foi possível acessar o microfone.',
+      'error'
+    );
+    return;
+  }
+
+  console.log('WHATSAPP_AUDIO_RECORD_START');
+  _audioChunks = [];
+  _audioBlob   = null;
+  _recSeconds  = 0;
+
+  const mimeType = MediaRecorder.isTypeSupported('audio/ogg;codecs=opus') ? 'audio/ogg;codecs=opus'
+    : MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
+    : 'audio/webm';
+
+  _mediaRecorder = new MediaRecorder(stream, { mimeType });
+  _mediaRecorder.ondataavailable = e => { if (e.data.size > 0) _audioChunks.push(e.data); };
+  _mediaRecorder.onstop = () => {
+    stream.getTracks().forEach(t => t.stop());
+    _audioBlob = new Blob(_audioChunks, { type: mimeType });
+    const prevEl = document.getElementById('wa-audio-prev-el');
+    if (prevEl) prevEl.src = URL.createObjectURL(_audioBlob);
+    _setRecUI('preview');
+    console.log('WHATSAPP_AUDIO_RECORD_STOP', { duration: _recSeconds, mimeType });
+  };
+  _mediaRecorder.start(100);
+  _setRecUI('recording');
+
+  const timerEl = document.getElementById('wa-rec-timer');
+  _timerInterval = setInterval(() => {
+    _recSeconds++;
+    if (timerEl) timerEl.textContent = `${Math.floor(_recSeconds/60)}:${String(_recSeconds%60).padStart(2,'0')}`;
+    if (_recSeconds >= 300) pararGravacao();
+  }, 1000);
+}
+
+function pararGravacao() {
+  clearInterval(_timerInterval);
+  if (_mediaRecorder && _mediaRecorder.state !== 'inactive') _mediaRecorder.stop();
+}
+
+function cancelarGravacao() {
+  clearInterval(_timerInterval);
+  if (_mediaRecorder && _mediaRecorder.state !== 'inactive') {
+    try { _mediaRecorder.stream?.getTracks().forEach(t => t.stop()); } catch {}
+    _mediaRecorder.stop();
+  }
+  _audioBlob   = null;
+  _audioChunks = [];
+  _setRecUI('idle');
+  const msgInput = document.getElementById('msg-input');
+  if (msgInput) msgInput.value = '';
+  const sendBtn = document.getElementById('btn-send');
+  if (sendBtn) sendBtn.disabled = true;
+}
+
+async function enviarAudio(blob) {
+  if (!_convAtiva || !blob) return;
+  console.log('WHATSAPP_AUDIO_SEND_START', { conversaId: _convAtiva.id });
+
+  const sendBtn = document.getElementById('btn-send');
+  if (sendBtn) {
+    sendBtn.disabled = true;
+    sendBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0D0D0D" stroke-width="2" style="animation:spin 1s linear infinite"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4" stroke-dashoffset="10"/></svg>`;
+  }
+
+  const base64 = await new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onloadend = () => res(reader.result);
+    reader.onerror   = rej;
+    reader.readAsDataURL(blob);
+  });
+
+  console.log('WHATSAPP_AUDIO_SEND_PAYLOAD_SAFE', { base64Length: base64.length });
+
+  let r = null;
+  try {
+    r = await Auth.api('POST', `/whatsapp/conversas/${_convAtiva.id}/mensagens`, {
+      mensagem: null, tipo: 'audio',
+      arquivo_url: base64, arquivo_nome: 'audio.ogg',
+    });
+  } catch (e) { console.error('WHATSAPP_AUDIO_SEND_ERROR', e); }
+
+  console.log('WHATSAPP_AUDIO_SEND_RESPONSE_STATUS', r?.status || 'null');
+
+  if (r?.ok || r?.data?.sucesso) {
+    console.log('WHATSAPP_AUDIO_SEND_SUCCESS');
+    Toast.show('Áudio enviado!', 'success');
+    const msgReal = r?.data?.dados || {
+      id: Date.now().toString(), conversa_id: _convAtiva.id,
+      mensagem: 'Áudio', tipo: 'audio', direcao: 'enviada',
+      status: 'enviado', criado_em: new Date().toISOString(),
+    };
+    _mensagens.push(msgReal);
+    renderMensagens();
+    _conversas = _conversas.map(c => c.id === _convAtiva.id
+      ? { ...c, ultima_mensagem: 'Áudio 🎤', ultima_direcao: 'enviada', ultima_msg_em: new Date().toISOString() }
+      : c);
+    renderListaConversas();
+    document.getElementById('conv-item-' + _convAtiva.id)?.classList.add('active');
+  } else {
+    const err = r?.data?.erro || 'Não foi possível enviar o áudio.';
+    console.error('WHATSAPP_AUDIO_SEND_ERROR', err);
+    Toast.show(err, 'error');
+  }
+
+  cancelarGravacao();
 }
 
 // ─── Kick-off ─────────────────────────────────────────────────────────────────

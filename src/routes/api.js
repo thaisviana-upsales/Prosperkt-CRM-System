@@ -213,6 +213,8 @@ router.get   ('/whatsapp/conversas/:id',          autenticar, whatsappCtrl.busca
 router.get   ('/whatsapp/conversas/:id/mensagens',autenticar, whatsappCtrl.listarMensagens);
 router.post  ('/whatsapp/conversas/:id/mensagens',autenticar, whatsappCtrl.enviarMensagem);
 router.patch ('/whatsapp/conversas/:id/status',   autenticar, whatsappCtrl.atualizarStatus);
+// ── Proxy seguro de mídia — serve áudio/imagem sem expor EVOLUTION_API_KEY ──
+router.get   ('/whatsapp/media/:conversaId/:msgId', autenticar, whatsappCtrl.servirMidia);
 router.get   ('/whatsapp/lead/:lead_id',          autenticar, whatsappCtrl.conversaPorLead);
 router.get   ('/whatsapp/pendentes',              autenticar, whatsappCtrl.listarPendentes); // somente GESTOR+
 router.post  ('/whatsapp/webhook/trafego',        whatsappCtrl.webhookTrafego); // sem auth (webhook externo)
