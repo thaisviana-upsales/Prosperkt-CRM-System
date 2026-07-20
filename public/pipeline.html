@@ -112,6 +112,10 @@
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
       Produção
     </button>
+    <button class="lead-tab-btn" id="tab-btn-arquivos" data-tab="arquivos">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+      Arquivos
+    </button>
   </div>
 
   <!-- ABA 1: DADOS PRINCIPAIS -->
@@ -392,6 +396,29 @@
     <p style="font-size:.75rem;color:var(--text-muted);padding:12px 0">Selecione um lead para ver a produção.</p>
   </div>
 
+  <!-- ABA 5: ARQUIVOS / ANEXOS -->
+  <div id="tab-arquivos" class="lead-tab-content" style="display:none">
+    <!-- Zona de upload -->
+    <div class="arq-upload-zone" id="arq-drop-zone">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--green,#6CFF4E)" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      <p style="font-size:.8rem;font-weight:600;color:var(--text-primary);margin:6px 0 2px">Arraste arquivos ou clique para selecionar</p>
+      <p style="font-size:.7rem;color:var(--text-muted)">PDF, imagens, vídeos, documentos, planilhas • Máx <strong>300 MB</strong></p>
+      <input type="file" id="arq-file-input" style="display:none" multiple
+        accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.odt,.ods,.odp,.zip,.rar,.7z,.tar,.gz,.jpg,.jpeg,.png,.gif,.webp,.svg,.mp4,.mov,.avi,.mkv,.webm,.mp3,.ogg,.wav,.m4a,.aac,.opus,.flac,.eml,.msg">
+    </div>
+    <!-- Barra de progresso do upload -->
+    <div id="arq-upload-progress" style="display:none;margin:8px 0">
+      <div style="height:4px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden">
+        <div id="arq-progress-bar" style="height:100%;width:0;background:var(--green,#6CFF4E);border-radius:2px;transition:width .3s"></div>
+      </div>
+      <p id="arq-upload-label" style="font-size:.7rem;color:var(--text-muted);margin-top:4px">Enviando...</p>
+    </div>
+    <!-- Lista de arquivos -->
+    <div id="arq-lista" style="margin-top:10px">
+      <p style="font-size:.75rem;color:var(--text-muted);text-align:center;padding:20px 0" id="arq-empty-msg">Nenhum arquivo anexado.</p>
+    </div>
+  </div>
+
 
   <!-- Footer -->
   <div class="mf">
@@ -441,6 +468,7 @@
 <script src="/js/atividades.js"></script>
 <script src="/js/producao.js"></script>
 <script src="/js/celebracao.js"></script>
+<script src="/js/leadArquivos.js"></script>
 <script src="/js/pipeline.js"></script>
 
 

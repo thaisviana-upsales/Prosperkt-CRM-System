@@ -650,11 +650,52 @@ function renderMensagem(msg) {
            <span style="font-size:.75rem;color:var(--text-muted)">Áudio não disponível</span>
          </div>`;
     console.log('WHATSAPP_AUDIO_RENDERED', { msgId: msg.id, hasSrc: !!audioSrc, dur });
-  } else if (msg.tipo === 'arquivo' || msg.tipo === 'video') {
-    conteudo = `<a href="${msg.arquivo_url}" target="_blank" style="display:flex;align-items:center;gap:8px;color:var(--green);font-size:.82rem;text-decoration:none">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-      ${escHtml(msg.arquivo_nome || 'Arquivo')}
-    </a>`;
+  } else if (msg.tipo === 'video') {
+    const url = msg.arquivo_url || '';
+    const nome = msg.arquivo_nome || 'Vídeo';
+    const downloadUrl = `/api/whatsapp/arquivos/${msg.id}/download`;
+    conteudo = url
+      ? `<div class="wa-file-card">
+           <div style="display:flex;align-items:center;gap:10px">
+             <div class="wa-file-icon" style="background:rgba(255,184,0,.12);border-color:rgba(255,184,0,.2)">
+               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FFB800" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+             </div>
+             <div style="flex:1;min-width:0">
+               <p style="font-size:.78rem;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0" title="${escHtml(nome)}">${escHtml(nome)}</p>
+               <p style="font-size:.67rem;color:var(--text-muted);margin:2px 0 0">Vídeo</p>
+             </div>
+             <a href="${escHtml(downloadUrl)}" download="${escHtml(nome)}" class="wa-file-dl-btn" title="Baixar">
+               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 13 7 8"/><line x1="12" y1="3" x2="12" y2="13"/></svg>
+             </a>
+           </div>
+         </div>`
+      : `<span style="font-size:.78rem;color:var(--text-muted)">Vídeo</span>`;
+  } else if (msg.tipo === 'arquivo') {
+    const url  = msg.arquivo_url || '';
+    const nome = msg.arquivo_nome || 'Arquivo';
+    const downloadUrl = `/api/whatsapp/arquivos/${msg.id}/download`;
+    const mime = msg.mime_type || '';
+    const icone = mime === 'application/pdf' ? '📄'
+      : mime.startsWith('image/') ? '🖼️'
+      : mime.includes('word') || mime.includes('doc') ? '📝'
+      : mime.includes('sheet') || mime.includes('excel') || mime.includes('xls') ? '📊'
+      : mime.includes('presentation') || mime.includes('powerpoint') ? '📁'
+      : '📎';
+    conteudo = `<div class="wa-file-card">
+       <div style="display:flex;align-items:center;gap:10px">
+         <div class="wa-file-icon">
+           <span style="font-size:1.2rem;line-height:1">${icone}</span>
+         </div>
+         <div style="flex:1;min-width:0">
+           <p style="font-size:.78rem;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0" title="${escHtml(nome)}">${escHtml(nome)}</p>
+           <p style="font-size:.67rem;color:var(--text-muted);margin:2px 0 0">Documento</p>
+         </div>
+         <a href="${escHtml(downloadUrl)}" download="${escHtml(nome)}" class="wa-file-dl-btn" title="Baixar">
+           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 13 7 8"/><line x1="12" y1="3" x2="12" y2="13"/></svg>
+         </a>
+       </div>
+       ${msg.mensagem && msg.mensagem !== nome ? `<div class="wa-bubble-text" style="margin-top:6px">${escHtml(msg.mensagem)}</div>` : ''}
+     </div>`;
   }
 
   return `<div class="wa-msg ${dir}" data-id="${msg.id}" data-status="${msg.status || ''}">
@@ -781,23 +822,99 @@ async function enviarMensagem() {
 
 
 
-// ─── Upload de arquivo ────────────────────────────────────────────────────────
+// ─── Upload de arquivo (WhatsApp) ────────────────────────────────────────────
+const WA_LIMITE_BYTES = 300 * 1024 * 1024; // 300 MB
+
+const WA_EXT_BLOQUEADAS = new Set([
+  'exe','bat','cmd','sh','bash','msi','scr','vbs','ps1','reg','lnk','jar','hta',
+]);
+
+function waExtPermitida(nome) {
+  const ext = (nome.split('.').pop() || '').toLowerCase();
+  return !WA_EXT_BLOQUEADAS.has(ext);
+}
+
+function waFmtBytes(b) {
+  if (!b) return '–';
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  return (b/1048576).toFixed(1) + ' MB';
+}
+
+async function waEnviarArquivo(file) {
+  if (!_convAtiva) { Toast.show('Selecione uma conversa primeiro.', 'error'); return; }
+
+  // Validações front-end
+  if (!waExtPermitida(file.name)) {
+    Toast.show('Tipo de arquivo não permitido por segurança.', 'error'); return;
+  }
+  if (file.size > WA_LIMITE_BYTES) {
+    Toast.show('O arquivo excede o limite máximo de 300MB.', 'error'); return;
+  }
+
+  Toast.show(`Enviando "${file.name}" (${waFmtBytes(file.size)})...`, 'info');
+
+  const formData = new FormData();
+  formData.append('arquivo', file);
+
+  const token = localStorage.getItem('token') || '';
+
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api/whatsapp/conversas/${_convAtiva.id}/arquivos`, true);
+    if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+
+    // Progresso (não mostramos barra separada para não sobrepor o chat)
+    xhr.upload.addEventListener('progress', e => {
+      if (e.lengthComputable) {
+        const pct = Math.round((e.loaded / e.total) * 100);
+        console.log('WA_UPLOAD_PROGRESS', pct + '%');
+      }
+    });
+
+    xhr.addEventListener('load', () => {
+      let json = {};
+      try { json = JSON.parse(xhr.responseText); } catch {}
+
+      if (xhr.status >= 200 && xhr.status < 300 && json.sucesso) {
+        Toast.show(`"${file.name}" enviado!`, 'success');
+        if (json.aviso) Toast.show(json.aviso, 'info');
+
+        const msgData = json.dados || {
+          id: Date.now().toString(), conversa_id: _convAtiva.id,
+          mensagem: file.name,
+          tipo: file.type.startsWith('image/') ? 'imagem' : file.type.startsWith('video/') ? 'video' : 'arquivo',
+          arquivo_url: null, arquivo_nome: file.name, mime_type: file.type,
+          direcao: 'enviada', status: 'enviado', criado_em: new Date().toISOString(),
+        };
+        _mensagens.push(msgData);
+        renderMensagens();
+        _conversas = _conversas.map(c => c.id === _convAtiva.id
+          ? { ...c, ultima_mensagem: `📎 ${file.name}`, ultima_msg_em: new Date().toISOString() }
+          : c);
+        renderListaConversas();
+        document.getElementById('conv-item-' + _convAtiva.id)?.classList.add('active');
+      } else {
+        const erro = json.erro || `Erro HTTP ${xhr.status}`;
+        Toast.show(`Erro ao enviar "${file.name}": ${erro}`, 'error');
+      }
+      resolve();
+    });
+
+    xhr.addEventListener('error', () => {
+      Toast.show('Erro de rede ao enviar o arquivo.', 'error');
+      resolve();
+    });
+
+    xhr.send(formData);
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('file-input')?.addEventListener('change', async function() {
-    if (!_convAtiva || !this.files[0]) return;
-    const file = this.files[0];
-    // Simulação de URL (em produção usar upload real)
-    const tipo = file.type.startsWith('image/') ? 'imagem'
-                : file.type.startsWith('video/') ? 'video'
-                : file.type.startsWith('audio/') ? 'audio' : 'arquivo';
-
-    Toast.show(`Arquivo "${file.name}" selecionado. Em produção, configure upload para S3/CDN.`, 'info');
-    const r = await Auth.api('POST', `/whatsapp/conversas/${_convAtiva.id}/mensagens`, {
-      mensagem: null, tipo, arquivo_url: '#', arquivo_nome: file.name
-    });
-    if (r?.ok) {
-      _mensagens.push(r.data.dados);
-      renderMensagens();
+    if (!this.files?.length) return;
+    for (const f of Array.from(this.files)) {
+      await waEnviarArquivo(f);
     }
     this.value = '';
   });

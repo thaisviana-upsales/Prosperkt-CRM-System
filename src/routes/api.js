@@ -28,6 +28,7 @@ const importacaoCtrl     = require('../controllers/importacaoLeadsController');
 const atividadesCtrl     = require('../controllers/atividadesController');
 const producaoCtrl       = require('../controllers/producaoController');
 const arquivosCtrl       = require('../controllers/arquivosController');
+const arquivosWaCtrl     = require('../controllers/arquivosWhatsappController');
 const admVendasCtrl      = require('../controllers/admVendasController');
 
 // Seed funis iniciais (só roda se vazio)
@@ -152,11 +153,17 @@ router.get   ('/leads/:id/producao',              autenticar, producaoCtrl.busca
 router.post  ('/leads/:id/producao',              autenticar, producaoCtrl.salvar);
 router.patch ('/leads/:id/producao',              autenticar, producaoCtrl.salvar);
 
-// ── Arquivos do lead (upload multipart) ───────────────────────────────────────────────
-router.get   ('/leads/:id/arquivos',              autenticar, arquivosCtrl.listar);
-router.post  ('/leads/:id/arquivos',              autenticar, arquivosCtrl.upload.single('arquivo'), arquivosCtrl.enviar, arquivosCtrl.handleUploadError);
-router.post  ('/leads/:id/arquivos/:arqId/producao', autenticar, arquivosCtrl.salvarEmProducao);
-router.delete('/leads/:id/arquivos/:arqId',       autenticar, arquivosCtrl.excluir);
+// ── Arquivos do lead (upload multipart) ──────────────────────────────────────
+router.get   ('/leads/:id/arquivos',                          autenticar, arquivosCtrl.listar);
+router.post  ('/leads/:id/arquivos',                          autenticar, arquivosCtrl.upload.single('arquivo'), arquivosCtrl.enviar, arquivosCtrl.handleUploadError);
+router.get   ('/leads/:id/arquivos/:arqId/download',          autenticar, arquivosCtrl.download);
+router.post  ('/leads/:id/arquivos/:arqId/producao',          autenticar, arquivosCtrl.salvarEmProducao);
+router.delete('/leads/:id/arquivos/:arqId',                   autenticar, arquivosCtrl.excluir);
+
+// ── Arquivos do WhatsApp (upload multipart) ───────────────────────────────────
+router.get   ('/whatsapp/conversas/:id/arquivos',             autenticar, arquivosWaCtrl.listarArquivos);
+router.post  ('/whatsapp/conversas/:id/arquivos',             autenticar, arquivosWaCtrl.upload.single('arquivo'), arquivosWaCtrl.enviarArquivo, arquivosWaCtrl.handleUploadError);
+router.get   ('/whatsapp/arquivos/:arqId/download',           autenticar, arquivosWaCtrl.downloadArquivo);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ADMINISTRAÇÃO DE VENDAS (pós-venda operacional)

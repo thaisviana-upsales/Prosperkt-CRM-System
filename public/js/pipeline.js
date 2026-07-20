@@ -738,6 +738,8 @@ async function abrirLead(id) {
   if (window.Atividades) window.Atividades.renderTab(id);
   // Produção — renderiza aba completa
   if (window.Producao) window.Producao.renderTab(id, l);
+  // Arquivos — carrega lista de anexos do lead
+  if (window.LeadArquivos) window.LeadArquivos.carregar(id);
   // Tags na aba Informações — chips com botão remover
   _renderTagsDisplay(l.tags, id);
   const tagWrap = document.getElementById('tag-input-wrap');
@@ -941,7 +943,7 @@ async function onFlFunilChange(overrideFunilId) {
 }
 
 function showTab(tab) {
-  const ABAS = ['dados', 'hist', 'venda', 'producao'];
+  const ABAS = ['dados', 'hist', 'venda', 'producao', 'arquivos'];
   ABAS.forEach(t => {
     const el  = document.getElementById(`tab-${t}`);
     const btn = document.getElementById(`tab-btn-${t}`);
