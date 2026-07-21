@@ -3,7 +3,7 @@
  * Corrige: filtros de data, status case-insensitive, valor_venda, ganho real.
  */
 const { getProvider } = require('../database/dbProvider');
-const { ETAPAS_CARTEIRA_REMOVIDAS, ETAPAS_GLOBAIS_REMOVIDAS } = require('./funisController');
+const { ETAPAS_CARTEIRA_REMOVIDAS, ETAPAS_GLOBAIS_REMOVIDAS, ETAPAS_SEM_DASHBOARD } = require('./funisController');
 const etapaHistoricoSvc = require('../services/etapaHistoricoService');
 
 // ── Helpers de período ────────────────────────────────────────────────────────
@@ -287,6 +287,8 @@ async function resumo(req, res) {
         }
         // Remove etapas globalmente ocultas (Tratativa em andamento e variações)
         etapasEstrutura = etapasEstrutura.filter(e => !ETAPAS_GLOBAIS_REMOVIDAS.includes(e.nome));
+        // Remove etapas sem dashboard (BASE-Antiga etc.)
+        etapasEstrutura = etapasEstrutura.filter(e => !ETAPAS_SEM_DASHBOARD.includes(e.nome));
         // Monta mapa nome→[id] (funil único, sem dedup)
         etapasEstrutura.forEach(e => { nomeParaIds[e.nome] = [e.id]; });
         console.log('[DASHBOARD_ETAPAS_ENCONTRADAS] funil_id:', funil_id, '| etapas:', etapasEstrutura.length, '|', etapasEstrutura.map(e => `${e.ordem}:${e.nome}`).join(', '));
@@ -346,6 +348,8 @@ async function resumo(req, res) {
         }
         // Remove etapas globalmente ocultas (Tratativa em andamento e variações)
         etapasEstrutura = etapasEstrutura.filter(e => !ETAPAS_GLOBAIS_REMOVIDAS.includes(e.nome));
+        // Remove etapas sem dashboard (BASE-Antiga etc.)
+        etapasEstrutura = etapasEstrutura.filter(e => !ETAPAS_SEM_DASHBOARD.includes(e.nome));
         console.log('[DASHBOARD_ETAPAS_ENCONTRADAS] todos-novos | etapas dedup:', etapasEstrutura.length, '|', etapasEstrutura.map(e => `${e.ordem}:${e.nome}`).join(', '));
       }
 
@@ -663,8 +667,10 @@ async function resumo(req, res) {
       etapas.forEach(e => { etapaNomeParaIds[e.nome] = [e.id]; });
       // Remove etapas globalmente ocultas (Tratativa em andamento e variações)
       etapas = etapas.filter(e => !ETAPAS_GLOBAIS_REMOVIDAS.includes(e.nome));
+      // Remove etapas sem dashboard (BASE-Antiga etc.)
+      etapas = etapas.filter(e => !ETAPAS_SEM_DASHBOARD.includes(e.nome));
       // Rebuild nomeParaIds sem as etapas removidas
-      Object.keys(etapaNomeParaIds).forEach(k => { if (ETAPAS_GLOBAIS_REMOVIDAS.includes(k)) delete etapaNomeParaIds[k]; });
+      Object.keys(etapaNomeParaIds).forEach(k => { if (ETAPAS_GLOBAIS_REMOVIDAS.includes(k) || ETAPAS_SEM_DASHBOARD.includes(k)) delete etapaNomeParaIds[k]; });
       console.log('[DASHBOARD_ETAPAS_ENCONTRADAS] funil_id:', funil_id, '| etapas:', etapas.length, '|', etapas.map(e => `${e.ordem}:${e.nome}`).join(', '));
     } else {
       // ── TODOS - NOVOS: agrega etapas de todos os pipelines comerciais ativos ──
@@ -703,7 +709,9 @@ async function resumo(req, res) {
       etapas = Array.from(seen.values()).sort((a, b) => a.ordem - b.ordem);
       // Remove etapas globalmente ocultas (Tratativa em andamento e variações)
       etapas = etapas.filter(e => !ETAPAS_GLOBAIS_REMOVIDAS.includes(e.nome));
-      Object.keys(etapaNomeParaIds).forEach(k => { if (ETAPAS_GLOBAIS_REMOVIDAS.includes(k)) delete etapaNomeParaIds[k]; });
+      // Remove etapas sem dashboard (BASE-Antiga etc.)
+      etapas = etapas.filter(e => !ETAPAS_SEM_DASHBOARD.includes(e.nome));
+      Object.keys(etapaNomeParaIds).forEach(k => { if (ETAPAS_GLOBAIS_REMOVIDAS.includes(k) || ETAPAS_SEM_DASHBOARD.includes(k)) delete etapaNomeParaIds[k]; });
       console.log('[DASHBOARD_ETAPAS_ENCONTRADAS] todos-novos | etapas dedup:', etapas.length, '|', etapas.map(e => `${e.ordem}:${e.nome}`).join(', '));
     }
     console.log('[DASHBOARD_PIPELINE_SELECTED]', funil_id || 'todos-novos', '| etapas finais:', etapas.length);

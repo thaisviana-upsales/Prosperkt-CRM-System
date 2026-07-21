@@ -23,8 +23,12 @@ const ETAPAS_PADRAO = [
   { nome:'Perdidos',            ordem:12, cor:'#FF3B5C', probabilidade:0,   is_ganho:0, is_perdido:1 },
 ];
 
-// Etapas da Carteira Recorrente (14 oficiais — preserva as "Previsão Carteira X")
+// Etapas da Carteira Recorrente (15 oficiais: BASE-Antiga + 7 Previsão + 7 comerciais)
+// BASE-Antiga: ordem=0 — primeira coluna, EXCLUSIVA da Carteira Recorrente.
+//   NÃO aparece no Dashboard nem no Funil de Conversão (filtrada via ETAPAS_SEM_DASHBOARD).
+//   Não altera automações existentes (automações continuam apontando para Previsão Carteira X).
 const ETAPAS_CARTEIRA_RECORRENTE = [
+  { nome:'BASE-Antiga',               ordem:0,  cor:'#4A4A6A', probabilidade:0,   is_ganho:0, is_perdido:0 },
   { nome:'Previsão Carteira 15-30 dias',  ordem:1,  cor:'#1a3a52', probabilidade:10,  is_ganho:0, is_perdido:0 },
   { nome:'Previsão Carteira 30-60 dias',  ordem:2,  cor:'#1e4460', probabilidade:10,  is_ganho:0, is_perdido:0 },
   { nome:'Previsão Carteira 60-90 dias',  ordem:3,  cor:'#234f6e', probabilidade:15,  is_ganho:0, is_perdido:0 },
@@ -191,6 +195,14 @@ const ETAPAS_GLOBAIS_REMOVIDAS = [
   'Tratativa',                // variação genérica
   'Contato em Tratativa',     // variação antiga
   // NOTA: 'Em Tratativa' é a etapa CORRETA — exibir nos funis comerciais
+];
+
+// Etapas que aparecem na Pipeline mas NÃO devem ser consideradas no Dashboard
+// nem no Funil de Conversão de Vendas.
+// BASE-Antiga: etapa de organização manual da Carteira Recorrente —
+//   não representa etapa comercial ativa, não entra em conversão/indicadores.
+const ETAPAS_SEM_DASHBOARD = [
+  'BASE-Antiga',
 ];
 
 // Garante as 14 etapas oficiais da Carteira Recorrente — sem duplicar (SQLite)
@@ -450,6 +462,6 @@ async function deletar(req, res) {
   } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
 }
 
-module.exports = { listar, buscarPorId, criar, atualizar, deletar, seedFunis, ETAPAS_CARTEIRA_REMOVIDAS, ETAPAS_GLOBAIS_REMOVIDAS };
+module.exports = { listar, buscarPorId, criar, atualizar, deletar, seedFunis, ETAPAS_CARTEIRA_REMOVIDAS, ETAPAS_GLOBAIS_REMOVIDAS, ETAPAS_SEM_DASHBOARD };
 
 
