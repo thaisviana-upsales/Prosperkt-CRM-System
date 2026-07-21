@@ -8,6 +8,7 @@ const crypto  = require('crypto');
 const path    = require('path');
 const multer  = require('multer');
 const { getProvider } = require('../database/dbProvider');
+const { registrarTimeline } = require('../services/auditService');
 
 // ── Limite e configuração ────────────────────────────────────────────────────
 const LIMITE_BYTES = 300 * 1024 * 1024; // 300 MB
@@ -141,6 +142,16 @@ async function enviar(req, res) {
       if (error) throw error;
 
       console.log('[arquivos.enviar] Upload OK:', { id, nome: nomeSeguro, tamanho: arquivo.size, lead: leadId });
+      // ── Timeline: Arquivo Anexado ──────────────────────────────────────────────
+      registrarTimeline({
+        leadId,
+        usuarioId:   req.usuario?.id,
+        usuarioNome: req.usuario?.nome || 'Sistema',
+        tipoAcao:    'ARQUIVO_ANEXADO',
+        descricao:   `Arquivo anexado ao lead: "${nomeSeguro}".`,
+        dadosNovos:  { arquivo_nome: nomeSeguro, tamanho: arquivo.size, mime_type: arquivo.mimetype },
+        origem: 'crm',
+      }).catch(e => console.warn('[TIMELINE_ARQUIVO]', e.message));
       return res.status(201).json({ sucesso: true, dados: { ...data, tamanho_fmt: fmtTamanho(data.tamanho) } });
     }
     return res.status(201).json({ sucesso: true, dados: { id, nome_original: nomeSeguro } });

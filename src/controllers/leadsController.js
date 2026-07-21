@@ -5,6 +5,7 @@
 const crypto = require('crypto');
 const { getProvider } = require('../database/dbProvider');
 const etapaHistorico = require('../services/etapaHistoricoService');
+const { registrarTimeline } = require('../services/auditService');
 
 // SLA Contato 1 — importação lazy para evitar dependência circular
 let _automacaoSvc = null;
@@ -474,6 +475,43 @@ async function criar(req, res) {
       if (error) throw error;
       // observacoes salva diretamente em leads.observacoes — nao duplicar em mensagens
       req.log({ acao:'CREATE', entidade:'leads', entidade_id:id, depois:{ nome, etapa_id, funil_id:fId } });
+      // ── Timeline: Criação do Lead ────────────────────────────────────────────
+      setImmediate(async () => {
+        try {
+          // Resolve nomes para Timeline
+          let funilNome = '', etapaNome = '', respNome = req.usuario?.nome || 'Sistema';
+          const { sb: _sb } = getProvider();
+          if (_sb) {
+            const [fRes, eRes, rRes] = await Promise.all([
+              fId ? _sb.from('funis').select('nome').eq('id', fId).single() : { data: null },
+              etapa_id ? _sb.from('etapas').select('nome').eq('id', etapa_id).single() : { data: null },
+              respId && respId !== req.usuario?.id ? _sb.from('usuarios').select('nome').eq('id', respId).single() : { data: null },
+            ]);
+            funilNome = fRes.data?.nome || '';
+            etapaNome = eRes.data?.nome || '';
+            if (rRes.data?.nome) respNome = rRes.data.nome;
+          }
+          console.log('TIMELINE_LEAD_CREATE_EVENT', { leadId: id, nome });
+          await registrarTimeline({
+            leadId: id,
+            usuarioId:   req.usuario?.id,
+            usuarioNome: req.usuario?.nome || 'Sistema',
+            tipoAcao:    'CRIACAO_LEAD',
+            descricao:   'Lead criado no CRM.',
+            dadosNovos:  {
+              nome,
+              email:       email     || null,
+              telefone:    telefone  || null,
+              empresa:     empresa   || null,
+              funil:       funilNome,
+              etapa:       etapaNome,
+              responsavel: respNome,
+              origem:      origem    || 'manual',
+            },
+            origem: 'crm',
+          });
+        } catch (e) { console.error('[TIMELINE_CREATE]', e.message); }
+      });
       // Registra passagem pela etapa inicial no histórico do Funil de Conversão
       // E também pela PRIMEIRA etapa da pipeline (garante Lead Recebido = Cockpit)
       console.log('[FUNIL_CONVERSAO_HISTORICO_CREATE_LEAD] lead:', id, '→ etapa:', etapa_id, '| funil:', fId, '| pipeline:', pipeline_id || 'resolve-via-funil');
@@ -612,7 +650,7 @@ async function atualizar(req, res) {
 
       const { data, error } = await sb.from('leads').update(upd).eq('id', id).select().single();
       if (error) throw error;
-      // Log: mudança de responsável
+      // ── Log: mudança de responsável ───────────────────────────────────────────
       if (upd.responsavel_id && upd.responsavel_id !== atual.responsavel_id) {
         req.log({ acao:'UPDATE_RESPONSAVEL', entidade:'leads', entidade_id:id,
           antes:{ responsavel_id: atual.responsavel_id },
@@ -624,6 +662,56 @@ async function atualizar(req, res) {
           antes:{ funil_id: atual.funil_id },
           depois:{ funil_id: upd.funil_id } });
       }
+      // ── Timeline: diff completo de campos editados ───────────────────────────
+      setImmediate(async () => {
+        try {
+          const CAMPOS_RASTREADOS = [
+            ['nome',            'Nome'],
+            ['email',           'E-mail'],
+            ['telefone',        'Telefone'],
+            ['empresa',         'Empresa'],
+            ['cargo',           'Cargo'],
+            ['observacoes',     'Observações'],
+            ['valor',           'Valor'],
+            ['valor_venda',     'Valor da Venda'],
+            ['forma_pagamento',  'Forma de Pagamento'],
+            ['produto_nome',    'Produto'],
+            ['endereco_entrega','Endereço'],
+            ['cep_entrega',     'CEP'],
+            ['numero_entrega',  'Número'],
+            ['complemento_entrega','Complemento'],
+            ['referencia_entrega','Referência'],
+            ['bairro_entrega',  'Bairro'],
+            ['cidade_entrega',  'Cidade'],
+            ['uf_entrega',      'UF'],
+            ['motivo_perda',    'Motivo de Perda'],
+            ['responsavel_id',  'Responsável'],
+          ];
+          const ant = {};
+          const nov = {};
+          for (const [campo, label] of CAMPOS_RASTREADOS) {
+            const v_antes = atual[campo];
+            const v_depois = upd[campo];
+            if (v_depois !== undefined && String(v_depois||'') !== String(v_antes||'')) {
+              ant[label] = v_antes  ?? '';
+              nov[label] = v_depois ?? '';
+            }
+          }
+          if (Object.keys(nov).length > 0) {
+            console.log('TIMELINE_LEAD_UPDATE_EVENT', { leadId: id, campos: Object.keys(nov) });
+            await registrarTimeline({
+              leadId: id,
+              usuarioId:   req.usuario?.id,
+              usuarioNome: req.usuario?.nome || 'Sistema',
+              tipoAcao:    'EDICAO_DADOS',
+              descricao:   'Dados do lead atualizados.',
+              dadosAnteriores: ant,
+              dadosNovos:      nov,
+              origem: 'crm',
+            });
+          }
+        } catch(e) { console.error('[TIMELINE_UPDATE]', e.message); }
+      });
       return res.json({ sucesso:true, dados: normalizeLead(data) });
     }
 
@@ -1188,7 +1276,37 @@ async function mover(req, res) {
     const extraSets = Object.keys(extras).map(k=>`${k}=?`).join(',');
     sqlite.prepare(`UPDATE leads SET etapa_id=?, pipeline_id=COALESCE(?,pipeline_id), status=?, atualizado_em=?${extraSets?','+extraSets:''} WHERE id=?`).run(etapa_id, pipeline_id||null, novoStatus, agora, ...Object.values(extras), id);
 
-    req.log({ acao:'MOVER', entidade:'leads', entidade_id:id, antes:{ etapa_id:lead.etapa_id }, depois:{ etapa_id, status:novoStatus } });
+    req.log({ acao:'MOVER', entidade:'leads', entidade_id:id,
+      antes:{ etapa_id:lead.etapa_id },
+      depois:{ etapa_id, status:novoStatus } });
+    // ── Timeline: Mudança de Etapa (SQLite) ───────────────────────────────────
+    setImmediate(async () => {
+      try {
+        const eAnteriorNome = etapaAnteriorNome || lead.etapa_id || '';
+        const eNovaNome     = etapa?.nome       || etapa_id      || '';
+        const fNome         = '';
+        const tipoAcao = novoStatus === 'ganho'   ? 'VENDA_GANHA'
+          : novoStatus === 'perdido' ? 'LEAD_PERDIDO' : 'MUDANCA_ETAPA';
+        const descricao = tipoAcao === 'VENDA_GANHA'
+          ? `Lead marcado como venda/ganho. Etapa: ${eNovaNome}.`
+          : tipoAcao === 'LEAD_PERDIDO'
+          ? `Lead marcado como perdido. Etapa: ${eNovaNome}.`
+          : eAnteriorNome && eNovaNome
+          ? `Etapa alterada: ${eAnteriorNome} → ${eNovaNome}.`
+          : `Movido para etapa: ${eNovaNome}.`;
+        console.log('TIMELINE_LEAD_MOVE_STAGE_EVENT', { leadId: id, eAnteriorNome, eNovaNome, tipoAcao });
+        await registrarTimeline({
+          leadId: id,
+          usuarioId:   req.usuario?.id,
+          usuarioNome: req.usuario?.nome || 'Sistema',
+          tipoAcao,
+          descricao,
+          dadosAnteriores: { etapa: eAnteriorNome, status: lead.status },
+          dadosNovos:      { etapa: eNovaNome, status: novoStatus, funil: fNome },
+          origem: 'crm',
+        });
+      } catch(e) { console.error('[TIMELINE_MOVER_SQLite]', e.message); }
+    });
 
     // Registra passagem pela etapa de destino no histórico do Funil de Conversão (SQLite)
     // Idempotente: UNIQUE(lead_id, etapa_id) impede duplicatas
@@ -1377,16 +1495,17 @@ function calcularComissaoSQLite(db, lead, leadId, pipeline_id, agora, req) {
 // GET /api/leads/:id/historico
 async function historico(req, res) {
   const { sb, isSupa, sqlite } = getProvider();
+  const { buscarTimeline } = require('../services/auditService');
   const leadId = req.params.id;
   try {
     let notas = [];
     let logs  = [];
+    let timeline = [];
 
     if (isSupa) {
-      // Dado do lead para evento retroativo
       const { data: lead } = await sb.from('leads').select('criado_em,nome').eq('id', leadId).maybeSingle();
 
-      // Notas
+      // 1. Notas
       const { data: msgs } = await sb.from('mensagens').select('*, autor:usuarios!usuario_id(nome)').eq('lead_id', leadId).order('criado_em');
       notas = (msgs||[]).map(m => ({
         id: m.id, tipo: 'NOTA', acao: 'NOTA',
@@ -1396,12 +1515,15 @@ async function historico(req, res) {
         criado_em: m.criado_em,
       }));
 
-      // Logs de auditoria
-      const { data: lgData } = await sb.from('logs').select('*').eq('entidade_id', leadId).order('criado_em');
+      // 2. Logs de auditoria (apenas entidade='leads')
+      const { data: lgData } = await sb.from('logs')
+        .select('*, usuario:usuarios!usuario_id(nome)')
+        .eq('entidade', 'leads')
+        .eq('entidade_id', leadId)
+        .order('criado_em');
 
-      // Resolve nomes de etapas para MOVER
       const etapaIds = [...new Set((lgData||[])
-        .flatMap(l => [_parseSafe(l.depois).etapa_id, _parseSafe(l.antes).etapa_id])
+        .flatMap(l => [_parseSafe(l.dados_depois || l.depois).etapa_id, _parseSafe(l.dados_antes || l.antes).etapa_id])
         .filter(Boolean))];
       let etapaMap = {};
       if (etapaIds.length) {
@@ -1409,10 +1531,36 @@ async function historico(req, res) {
         etapaMap = Object.fromEntries((etapas||[]).map(e => [e.id, e.nome]));
       }
 
-      logs = (lgData||[]).map(l => formatarLog(l, etapaMap));
+      logs = (lgData||[]).map(l => {
+        const norm = {
+          ...l,
+          // Supabase usa dados_antes/dados_depois
+          antes:  l.dados_antes,
+          depois: l.dados_depois,
+          autor_nome: l.usuario_nome || l.usuario?.nome || 'Sistema',
+          usuario_nome: l.usuario_nome || l.usuario?.nome || 'Sistema',
+        };
+        return formatarLog(norm, etapaMap);
+      });
+
+      // 3. Timeline rica (lead_timeline)
+      const tlRaw = await buscarTimeline(leadId);
+      timeline = tlRaw.map(t => ({
+        id:   t.id,
+        tipo: 'TIMELINE',
+        acao: t.tipo_acao,
+        icone: _tipoAcaoIcone(t.tipo_acao),
+        titulo: _tipoAcaoTitulo(t.tipo_acao),
+        conteudo: t.descricao || '',
+        dados_anteriores: t.dados_anteriores,
+        dados_novos:      t.dados_novos,
+        autor_nome: t.usuario_nome || 'Sistema',
+        criado_em:  t.criado_em,
+        origem:     t.origem,
+      }));
 
       // Evento retroativo: Lead criado (se não houver log de criação)
-      const temCreate = logs.some(l => l.acao === 'CREATE');
+      const temCreate = logs.some(l => l.acao === 'CREATE') || timeline.some(t => t.acao === 'CRIACAO_LEAD');
       if (!temCreate && lead) {
         logs.unshift({
           id: `retro-${leadId}`,
@@ -1423,27 +1571,89 @@ async function historico(req, res) {
           criado_em: lead.criado_em,
         });
       }
+
+      console.log('TIMELINE_LEAD_FETCH', { leadId, logs: logs.length, timeline: timeline.length, notas: notas.length });
+
     } else {
       notas = sqlite.prepare(`SELECT m.*, u.nome as autor_nome FROM mensagens m LEFT JOIN usuarios u ON m.usuario_id=u.id WHERE m.lead_id=? ORDER BY m.enviado_em`).all(leadId)
         .map(m => ({ ...m, tipo:'NOTA', acao:'NOTA', icone:'📝', titulo:'Nota adicionada' }));
-      const lgRaw = sqlite.prepare(`SELECT l.*, u.nome as autor_nome FROM logs l LEFT JOIN usuarios u ON l.usuario_id=u.id WHERE l.entidade_id=? ORDER BY l.criado_em`).all(leadId);
-      // Mapeia etapas
-      const eIds = [...new Set(lgRaw.flatMap(l => [_parseSafe(l.depois).etapa_id, _parseSafe(l.antes).etapa_id]).filter(Boolean))];
+      const lgRaw = sqlite.prepare(`SELECT l.*, u.nome as autor_nome FROM logs l LEFT JOIN usuarios u ON l.usuario_id=u.id WHERE l.entidade='leads' AND l.entidade_id=? ORDER BY l.criado_em`).all(leadId);
+      const eIds = [...new Set(lgRaw.flatMap(l => [_parseSafe(l.dados_depois).etapa_id, _parseSafe(l.dados_antes).etapa_id]).filter(Boolean))];
       let etapaMap = {};
       if (eIds.length) {
         const rows = sqlite.prepare(`SELECT id, nome FROM etapas WHERE id IN (${eIds.map(()=>'?').join(',')}) `).all(...eIds);
         etapaMap = Object.fromEntries(rows.map(e => [e.id, e.nome]));
       }
       logs = lgRaw.map(l => formatarLog(l, etapaMap));
+
+      // Timeline para SQLite (usa tabela logs com tipo_acao)
+      const tlRaw = await buscarTimeline(leadId);
+      timeline = tlRaw.map(t => ({
+        id: t.id, tipo: 'TIMELINE', acao: t.tipo_acao,
+        icone: _tipoAcaoIcone(t.tipo_acao),
+        titulo: _tipoAcaoTitulo(t.tipo_acao),
+        conteudo: t.descricao || '',
+        dados_anteriores: t.dados_anteriores,
+        dados_novos:      t.dados_novos,
+        autor_nome: t.usuario_nome || 'Sistema',
+        criado_em:  t.criado_em,
+      }));
     }
 
-    const todos = [...notas, ...logs].sort((a,b) => new Date(a.criado_em) - new Date(b.criado_em));
+    // Mescla e desduplicar por id
+    const seen = new Set();
+    const todos = [...notas, ...logs, ...timeline]
+      .filter(m => {
+        if (!m.id || seen.has(m.id)) return false;
+        seen.add(m.id);
+        return true;
+      })
+      .sort((a,b) => new Date(a.criado_em||a.enviado_em) - new Date(b.criado_em||b.enviado_em));
+
     return res.json({ sucesso:true, dados:todos });
   } catch(e) {
     console.error('[leads.historico]', e.message);
     return res.status(500).json({ sucesso:false, erro:e.message });
   }
 }
+
+// Helpers de Timeline
+function _tipoAcaoIcone(tipo) {
+  const MAP = {
+    CRIACAO_LEAD:    '🌱',
+    EDICAO_DADOS:    '✏️',
+    MUDANCA_ETAPA:   '➡️',
+    VENDA_GANHA:     '🏆',
+    LEAD_PERDIDO:    '❌',
+    CLONE_CARTEIRA:  '🔄',
+    CLONE:           '📋',
+    ARQUIVO_ANEXADO: '📎',
+    ATIVIDADE_CRIADA:'📅',
+    ATIVIDADE_CONCLUIDA:'✔️',
+    ADM_VENDAS_CRIADO:'📦',
+    NOTA:            '📝',
+  };
+  return MAP[tipo] || '📋';
+}
+
+function _tipoAcaoTitulo(tipo) {
+  const MAP = {
+    CRIACAO_LEAD:    'Lead criado',
+    EDICAO_DADOS:    'Dados atualizados',
+    MUDANCA_ETAPA:   'Etapa alterada',
+    VENDA_GANHA:     'Venda/Ganho',
+    LEAD_PERDIDO:    'Lead perdido',
+    CLONE_CARTEIRA:  'Enviado para Carteira Recorrente',
+    CLONE:           'Lead clonado',
+    ARQUIVO_ANEXADO: 'Arquivo anexado',
+    ATIVIDADE_CRIADA:'Atividade criada',
+    ATIVIDADE_CONCLUIDA:'Atividade concluída',
+    ADM_VENDAS_CRIADO:'Enviado para Adm. de Vendas',
+    NOTA:            'Nota adicionada',
+  };
+  return MAP[tipo] || tipo || 'Evento';
+}
+
 
 // ── Helper: recalcula valor_venda do lead pela soma dos produtos ativos ────────
 async function recalcularValorVenda(leadId, sb, isSupa, sqlite) {

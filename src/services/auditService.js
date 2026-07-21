@@ -7,40 +7,42 @@ const crypto = require('crypto');
 const { MODE } = require('../database/dbProvider');
 
 /**
- * Registra uma entrada de auditoria
+ * Registra uma entrada de auditoria na tabela 'logs'.
+ * ATENÇÃO: tabela Supabase usa dados_antes/dados_depois (não antes/depois).
  */
-async function registrarLog({ acao, entidade, entidade_id, antes, depois, usuario, ip, ua, origem }) {
+async function registrarLog({ acao, entidade, entidade_id, antes, depois, descricao, usuario, ip, ua, origem }) {
   try {
     const id = crypto.randomBytes(16).toString('hex');
 
     if (MODE === 'supabase') {
-      // Supabase: usa tabela logs via JS client
       const { getProvider } = require('../database/dbProvider');
       const { sb } = getProvider();
-      if (!sb) return; // sem client, ignora silenciosamente
+      if (!sb) return;
 
       const payload = {
         id,
-        usuario_id:  usuario?.id   || null,
+        usuario_id:    usuario?.id   || null,
+        usuario_nome:  usuario?.nome || null,
+        usuario_role:  usuario?.role || null,
         acao,
-        entidade:    entidade      || null,
-        entidade_id: entidade_id   || null,
-        antes:       antes  ? antes  : null,
-        depois:      depois ? depois : null,
-        ip:          ip            || null,
-        user_agent:  ua            || null,
+        entidade:      entidade      || null,
+        entidade_id:   entidade_id   || null,
+        dados_antes:   antes  || null,   // ← CORRIGIDO: era 'antes'
+        dados_depois:  depois || null,   // ← CORRIGIDO: era 'depois'
+        descricao:     descricao     || null,
+        ip_address:    ip            || null,
+        user_agent:    ua            || null,
       };
 
-      // Grava na tabela logs (histórico do lead — existente)
-      await sb.from('logs').insert(payload).catch(() => {});
+      await sb.from('logs').insert(payload).catch(e => {
+        console.error('[AuditLog] logs insert error:', e.message);
+      });
 
-      // Grava na tabela audit_logs (imutável — hardening)
+      // audit_logs (imutável — hardening)
       await sb.from('audit_logs').insert({
         ...payload,
-        usuario_nome: usuario?.nome || null,
-        usuario_role: usuario?.role || null,
         origem: origem || 'web',
-      }).catch(() => {}); // silencioso se tabela ainda não existir
+      }).catch(() => {}); // silencioso se tabela não existir
 
     } else {
       // SQLite
@@ -68,8 +70,63 @@ async function registrarLog({ acao, entidade, entidade_id, antes, depois, usuari
       );
     }
   } catch (err) {
-    // Log não pode derrubar a aplicação
     console.error('[AuditLog] Falha ao registrar log:', err.message);
+  }
+}
+
+/**
+ * Registra evento rico na tabela lead_timeline.
+ * Usado para eventos de lead com dados_anteriores/dados_novos detalhados.
+ */
+async function registrarTimeline({
+  leadId, usuarioId, usuarioNome, tipoAcao, descricao,
+  dadosAnteriores = null, dadosNovos = null, origem = 'crm'
+}) {
+  try {
+    const id = crypto.randomBytes(16).toString('hex');
+
+    if (MODE === 'supabase') {
+      const { getProvider } = require('../database/dbProvider');
+      const { sb } = getProvider();
+      if (!sb) return;
+
+      console.log('TIMELINE_LEAD_CREATE_EVENT', { leadId, tipoAcao, origem });
+
+      const { error } = await sb.from('lead_timeline').insert({
+        id,
+        lead_id:          leadId,
+        usuario_id:       usuarioId    || null,
+        usuario_nome:     usuarioNome  || 'Sistema',
+        tipo_acao:        tipoAcao,
+        descricao,
+        dados_anteriores: dadosAnteriores || null,
+        dados_novos:      dadosNovos      || null,
+        origem,
+        criado_em:        new Date().toISOString(),
+      });
+
+      if (error) {
+        console.warn('[Timeline] lead_timeline insert error:', error.message, '— execute patch v16 no Supabase.');
+      }
+    } else {
+      // SQLite — guarda na tabela logs com tipo_acao como ação
+      const { getDb } = require('../database/db');
+      const db = getDb();
+      db.prepare(`
+        INSERT INTO logs (id, usuario_id, usuario_nome, acao, entidade, entidade_id, dados_antes, dados_depois)
+        VALUES (?, ?, ?, ?, 'leads', ?, ?, ?)
+      `).run(
+        id,
+        usuarioId   || null,
+        usuarioNome || 'Sistema',
+        tipoAcao,
+        leadId,
+        dadosAnteriores ? JSON.stringify(dadosAnteriores) : null,
+        dadosNovos      ? JSON.stringify(dadosNovos)      : null,
+      );
+    }
+  } catch (e) {
+    console.error('[Timeline] Falha ao registrar evento:', e.message);
   }
 }
 
@@ -77,13 +134,14 @@ async function registrarLog({ acao, entidade, entidade_id, antes, depois, usuari
  * Middleware Express: injeta função log no req para usar em controllers
  */
 function auditMiddleware(req, res, next) {
-  req.log = ({ acao, entidade, entidade_id, antes, depois }) => {
+  req.log = ({ acao, entidade, entidade_id, antes, depois, descricao }) => {
     registrarLog({
       acao,
       entidade,
       entidade_id,
       antes,
       depois,
+      descricao,
       usuario: req.usuario ? {
         id:   req.usuario.id,
         nome: req.usuario.nome,
@@ -93,6 +151,16 @@ function auditMiddleware(req, res, next) {
       ua: req.get('user-agent'),
     }).catch(e => console.error('[AuditLog middleware]', e.message));
   };
+
+  // Shortcut para timeline do lead (req.timeline)
+  req.timeline = (opts) => {
+    registrarTimeline({
+      ...opts,
+      usuarioId:   opts.usuarioId   || req.usuario?.id,
+      usuarioNome: opts.usuarioNome || req.usuario?.nome || 'Sistema',
+    }).catch(e => console.error('[Timeline middleware]', e.message));
+  };
+
   next();
 }
 
@@ -107,21 +175,66 @@ async function buscarLogsLead(leadId) {
       if (!sb) return [];
       const { data } = await sb.from('logs')
         .select('*, usuario:usuarios!usuario_id(nome)')
+        .eq('entidade', 'leads')
         .eq('entidade_id', leadId)
         .order('criado_em', { ascending: true });
       return (data || []).map(l => ({
         ...l,
-        usuario_nome: l.usuario?.nome || 'Sistema',
+        usuario_nome: l.usuario_nome || l.usuario?.nome || 'Sistema',
       }));
     } else {
       const { getDb } = require('../database/db');
       const db = getDb();
       return db.prepare(`SELECT l.*, u.nome as usuario_nome FROM logs l
         LEFT JOIN usuarios u ON l.usuario_id=u.id
-        WHERE l.entidade_id=? ORDER BY l.criado_em`).all(leadId);
+        WHERE l.entidade='leads' AND l.entidade_id=? ORDER BY l.criado_em`).all(leadId);
     }
   } catch(e) {
     console.error('[AuditLog buscarLogsLead]', e.message);
+    return [];
+  }
+}
+
+/**
+ * Busca eventos da lead_timeline (tabela rica)
+ */
+async function buscarTimeline(leadId) {
+  try {
+    if (MODE === 'supabase') {
+      const { getProvider } = require('../database/dbProvider');
+      const { sb } = getProvider();
+      if (!sb) return [];
+      const { data, error } = await sb.from('lead_timeline')
+        .select('*')
+        .eq('lead_id', leadId)
+        .order('criado_em', { ascending: true });
+      if (error) {
+        console.warn('[Timeline] buscarTimeline error:', error.message);
+        return [];
+      }
+      return data || [];
+    } else {
+      const { getDb } = require('../database/db');
+      const db = getDb();
+      return db.prepare(`SELECT l.*, u.nome as usuario_nome FROM logs l
+        LEFT JOIN usuarios u ON l.usuario_id=u.id
+        WHERE l.entidade='leads' AND l.entidade_id=?
+        ORDER BY l.criado_em`).all(leadId)
+        .map(l => ({
+          id: l.id,
+          lead_id: l.entidade_id,
+          usuario_id: l.usuario_id,
+          usuario_nome: l.usuario_nome || 'Sistema',
+          tipo_acao: l.acao,
+          descricao: l.descricao || '',
+          dados_anteriores: l.dados_antes ? (() => { try { return JSON.parse(l.dados_antes); } catch { return null; } })() : null,
+          dados_novos: l.dados_depois ? (() => { try { return JSON.parse(l.dados_depois); } catch { return null; } })() : null,
+          origem: 'crm',
+          criado_em: l.criado_em,
+        }));
+    }
+  } catch(e) {
+    console.error('[Timeline] buscarTimeline error:', e.message);
     return [];
   }
 }
@@ -162,4 +275,11 @@ async function buscarLogs({ entidade, entidade_id, usuario_id, acao, limite = 10
   }
 }
 
-module.exports = { registrarLog, auditMiddleware, buscarLogs, buscarLogsLead };
+module.exports = {
+  registrarLog,
+  registrarTimeline,
+  auditMiddleware,
+  buscarLogs,
+  buscarLogsLead,
+  buscarTimeline,
+};

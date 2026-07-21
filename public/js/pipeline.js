@@ -774,7 +774,6 @@ async function carregarHistorico(leadId) {
 function _renderTimeline(itens, leadId) {
   const tl = document.getElementById('lead-timeline');
   if (!tl) return;
-  // Filtra apenas itens com data válida, ordena do mais antigo ao mais recente
   const sorted = [...itens].filter(m => m.criado_em || m.enviado_em)
     .sort((a,b) => new Date(a.criado_em||a.enviado_em) - new Date(b.criado_em||b.enviado_em));
   if (!sorted.length) {
@@ -783,16 +782,57 @@ function _renderTimeline(itens, leadId) {
   }
   tl.innerHTML = sorted.map((m, i) => {
     const data    = new Date(m.criado_em || m.enviado_em);
-    const dataStr = data.toLocaleDateString('pt-BR') + ' ' + data.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
+    const dataStr = data.toLocaleDateString('pt-BR') + ' às ' + data.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
     const isLast  = i === sorted.length - 1;
-    const isAuto  = m.origem_acao === 'automação' || m.origem_acao === 'automacao'
-      || (m.acao||'').startsWith('AUTOMACAO') || (m.acao||'') === 'SLA_CONTATO_1';
+    const isAuto  = m.origem_acao === 'automação' || (m.acao||'').startsWith('AUTOMACAO') || (m.acao||'') === 'SLA_CONTATO_1';
+    const isBackfill = m.origem === 'backfill_timeline';
+
     const icone   = m.icone  || (m.tipo === 'NOTA' ? '📝' : '📋');
     const titulo  = m.titulo || (m.tipo === 'NOTA' ? 'Nota' : m.acao || 'Evento');
     const desc    = m.conteudo ? `<div style="font-size:.7rem;color:var(--text-muted);margin-top:2px">${m.conteudo}</div>` : '';
+
+    // ── Diff antes/depois ──
+    let diffHtml = '';
+    const ant = m.dados_anteriores;
+    const nov = m.dados_novos;
+    if (nov && typeof nov === 'object' && Object.keys(nov).length) {
+      const uid = 'tl-diff-' + m.id;
+      const linhas = Object.entries(nov).map(([k, v]) => {
+        const vAnt = ant?.[k];
+        const vNov = String(v ?? '');
+        const vAntStr = String(vAnt ?? '');
+        if (vAnt !== undefined && vAntStr !== vNov && vAntStr !== '') {
+          return `<div style="font-size:.67rem;margin:1px 0">
+            <span style="color:var(--text-muted)">${k}:</span>
+            <span style="color:#FF3B5C;text-decoration:line-through;margin:0 4px">${vAntStr}</span>
+            <span style="color:#6CFF4E">→ ${vNov}</span>
+          </div>`;
+        }
+        return `<div style="font-size:.67rem;margin:1px 0">
+          <span style="color:var(--text-muted)">${k}:</span>
+          <span style="color:var(--text-secondary);margin-left:4px">${vNov}</span>
+        </div>`;
+      }).join('');
+
+      if (linhas) {
+        diffHtml = `
+          <button onclick="document.getElementById('${uid}').style.display=document.getElementById('${uid}').style.display==='none'?'':'none'"
+            style="font-size:.65rem;color:var(--green,#6CFF4E);background:none;border:none;cursor:pointer;padding:2px 0;margin-top:4px">
+            ▾ Detalhes
+          </button>
+          <div id="${uid}" style="display:none;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:6px 8px;margin-top:4px">
+            ${linhas}
+          </div>`;
+      }
+    }
+
     const autoBadge = isAuto
-      ? `<span style="background:#6C47FF22;color:#6C47FF;border:1px solid #6C47FF44;border-radius:6px;padding:1px 5px;font-size:.6rem;font-weight:700;margin-left:4px">🤖 automação</span>`
+      ? `<span style="background:#6C47FF22;color:#6C47FF;border:1px solid #6C47FF44;border-radius:6px;padding:1px 5px;font-size:.6rem;font-weight:700;margin-left:4px">🤖 auto</span>`
       : '';
+    const backfillBadge = isBackfill
+      ? `<span style="background:rgba(255,255,255,.06);color:var(--text-muted);border-radius:6px;padding:1px 5px;font-size:.6rem;margin-left:4px">backfill</span>`
+      : '';
+
     let duracao = '';
     if (i > 0) {
       const prev  = new Date(sorted[i-1].criado_em || sorted[i-1].enviado_em);
@@ -803,8 +843,9 @@ function _renderTimeline(itens, leadId) {
     return `<div class="timeline-item" style="${borderStyle}">
       <div class="timeline-dot${isLast?' current':''}">${icone}</div>
       <div class="timeline-body">
-        <div class="timeline-stage" style="font-size:.78rem;font-weight:600">${titulo}${autoBadge}</div>
+        <div class="timeline-stage" style="font-size:.78rem;font-weight:600">${titulo}${autoBadge}${backfillBadge}</div>
         ${desc}
+        ${diffHtml}
         <div class="timeline-meta">${dataStr} · ${m.autor_nome||'Sistema'}</div>
       </div>
       ${duracao ? `<div class="timeline-duration">${duracao}</div>` : ''}
