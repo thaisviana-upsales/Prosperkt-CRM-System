@@ -30,6 +30,7 @@ const producaoCtrl       = require('../controllers/producaoController');
 const arquivosCtrl       = require('../controllers/arquivosController');
 const arquivosWaCtrl     = require('../controllers/arquivosWhatsappController');
 const admVendasCtrl      = require('../controllers/admVendasController');
+const importacaoExcelCtrl = require('../controllers/importacaoExcelController');
 
 // Seed funis iniciais (só roda se vazio)
 funisCtrl.seedFunis();
@@ -118,6 +119,12 @@ router.post  ('/leads/importar-planilha',   autenticar, exigirRole('GESTOR'), im
 router.post  ('/leads/webhook-planilha',    importacaoCtrl.webhookPlanilha); // sem JWT — valida secret no header
 router.get   ('/leads/importacoes',         autenticar, exigirRole('GESTOR'), importacaoCtrl.listarImportacoes);
 router.post  ('/leads/sync-planilha',       autenticar, exigirRole('GESTOR'), importacaoCtrl.syncManual);
+// ── Importação de leads via Excel (SOMENTE SUPER_ADMIN) ──────────────────────────
+router.get ('/importacao-excel/modelo',           autenticar, exigirSuperAdmin, importacaoExcelCtrl.downloadModelo);
+router.post('/importacao-excel/validar',           autenticar, exigirSuperAdmin, importacaoExcelCtrl.upload.single('arquivo'), importacaoExcelCtrl.validar);
+router.post('/importacao-excel/importar/:id',      autenticar, exigirSuperAdmin, importacaoExcelCtrl.importar);
+router.get ('/importacao-excel/historico',         autenticar, exigirSuperAdmin, importacaoExcelCtrl.historico);
+router.get ('/importacao-excel/historico/:id/erros', autenticar, exigirSuperAdmin, importacaoExcelCtrl.downloadErros);
 
 router.get   ('/leads',                     autenticar, leadsCtrl.listar);
 router.get   ('/leads/:id',                 autenticar, leadsCtrl.buscarPorId);

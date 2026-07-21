@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Importação de Leads — PROSPEKT CRM</title>
+  <meta name="description" content="Importe leads em lote via planilha Excel com validação segura de funil, etapa e vendedor." />
+  <link rel="stylesheet" href="/css/main.css" />
+  <style>
+    /* ── Importação de Leads — Premium Dark ─────────────────── */
+    .imp-hero {
+      background: linear-gradient(135deg, rgba(108,255,78,.08) 0%, rgba(108,71,255,.08) 100%);
+      border: 1px solid rgba(108,255,78,.15);
+      border-radius: 16px;
+      padding: 28px 32px;
+      margin-bottom: 28px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+    .imp-hero-icon {
+      width: 56px; height: 56px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, #6CFF4E22, #6C47FF22);
+      border: 1px solid #6CFF4E33;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 26px; flex-shrink: 0;
+    }
+    .imp-hero h1 { font-size: 1.35rem; font-weight: 700; margin: 0 0 4px; }
+    .imp-hero p  { font-size: .82rem; color: var(--text-muted); margin: 0; }
+
+    /* ── Step cards ─────────────────────────────────────────── */
+    .step-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+    .step-card {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .step-card.highlight { border-color: #6CFF4E44; }
+    .step-num {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: var(--grad-brand);
+      color: #0D0D0D;
+      font-size: .72rem;
+      font-weight: 800;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .step-title { font-size: .85rem; font-weight: 700; }
+    .step-desc  { font-size: .75rem; color: var(--text-muted); }
+
+    /* ── Upload zone ────────────────────────────────────────── */
+    .upload-zone {
+      border: 2px dashed var(--border);
+      border-radius: 14px;
+      background: var(--surface-1);
+      padding: 40px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      margin-bottom: 16px;
+    }
+    .upload-zone:hover, .upload-zone.drag-over {
+      border-color: var(--green, #6CFF4E);
+      background: rgba(108,255,78,.04);
+    }
+    .upload-zone .uz-icon { font-size: 36px; margin-bottom: 10px; }
+    .upload-zone .uz-title { font-size: .9rem; font-weight: 600; margin-bottom: 4px; }
+    .upload-zone .uz-sub   { font-size: .75rem; color: var(--text-muted); }
+    #file-input { display: none; }
+
+    /* ── Summary cards ──────────────────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    @media (max-width: 768px) { .summary-grid { grid-template-columns: repeat(2,1fr); } }
+    .sum-card {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 18px;
+      text-align: center;
+    }
+    .sum-card .sum-val  { font-size: 1.7rem; font-weight: 800; line-height: 1; margin-bottom: 4px; }
+    .sum-card .sum-lbl  { font-size: .72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+    .sum-card.c-total   { border-color: rgba(255,255,255,.12); }
+    .sum-card.c-valido  { border-color: rgba(108,255,78,.3); }
+    .sum-card.c-valido  .sum-val { color: #6CFF4E; }
+    .sum-card.c-erro    { border-color: rgba(255,59,92,.3); }
+    .sum-card.c-erro    .sum-val { color: #FF3B5C; }
+    .sum-card.c-dupl    { border-color: rgba(245,166,35,.3); }
+    .sum-card.c-dupl    .sum-val { color: #F5A623; }
+
+    /* ── Tabela validação ───────────────────────────────────── */
+    .val-table-wrap { max-height: 380px; overflow-y: auto; margin-bottom: 18px; }
+    .val-table      { width: 100%; border-collapse: collapse; font-size: .75rem; }
+    .val-table th   {
+      background: var(--surface-2); color: var(--text-muted);
+      font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+      padding: 8px 10px; border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 1;
+    }
+    .val-table td   { padding: 7px 10px; border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,.05)); }
+    .val-table tr:hover td { background: rgba(255,255,255,.02); }
+    .badge-val  { background:#6CFF4E22; color:#6CFF4E; border:1px solid #6CFF4E44; border-radius:6px; padding:2px 8px; font-size:.65rem; font-weight:700; }
+    .badge-inv  { background:#FF3B5C22; color:#FF3B5C; border:1px solid #FF3B5C44; border-radius:6px; padding:2px 8px; font-size:.65rem; font-weight:700; }
+    .badge-dupl { background:#F5A62322; color:#F5A623; border:1px solid #F5A62344; border-radius:6px; padding:2px 8px; font-size:.65rem; font-weight:700; }
+    .badge-imp  { background:#6C47FF22; color:#6C47FF; border:1px solid #6C47FF44; border-radius:6px; padding:2px 8px; font-size:.65rem; font-weight:700; }
+
+    /* ── Action bar ─────────────────────────────────────────── */
+    .action-bar {
+      display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+      margin-bottom: 32px;
+    }
+    .action-bar .spacer { flex: 1; }
+
+    /* ── Histórico ──────────────────────────────────────────── */
+    .hist-table-wrap { max-height: 320px; overflow-y: auto; }
+    .hist-table      { width: 100%; border-collapse: collapse; font-size: .75rem; }
+    .hist-table th   {
+      background: var(--surface-2); color: var(--text-muted);
+      font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+      padding: 8px 10px; border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 1;
+    }
+    .hist-table td   { padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,.04); }
+    .hist-table tr:hover td { background: rgba(255,255,255,.02); }
+    .badge-pend { background:rgba(255,255,255,.08); color:var(--text-muted); border-radius:6px; padding:2px 8px; font-size:.65rem; font-weight:700; }
+    .badge-ok   { background:#6CFF4E22; color:#6CFF4E; border:1px solid #6CFF4E44; border-radius:6px; padding:2px 8px; font-size:.65rem; font-weight:700; }
+    .badge-err  { background:#FF3B5C22; color:#FF3B5C; border:1px solid #FF3B5C44; border-radius:6px; padding:2px 8px; font-size:.65rem; font-weight:700; }
+
+    /* ── Progress ───────────────────────────────────────────── */
+    .prog-bar-wrap { height: 6px; background:rgba(255,255,255,.08); border-radius:99px; overflow:hidden; margin:8px 0; }
+    .prog-bar      { height: 100%; background: var(--grad-brand); border-radius:99px; width:0%; transition:width .4s; }
+
+    /* ── Section ────────────────────────────────────────────── */
+    .imp-section {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px 24px;
+      margin-bottom: 20px;
+    }
+    .imp-section-title {
+      font-size: .82rem; font-weight: 700; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: .06em;
+      margin-bottom: 16px;
+      display: flex; align-items: center; gap: 8px;
+    }
+
+    .imp-spinner {
+      display: inline-block; width: 14px; height: 14px;
+      border: 2px solid rgba(255,255,255,.2);
+      border-top-color: var(--green, #6CFF4E);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      vertical-align: middle; margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .alert-msg {
+      padding: 10px 14px; border-radius: 10px;
+      font-size: .8rem; margin-bottom: 14px; display: none;
+    }
+    .alert-msg.info    { background:#6C47FF18; border:1px solid #6C47FF44; color:#a78bfa; }
+    .alert-msg.success { background:#6CFF4E18; border:1px solid #6CFF4E44; color:#6CFF4E; }
+    .alert-msg.danger  { background:#FF3B5C18; border:1px solid #FF3B5C44; color:#FF3B5C; }
+    .alert-msg.warning { background:#F5A62318; border:1px solid #F5A62344; color:#F5A623; }
+  </style>
+</head>
+<body>
+  <div id="sidebar-container"></div>
+
+  <main class="main-content" id="main-content">
+    <div style="max-width:1100px; margin:0 auto; padding:28px 24px 60px">
+
+      <!-- Hero -->
+      <div class="imp-hero">
+        <div class="imp-hero-icon">📥</div>
+        <div>
+          <h1>Importação de Leads</h1>
+          <p>Suba bases comerciais em Excel com validação segura antes da importação. Acesso exclusivo Super Admin.</p>
+        </div>
+      </div>
+
+      <!-- Steps guide -->
+      <div class="step-grid">
+        <div class="step-card">
+          <div class="step-num">1</div>
+          <div class="step-title">Baixe o Modelo</div>
+          <div class="step-desc">Faça download da planilha modelo com todas as colunas e um exemplo de preenchimento.</div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">2</div>
+          <div class="step-title">Preencha a Planilha</div>
+          <div class="step-desc">Preencha seus leads seguindo o modelo. Campos obrigatórios: nome, telefone, funil, etapa e vendedor.</div>
+        </div>
+        <div class="step-card highlight">
+          <div class="step-num">3</div>
+          <div class="step-title">Valide antes de Importar</div>
+          <div class="step-desc">Suba o arquivo para validação. Nenhum lead é criado ainda — você verá funil, etapa e duplicados.</div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">4</div>
+          <div class="step-title">Confirme a Importação</div>
+          <div class="step-desc">Após revisar a prévia, clique em "Importar leads válidos" para criar os leads no CRM.</div>
+        </div>
+      </div>
+
+      <!-- Download modelo -->
+      <div class="imp-section">
+        <div class="imp-section-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Modelo de Planilha
+        </div>
+        <p style="font-size:.8rem;color:var(--text-muted);margin:0 0 14px">Baixe o modelo oficial com todas as colunas e um exemplo de preenchimento. Use apenas o arquivo .xlsx gerado por este botão.</p>
+        <button class="btn btn-secondary" id="btn-baixar-modelo">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Baixar modelo .xlsx
+        </button>
+      </div>
+
+      <!-- Upload -->
+      <div class="imp-section">
+        <div class="imp-section-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+          Upload da Planilha
+        </div>
+
+        <div id="alert-upload" class="alert-msg"></div>
+
+        <div class="upload-zone" id="upload-zone">
+          <div class="uz-icon">📊</div>
+          <div class="uz-title">Arraste seu arquivo .xlsx aqui</div>
+          <div class="uz-sub">ou clique para selecionar · máximo 20MB · somente .xlsx</div>
+          <input type="file" id="file-input" accept=".xlsx" />
+        </div>
+
+        <div id="file-info" style="display:none;font-size:.8rem;color:var(--text-secondary);margin-bottom:12px;display:flex;align-items:center;gap:8px">
+          <span>📄</span>
+          <span id="file-name-display"></span>
+          <button id="btn-clear-file" style="background:none;border:none;color:#FF3B5C;cursor:pointer;font-size:.8rem">✕ remover</button>
+        </div>
+
+        <div id="prog-wrap" style="display:none;">
+          <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:4px" id="prog-label">Validando...</div>
+          <div class="prog-bar-wrap"><div class="prog-bar" id="prog-bar" style="width:0%"></div></div>
+        </div>
+
+        <button class="btn btn-primary" id="btn-validar" style="margin-top:8px" disabled>
+          Validar Planilha
+        </button>
+      </div>
+
+      <!-- Resumo (oculto até validar) -->
+      <div id="section-resumo" style="display:none">
+        <div class="summary-grid">
+          <div class="sum-card c-total">
+            <div class="sum-val" id="sum-total">0</div>
+            <div class="sum-lbl">Total de Linhas</div>
+          </div>
+          <div class="sum-card c-valido">
+            <div class="sum-val" id="sum-validas">0</div>
+            <div class="sum-lbl">Válidas</div>
+          </div>
+          <div class="sum-card c-erro">
+            <div class="sum-val" id="sum-erros">0</div>
+            <div class="sum-lbl">Com Erros</div>
+          </div>
+          <div class="sum-card c-dupl">
+            <div class="sum-val" id="sum-duplicados">0</div>
+            <div class="sum-lbl">Duplicados</div>
+          </div>
+        </div>
+
+        <!-- Tabela de prévia -->
+        <div class="imp-section" id="section-previa">
+          <div class="imp-section-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            Pré-validação — Todas as Linhas
+            <span id="count-previa" style="font-size:.7rem;font-weight:400;color:var(--text-muted);margin-left:4px"></span>
+          </div>
+          <div class="val-table-wrap">
+            <table class="val-table">
+              <thead>
+                <tr>
+                  <th>Linha</th>
+                  <th>Status</th>
+                  <th>Nome Lead</th>
+                  <th>Telefone</th>
+                  <th>Funil</th>
+                  <th>Etapa</th>
+                  <th>Vendedor</th>
+                  <th>Erro / Duplicado</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-previa"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Ações -->
+        <div class="action-bar">
+          <button class="btn btn-secondary" id="btn-baixar-erros" style="display:none">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Baixar relatório de erros
+          </button>
+          <div class="spacer"></div>
+          <button class="btn btn-ghost" id="btn-nova-importacao">Cancelar / Nova importação</button>
+          <button class="btn btn-primary" id="btn-importar" disabled>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            Importar leads válidos
+          </button>
+        </div>
+
+        <div id="alert-importar" class="alert-msg"></div>
+      </div>
+
+      <!-- Histórico -->
+      <div class="imp-section">
+        <div class="imp-section-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          Histórico de Importações
+          <button id="btn-reload-hist" style="background:none;border:none;cursor:pointer;color:var(--text-muted);margin-left:4px" title="Recarregar">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          </button>
+        </div>
+        <div class="hist-table-wrap">
+          <table class="hist-table">
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Arquivo</th>
+                <th>Usuário</th>
+                <th>Total</th>
+                <th>Importados</th>
+                <th>Erros</th>
+                <th>Duplicados</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="tbody-hist">
+              <tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px">Carregando histórico...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- /max-width -->
+  </main>
+
+  <script src="/js/auth.js"></script>
+  <script src="/js/sidebar.js"></script>
+  <script src="/js/importacao-excel.js"></script>
+</body>
+</html>
