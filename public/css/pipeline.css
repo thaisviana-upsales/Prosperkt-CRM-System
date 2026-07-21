@@ -369,3 +369,427 @@
 .arq-btn-del:hover {
   background: rgba(255,59,92,.18);
 }
+
+
+/* ═══════════════════════════════════════════════════════════════
+   CARD DO LEAD — AZUL MARINHO PREMIUM — Prospekt Executive Dark
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Modal overlay: fundo mais escuro/desfocado ─────────────── */
+#ov-lead.open {
+  background: rgba(0,0,0,0.86);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* ── Card principal: azul marinho premium ───────────────────── */
+#ov-lead .modal-box {
+  background: linear-gradient(
+    160deg,
+    #071827 0%,
+    #0A1F33 40%,
+    #0B243B 75%,
+    #071827 100%
+  );
+  border: 1px solid rgba(205,175,132,0.18);
+  border-radius: 18px;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.05),
+    0 8px 40px rgba(0,0,0,0.75),
+    0 2px 8px rgba(0,0,0,0.5),
+    inset 0 1px 0 rgba(255,255,255,0.06);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Reflexo sutil no topo do card */
+#ov-lead .modal-box::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(205,175,132,0.35) 30%,
+    rgba(255,255,255,0.12) 50%,
+    rgba(205,175,132,0.35) 70%,
+    transparent 100%
+  );
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Brilho sutil no canto superior direito */
+#ov-lead .modal-box::after {
+  content: '';
+  position: absolute;
+  top: -60px; right: -60px;
+  width: 180px; height: 180px;
+  background: radial-gradient(circle, rgba(91,222,62,0.05) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Header do modal ────────────────────────────────────────── */
+#ov-lead .mh {
+  position: relative;
+  z-index: 1;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(205,175,132,0.12);
+  margin-bottom: 14px;
+}
+
+#ov-lead .mh h3 {
+  color: rgba(245,245,245,0.96);
+  font-size: .92rem !important;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+#ov-lead #ml-subtitle {
+  color: rgba(205,175,132,0.75) !important;
+  font-size: .68rem;
+  letter-spacing: 0.04em;
+}
+
+/* Botão fechar */
+#ov-lead .xl {
+  color: rgba(255,255,255,0.35);
+  border-radius: 8px;
+  transition: all 0.15s ease;
+}
+#ov-lead .xl:hover {
+  color: rgba(255,255,255,0.85);
+  background: rgba(255,255,255,0.07);
+}
+
+/* ── Abas (lead-tabs) ──────────────────────────────────────── */
+#ov-lead .lead-tabs {
+  border-bottom: 1px solid rgba(205,175,132,0.10);
+  margin-bottom: 16px;
+  position: relative;
+  z-index: 1;
+}
+
+#ov-lead .lead-tab-btn {
+  color: rgba(245,245,245,0.40);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  padding: 7px 11px;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s ease;
+}
+
+#ov-lead .lead-tab-btn:hover:not(.active) {
+  color: rgba(245,245,245,0.70);
+  background: rgba(255,255,255,0.04);
+  border-radius: 6px 6px 0 0;
+}
+
+#ov-lead .lead-tab-btn.active {
+  color: #5BDE3E;
+  border-bottom-color: #5BDE3E;
+  font-weight: 700;
+  text-shadow: 0 0 12px rgba(91,222,62,0.30);
+}
+
+#ov-lead .lead-tab-btn svg {
+  opacity: .55;
+}
+#ov-lead .lead-tab-btn.active svg {
+  opacity: 1;
+}
+
+/* ── Labels de campos ──────────────────────────────────────── */
+#ov-lead .lbl-sm {
+  color: rgba(205,175,132,0.72);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+/* ── Inputs dentro do card ─────────────────────────────────── */
+#ov-lead .input {
+  background: rgba(255,255,255,0.045);
+  border: 1px solid rgba(255,255,255,0.10);
+  color: rgba(245,245,245,0.94);
+  border-radius: 8px;
+  transition: all 0.15s ease;
+}
+
+#ov-lead .input::placeholder {
+  color: rgba(255,255,255,0.22);
+}
+
+#ov-lead .input:focus {
+  background: rgba(255,255,255,0.07);
+  border-color: rgba(91,222,62,0.55);
+  box-shadow: 0 0 0 3px rgba(91,222,62,0.12);
+}
+
+#ov-lead select.input {
+  background: rgba(255,255,255,0.045);
+  color: rgba(245,245,245,0.94);
+}
+
+#ov-lead select.input option {
+  background: #0A1F33;
+  color: rgba(245,245,245,0.90);
+}
+
+#ov-lead .input[disabled],
+#ov-lead .input[readonly] {
+  background: rgba(255,255,255,0.02) !important;
+  border-color: rgba(255,255,255,0.05) !important;
+  color: rgba(245,245,245,0.35) !important;
+  cursor: not-allowed;
+}
+
+/* ── Badge de status ───────────────────────────────────────── */
+#ov-lead #fl-status-badge {
+  background: rgba(255,255,255,0.04) !important;
+  border: 1px solid rgba(255,255,255,0.09) !important;
+  border-radius: 8px !important;
+}
+
+/* ── Seções de informação (info-section) ───────────────────── */
+#ov-lead .info-section {
+  background: rgba(255,255,255,0.032);
+  border: 1px solid rgba(205,175,132,0.10);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  position: relative;
+  z-index: 1;
+}
+
+#ov-lead .info-section::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 14px;
+  width: 40px; height: 1px;
+  background: linear-gradient(90deg, rgba(205,175,132,0.25), transparent);
+}
+
+#ov-lead .info-section-title {
+  color: rgba(205,175,132,0.80);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+/* ── Timeline ──────────────────────────────────────────────── */
+#ov-lead .timeline-dot {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.15);
+}
+
+#ov-lead .timeline-dot.current {
+  border-color: var(--green);
+  background: rgba(91,222,62,0.15);
+}
+
+#ov-lead .timeline-item:not(:last-child)::after {
+  background: rgba(255,255,255,0.08);
+}
+
+#ov-lead .timeline-stage {
+  color: rgba(245,245,245,0.90);
+}
+
+#ov-lead .timeline-meta {
+  color: rgba(245,245,245,0.40);
+}
+
+#ov-lead .timeline-duration {
+  background: rgba(255,255,255,0.04);
+  border-color: rgba(255,255,255,0.08);
+  color: rgba(245,245,245,0.40);
+}
+
+/* ── Histórico de notas ────────────────────────────────────── */
+#ov-lead .hist-item {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 8px;
+  color: rgba(245,245,245,0.85);
+}
+
+#ov-lead .hist-meta {
+  color: rgba(245,245,245,0.35);
+}
+
+/* ── Produtos / Endereço / Parcelamento ────────────────────── */
+#ov-lead #form-novo-produto,
+#ov-lead [style*="background:var(--surface-2)"] {
+  background: rgba(255,255,255,0.04) !important;
+  border-color: rgba(255,255,255,0.08) !important;
+}
+
+/* Área de endereço */
+#ov-lead #tab-venda [style*="background:var(--surface-2)"] {
+  background: rgba(11,36,59,0.7) !important;
+  border-color: rgba(205,175,132,0.12) !important;
+  border-radius: 10px;
+}
+
+/* Total da venda */
+#ov-lead .total-venda-row {
+  background: rgba(91,222,62,0.06);
+  border: 1px solid rgba(91,222,62,0.15);
+}
+#ov-lead .total-venda-label { color: rgba(245,245,245,0.65); }
+
+/* ── Inputs de produto ─────────────────────────────────────── */
+#ov-lead .produto-qty-input,
+#ov-lead .produto-val-input {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.10);
+  color: rgba(245,245,245,0.90);
+}
+#ov-lead .produto-qty-input:focus,
+#ov-lead .produto-val-input:focus {
+  border-color: rgba(91,222,62,0.55);
+  box-shadow: 0 0 0 2px rgba(91,222,62,0.12);
+}
+
+/* ── Área de arquivos ──────────────────────────────────────── */
+#ov-lead .arq-upload-zone {
+  background: rgba(91,222,62,0.025);
+  border-color: rgba(91,222,62,0.18);
+}
+#ov-lead .arq-upload-zone:hover,
+#ov-lead .arq-drag-over {
+  background: rgba(91,222,62,0.06) !important;
+  border-color: rgba(91,222,62,0.50) !important;
+}
+
+#ov-lead .arq-card {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+#ov-lead .arq-card:hover {
+  border-color: rgba(91,222,62,0.25);
+}
+
+/* ── Alert interno ─────────────────────────────────────────── */
+#ov-lead #ml-alert {
+  border-radius: 8px;
+}
+
+/* ── Footer ────────────────────────────────────────────────── */
+#ov-lead .mf {
+  border-top: 1px solid rgba(205,175,132,0.10);
+  padding-top: 14px;
+  margin-top: 14px;
+  position: relative;
+  z-index: 1;
+}
+
+/* Botão salvar: efeito glow mais vivo no fundo azul */
+#ov-lead .btn-primary {
+  box-shadow: 0 0 20px rgba(91,222,62,0.25), 0 2px 8px rgba(0,0,0,0.4);
+}
+#ov-lead .btn-primary:hover {
+  box-shadow: 0 0 30px rgba(91,222,62,0.40), 0 4px 16px rgba(0,0,0,0.5);
+}
+
+/* Botão secundário: adapta ao fundo escuro */
+#ov-lead .btn-secondary {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: rgba(245,245,245,0.80);
+}
+#ov-lead .btn-secondary:hover {
+  background: rgba(255,255,255,0.10);
+  border-color: rgba(91,222,62,0.40);
+  color: #5BDE3E;
+}
+
+/* Botão danger */
+#ov-lead .btn-danger {
+  background: rgba(255,59,92,0.08);
+  border: 1px solid rgba(255,59,92,0.16);
+}
+#ov-lead .btn-danger:hover {
+  background: rgba(255,59,92,0.16);
+}
+
+/* ── Total / Nº Produtos (readonly display) ────────────────── */
+#ov-lead #lp-total-wrap {
+  background: rgba(91,222,62,0.06) !important;
+  border: 1px solid rgba(91,222,62,0.15) !important;
+}
+
+/* ── Textos de tag no modal ────────────────────────────────── */
+#ov-lead .lead-tag {
+  background: rgba(91,222,62,0.10);
+  color: #5BDE3E;
+}
+
+/* ── Placeholder futuro ────────────────────────────────────── */
+#ov-lead .future-placeholder {
+  border-color: rgba(255,255,255,0.08);
+  color: rgba(245,245,245,0.30);
+}
+
+/* ── Scrollbar interna do modal ────────────────────────────── */
+#ov-lead .modal-box::-webkit-scrollbar {
+  width: 4px;
+}
+#ov-lead .modal-box::-webkit-scrollbar-track {
+  background: rgba(255,255,255,0.02);
+}
+#ov-lead .modal-box::-webkit-scrollbar-thumb {
+  background: rgba(205,175,132,0.20);
+  border-radius: 4px;
+}
+#ov-lead .modal-box::-webkit-scrollbar-thumb:hover {
+  background: rgba(205,175,132,0.35);
+}
+
+/* ── Timeline scrollbar ────────────────────────────────────── */
+#ov-lead .timeline-wrap::-webkit-scrollbar { width: 3px; }
+#ov-lead .timeline-wrap::-webkit-scrollbar-thumb {
+  background: rgba(205,175,132,0.15);
+  border-radius: 3px;
+}
+
+/* ── Histórico de notas scrollbar ──────────────────────────── */
+#ov-lead #hist-list::-webkit-scrollbar { width: 3px; }
+#ov-lead #hist-list::-webkit-scrollbar-thumb {
+  background: rgba(205,175,132,0.15);
+  border-radius: 3px;
+}
+
+/* ── Título do mini-form produto ───────────────────────────── */
+#ov-lead #form-novo-produto [style*="color:var(--text-muted)"] {
+  color: rgba(205,175,132,0.65) !important;
+}
+
+/* ── Cabeçalho de colunas de produto ───────────────────────── */
+#ov-lead #lp-header {
+  color: rgba(205,175,132,0.55) !important;
+}
+
+/* ── Atividades container (injetado via atividades.js) ──────── */
+#ov-lead #atividades-container .info-section {
+  background: rgba(255,255,255,0.032);
+  border-color: rgba(205,175,132,0.10);
+}
+
+/* ── Responsivo: modal full-width em mobile ─────────────────── */
+@media (max-width: 600px) {
+  #ov-lead .modal-box {
+    border-radius: 14px;
+    padding: 16px 14px;
+  }
+  #ov-lead .modal-box::before {
+    display: none;
+  }
+}
