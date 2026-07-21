@@ -173,6 +173,7 @@ async function listar(req, res) {
       let q = sb.from('metas')
         .select('*, usuarios!metas_usuario_id_fkey(nome), funis!metas_funil_id_fkey(nome)')
         .eq('ativo', 1);
+      console.log('METAS_LIST_ACTIVE_ONLY', { filtros: req.query, role: req.usuario?.role });
       const { funil_id, usuario_id, mes, ano, tipo } = req.query;
       if (funil_id)   q = q.eq('funil_id', funil_id);
       if (usuario_id) q = q.eq('usuario_id', usuario_id);
@@ -379,23 +380,67 @@ async function deletar(req, res) {
   if (!['SUPER_ADMIN', 'GESTOR'].includes(req.usuario.role))
     return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
 
+  const metaId = req.params.id;
+  console.log('METAS_DELETE_START', { metaId, usuario: req.usuario.id, role: req.usuario.role });
+
+  if (!metaId) {
+    console.warn('METAS_DELETE_ID_MISSING');
+    return res.status(400).json({ sucesso: false, erro: 'ID da meta não informado.' });
+  }
+
   try {
     const { isSupa, sb, sqlite: db } = getProvider();
-    if (isSupa) {
-      const { error } = await sb.from('metas').update({ ativo: false, atualizado_em: new Date().toISOString() }).eq('id', req.params.id);
-      if (error) throw error;
-      req.log({ acao:'DELETE', entidade:'metas', entidade_id: req.params.id });
-      return res.json({ sucesso: true, mensagem: 'Meta removida.' });
-    }
-    const meta = db.prepare('SELECT * FROM metas WHERE id=?').get(req.params.id);
-    if (!meta) return res.status(404).json({ sucesso: false, erro: 'Meta não encontrada.' });
+    const agora = new Date().toISOString();
 
-    db.prepare('UPDATE metas SET ativo=0, atualizado_em=? WHERE id=?').run(new Date().toISOString(), req.params.id);
-    req.log({ acao: 'DELETE', entidade: 'metas', entidade_id: req.params.id });
-    return res.json({ sucesso: true, mensagem: 'Meta removida.' });
+    if (isSupa) {
+      // 1. Verifica se existe
+      const { data: metaExiste, error: errBusca } = await sb.from('metas').select('id, ativo').eq('id', metaId).maybeSingle();
+      if (errBusca) throw errBusca;
+      if (!metaExiste) {
+        console.warn('METAS_DELETE_NOT_FOUND', { metaId });
+        return res.status(404).json({ sucesso: false, erro: 'Meta não encontrada.' });
+      }
+      console.log('METAS_DELETE_PERMISSION_OK', { metaId });
+
+      // 2. Soft delete — OBRIGATÓRIO usar 0 (INTEGER), não false (BOOLEAN)
+      //    A coluna 'ativo' no Supabase é INTEGER; enviar false JS causa erro 22P02
+      //    Tenta com colunas de audit primeiro; fallback sem elas se não existirem
+      const { error: errAudit } = await sb.from('metas')
+        .update({ ativo: 0, atualizado_em: agora, removido_em: agora, removido_por: req.usuario.id })
+        .eq('id', metaId);
+
+      if (errAudit) {
+        // Colunas removido_em/removido_por podem não existir — tenta sem elas
+        console.warn('METAS_DELETE_AUDIT_FALLBACK:', errAudit.message, '— tentando sem colunas de audit');
+        const { error: errSimple } = await sb.from('metas')
+          .update({ ativo: 0, atualizado_em: agora })
+          .eq('id', metaId);
+        if (errSimple) {
+          console.error('METAS_DELETE_ERROR', errSimple.message, errSimple.code);
+          throw errSimple;
+        }
+      }
+
+      console.log('METAS_DELETE_SOFT_DELETE_SUCCESS', { metaId });
+      req.log({ acao: 'DELETE', entidade: 'metas', entidade_id: metaId });
+      return res.json({ sucesso: true, mensagem: 'Meta removida com sucesso.' });
+    }
+
+    // SQLite path
+    const meta = db.prepare('SELECT * FROM metas WHERE id=?').get(metaId);
+    if (!meta) {
+      console.warn('METAS_DELETE_NOT_FOUND_SQLITE', { metaId });
+      return res.status(404).json({ sucesso: false, erro: 'Meta não encontrada.' });
+    }
+    console.log('METAS_DELETE_PERMISSION_OK', { metaId });
+
+    db.prepare('UPDATE metas SET ativo=0, atualizado_em=? WHERE id=?').run(agora, metaId);
+    console.log('METAS_DELETE_SOFT_DELETE_SUCCESS', { metaId });
+    req.log({ acao: 'DELETE', entidade: 'metas', entidade_id: metaId });
+    return res.json({ sucesso: true, mensagem: 'Meta removida com sucesso.' });
   } catch (e) {
-    console.error('[Metas] deletar error:', e);
-    return res.status(500).json({ sucesso: false, erro: 'Erro ao remover meta.', detalhe: e.message });
+    console.error('METAS_DELETE_ERROR', e.message, e.code || '');
+    return res.status(500).json({ sucesso: false, erro: 'Não foi possível remover a meta.', detalhe: e.message });
   }
 }
 

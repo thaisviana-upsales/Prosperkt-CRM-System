@@ -461,31 +461,54 @@ function confirmDialog(titulo, msg) {
 }
 
 // ─── Deletar ──────────────────────────────────────────────────────────────────
+// IDs em processamento — evita duplo clique
+const _deletandoIds = new Set();
+
 async function deletarMeta(id) {
   if (!id) { Toast.show('ID da meta inválido.', 'error'); return; }
+  if (_deletandoIds.has(id)) return; // bloqueia duplo clique
 
   const confirmado = await confirmDialog(
-    'Excluir meta?',
-    'Esta ação não pode ser desfeita. A meta será removida permanentemente.'
+    'Remover meta?',
+    'A meta será removida permanentemente. Vendas, comissões e histórico não serão afetados.'
   );
   if (!confirmado) return;
+
+  // Marca como em processamento + visual loading no botão
+  _deletandoIds.add(id);
+  const btnDel = document.querySelector(`[data-del="${id}"]`);
+  const btnOrigText = btnDel ? btnDel.innerHTML : null;
+  if (btnDel) {
+    btnDel.disabled = true;
+    btnDel.innerHTML = '<span class="dots-loader" style="display:inline-flex;gap:3px"><span style="width:5px;height:5px;background:currentColor;border-radius:50%"></span><span style="width:5px;height:5px;background:currentColor;border-radius:50%"></span><span style="width:5px;height:5px;background:currentColor;border-radius:50%"></span></span>';
+  }
 
   try {
     const r = await Auth.api('DELETE', `/metas/${id}`);
     if (r?.ok) {
-      Toast.show('Meta removida.', 'success');
-      // Remove do cache local imediatamente para resposta instantânea
+      Toast.show(r?.data?.mensagem || 'Meta removida com sucesso.', 'success');
+      // Remove do cache local imediatamente — resposta visual instantânea
       _metasCache = _metasCache.filter(m => m.id !== id);
+      // Remove o card do DOM sem esperar o re-fetch
+      const card = document.getElementById(`meta-card-${id}`);
+      if (card) card.remove();
+      // Recarrega a lista em background para sincronizar
       await carregar();
     } else {
-      const msg = r?.data?.erro || r?.data?.mensagem || `Erro ${r?.status || ''}`.trim();
-      Toast.show(msg || 'Não foi possível remover a meta.', 'error');
+      const msg = r?.data?.erro || r?.data?.mensagem || (r?.status ? `Erro ${r.status}` : '');
+      Toast.show(msg || 'Não foi possível remover esta meta. Tente novamente ou verifique se ela possui vínculos.', 'error');
+      // Restaura botão em caso de erro
+      if (btnDel && btnOrigText) { btnDel.disabled = false; btnDel.innerHTML = btnOrigText; }
     }
   } catch (e) {
     console.error('[Metas] deletarMeta error:', e);
-    Toast.show('Falha de conexão ao tentar remover.', 'error');
+    Toast.show('Falha de conexão ao tentar remover. Verifique sua internet e tente novamente.', 'error');
+    if (btnDel && btnOrigText) { btnDel.disabled = false; btnDel.innerHTML = btnOrigText; }
+  } finally {
+    _deletandoIds.delete(id);
   }
 }
+
 
 
 // ─── Duplicar ─────────────────────────────────────────────────────────────────
