@@ -5,6 +5,11 @@
  */
 const crypto = require('crypto');
 const { getProvider } = require('../database/dbProvider');
+const { ETAPAS_GLOBAIS_REMOVIDAS, ETAPAS_SEM_DASHBOARD } = require('./funisController');
+
+// Lista normalizada de todos os nomes que devem ser filtrados do endpoint público
+// (etapas ocultas/inativas e etapas sem dashboard)
+const NOMES_EXCLUIDOS_API = [...ETAPAS_GLOBAIS_REMOVIDAS, ...ETAPAS_SEM_DASHBOARD];
 
 // GET /api/etapas?funil_id=xxx  ou  ?pipeline_id=xxx
 async function listar(req, res) {
@@ -20,6 +25,8 @@ async function listar(req, res) {
       // Inclui nome do funil para que o frontend possa filtrar Carteira Recorrente
       let q = sb.from('etapas').select('*, pipeline:pipelines!pipeline_id(id, funil:funis!funil_id(id,nome))');
       if (pId) q = q.eq('pipeline_id', pId);
+      // Filtra apenas etapas ativas e visíveis (exclui 'Tratativa em andamento' e ocultas)
+      q = q.eq('ativo', 1).eq('oculta', false);
       q = q.order('ordem');
       const { data, error } = await q;
       if (error) throw error;
@@ -27,11 +34,15 @@ async function listar(req, res) {
         ...e,
         funil_nome: e.pipeline?.funil?.nome || null,
         pipeline: undefined,
-      }));
+      }))
+      // Remove etapas com nome na blacklist (Tratativa em andamento e variações)
+      .filter(e => !NOMES_EXCLUIDOS_API.includes(e.nome));
+      console.log('[ETAPAS_LISTAR] total:', dados.length, '| excluídas:', ((data||[]).length - dados.length));
       return res.json({ sucesso:true, dados, total:dados.length });
     }
     const { getDb } = require('../database/db');
     const db = getDb();
+    const filtroAtivo = `AND e.ativo=1 AND (e.oculta IS NULL OR e.oculta=0)`;
     let etapas;
     if (funil_id) {
       etapas = db.prepare(`
@@ -39,25 +50,28 @@ async function listar(req, res) {
         FROM etapas e
         JOIN pipelines p ON e.pipeline_id=p.id
         JOIN funis f ON p.funil_id=f.id
-        WHERE p.funil_id=? ORDER BY e.ordem`).all(funil_id);
+        WHERE p.funil_id=? ${filtroAtivo} ORDER BY e.ordem`).all(funil_id);
     } else if (pipeline_id) {
       etapas = db.prepare(`
         SELECT e.*, f.nome as funil_nome
         FROM etapas e
         JOIN pipelines p ON e.pipeline_id=p.id
         JOIN funis f ON p.funil_id=f.id
-        WHERE e.pipeline_id=? ORDER BY e.ordem`).all(pipeline_id);
+        WHERE e.pipeline_id=? ${filtroAtivo} ORDER BY e.ordem`).all(pipeline_id);
     } else {
       etapas = db.prepare(`
         SELECT e.*, f.nome as funil_nome
         FROM etapas e
         JOIN pipelines p ON e.pipeline_id=p.id
         JOIN funis f ON p.funil_id=f.id
-        ORDER BY e.ordem`).all();
+        WHERE 1=1 ${filtroAtivo} ORDER BY e.ordem`).all();
     }
+    // Remove etapas com nome na blacklist
+    etapas = etapas.filter(e => !NOMES_EXCLUIDOS_API.includes(e.nome));
     return res.json({ sucesso:true, dados:etapas, total:etapas.length });
   } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
 }
+
 
 // POST /api/etapas
 async function criar(req, res) {

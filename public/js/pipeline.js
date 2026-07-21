@@ -312,10 +312,26 @@ async function aplicarFiltros() {
     ]);
     const todasEtapas = re?.data?.dados || [];
 
+    // ── Normalização de nomes: etapas que NÃO devem aparecer no modo Todos ──
+    // Segunda camada de defesa (primeira é o backend). Evita duplicidade visual.
+    const NOMES_INVALIDOS_TODOS = new Set([
+      'Tratativa em andamento',
+      'Tratativa em Andamento',
+      'TRATATIVA EM ANDAMENTO',
+      'Tratativa andamento',
+      'Tratativa',
+      'Contato em Tratativa',
+      'BASE-Antiga', // etapa exclusiva da Carteira Recorrente — não deve aparecer no Todos
+    ]);
+
     const seen = new Set();
     const etapasDedup = [];
     for (const e of todasEtapas.sort((a, b) => a.ordem - b.ordem)) {
       if (isCarteiraRecorrente(e.funil_nome || '')) continue;
+      if (NOMES_INVALIDOS_TODOS.has(e.nome)) {
+        console.log('[PIPELINE_TODOS_FILTRO] etapa removida do modo Todos:', e.nome, '| funil:', e.funil_nome);
+        continue;
+      }
       if (!_nomeParaIds[e.nome]) _nomeParaIds[e.nome] = [];
       _nomeParaIds[e.nome].push(e.id);
       if (!seen.has(e.nome)) { seen.add(e.nome); etapasDedup.push(e); }
@@ -324,7 +340,9 @@ async function aplicarFiltros() {
     _leads  = rLeads?.data?.dados || [];
 
     if (!_etapas.length) console.warn('[pipeline] Nenhuma etapa encontrada via /etapas');
+    console.log('[PIPELINE_TODOS_ETAPAS] dedup final:', _etapas.map(e => e.nome).join(' → '));
   }
+
 
   _setLoadingState(false);
   renderKanban();
