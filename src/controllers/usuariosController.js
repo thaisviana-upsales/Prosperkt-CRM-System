@@ -12,10 +12,9 @@ const { registrarLog } = require('../services/auditService');
 const CAMPOS_PUBLICOS_SUPA = 'id, nome, email, role, ativo, avatar_url, criado_em, atualizado_em';
 
 
-// ─────────────────────────────────────────────────────────────────────────────
 // GET /api/usuarios
 // SUPER_ADMIN / GESTOR: todos; VENDEDOR: apenas ele mesmo
-// ─────────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
 async function listar(req, res) {
   const { sb, isSupa, sqlite } = getProvider();
 
@@ -26,24 +25,25 @@ async function listar(req, res) {
 
   try {
     if (isSupa) {
+      // ── Busca todos e filtra ativo no Node (robustez boolean/integer) ────────
+      // Supabase pode armazenar ativo como boolean true ou integer 1.
+      // .eq('ativo', true) retorna [] quando o campo é integer — bug conhecido.
+      // Fix: busca sem filtro de ativo e filtra no Node-side.
       let q = sb.from('usuarios').select(CAMPOS_PUBLICOS_SUPA).order('nome');
       if (req.usuario.role === 'VENDEDOR') {
         q = q.eq('id', req.usuario.id);
-      } else if (!incluirInativos) {
-        // Filtra apenas ativos para dropdowns e listagens normais
-        q = q.eq('ativo', true);
       }
-      const { data, error } = await q;
+      const { data: rawData, error } = await q;
       if (error) throw error;
-      // ── Diagnóstico do select de vendedor ───────────────────────────────────
-      console.log('[FILTRO_VENDEDOR_LOAD_START] usuarios.listar | role solicitante:', req.usuario?.role, '| incluirInativos:', incluirInativos);
-      console.log('[FILTRO_VENDEDOR_API_RESPONSE_TOTAL] Supabase retornou:', (data||[]).length, 'registros');
-      if ((data||[]).length > 0) {
-        const amostra = (data||[]).slice(0,3).map(u => ({ nome: u.nome, role: u.role, ativo: u.ativo }));
-        console.log('[FILTRO_VENDEDOR_API_RESPONSE_SAMPLE]', JSON.stringify(amostra));
+
+      let data = rawData || [];
+      if (req.usuario.role !== 'VENDEDOR' && !incluirInativos) {
+        // Aceita boolean true, integer 1 ou string '1'
+        data = data.filter(u => u.ativo === true || u.ativo === 1 || u.ativo === '1');
       }
-      // ────────────────────────────────────────────────────────────────
-      return res.json({ sucesso: true, dados: data || [], total: (data || []).length });
+
+      console.log('[FILTRO_VENDEDOR_LOAD] usuarios.listar | role:', req.usuario?.role, '| total:', (rawData||[]).length, '| ativos:', data.length);
+      return res.json({ sucesso: true, dados: data, total: data.length });
     }
 
     // SQLite
@@ -58,11 +58,7 @@ async function listar(req, res) {
     } else {
       usuarios = db.prepare(`SELECT ${campos} FROM usuarios WHERE ativo = 1 ORDER BY nome`).all();
     }
-    console.log('[FILTRO_VENDEDOR_LOAD_START] usuarios.listar SQLite | role:', req.usuario?.role, '| encontrados:', usuarios.length);
-    if (usuarios.length > 0) {
-      const amostra = usuarios.slice(0,3).map(u => ({ nome: u.nome, role: u.role, ativo: u.ativo }));
-      console.log('[FILTRO_VENDEDOR_API_RESPONSE_SAMPLE] SQLite:', JSON.stringify(amostra));
-    }
+    console.log('[FILTRO_VENDEDOR_LOAD] usuarios.listar SQLite | role:', req.usuario?.role, '| encontrados:', usuarios.length);
     return res.json({ sucesso: true, dados: usuarios, total: usuarios.length });
   } catch (e) {
     console.error('[usuarios.listar]', e.message);

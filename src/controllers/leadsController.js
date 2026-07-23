@@ -1118,6 +1118,33 @@ async function mover(req, res) {
         depois:{ etapa_id, status:novoStatus, etapa_nome:etapa.nome,
           layout_virtual_entrada_em: isLayoutVirtual ? agora : undefined,
           layout_virtual_aprovado_em: upd.layout_virtual_aprovado_em || undefined } });
+
+      // ── TIMELINE VISUAL DO CARD (lead_timeline) ────────────────────────────
+      // CAUSA RAIZ DO BUG: o caminho Supabase nunca chamava registrarTimeline().
+      // req.log() salva em 'logs'; a timeline visual usa 'lead_timeline'.
+      // Corrigido: chamada setImmediate para não bloquear resposta.
+      if (lead.etapa_id !== etapa_id) { // só registra se etapa realmente mudou
+        const tipoAcaoTimeline = isGanho ? 'LEAD_GANHO' : isPerdido ? 'LEAD_PERDIDO' : 'MUDANCA_ETAPA';
+        let descricaoTimeline;
+        if (isGanho) {
+          descricaoTimeline = `Lead ganho na etapa "${etapa.nome}".${etapaAnterior ? ` Veio de: ${etapaAnterior}.` : ''}`;
+        } else if (isPerdido) {
+          descricaoTimeline = `Lead perdido na etapa "${etapa.nome}".${motivo_perda ? ` Motivo: ${motivo_perda}.` : ''}${etapaAnterior ? ` Veio de: ${etapaAnterior}.` : ''}`;
+        } else {
+          descricaoTimeline = `Etapa alterada: ${etapaAnterior || '(início)'} → ${etapa.nome}.`;
+        }
+        setImmediate(() => registrarTimeline({
+          leadId:          id,
+          usuarioId:       req.usuario?.id   || null,
+          usuarioNome:     req.usuario?.nome || 'Sistema',
+          tipoAcao:        tipoAcaoTimeline,
+          descricao:       descricaoTimeline,
+          dadosAnteriores: { etapa_id: lead.etapa_id, etapa_nome: etapaAnterior, status: lead.status },
+          dadosNovos:      { etapa_id, etapa_nome: etapa.nome, status: novoStatus },
+          origem:          'pipeline_mover',
+        }).catch(e => console.error('[TIMELINE_MOVER_Supabase]', e.message)));
+      }
+
       // Registra passagem pela etapa de destino no histórico do Funil de Conversão (Supabase)
       console.log('[FUNIL_CONVERSAO_HISTORICO_MOVE_LEAD] lead:', id, '→ etapa:', etapa_id, '| funil:', funilIdUpd || lead.funil_id || null, '| origem: mover');
       setImmediate(() => etapaHistorico.registrarPassagem({
@@ -1128,6 +1155,7 @@ async function mover(req, res) {
         origem: 'mover',
         entrou_em: agora,
       }).catch(e => console.error('[FUNIL_HISTORICO_MOVER]', e.message)));
+
 
       // Log especial de etapas de Layout Virtual na timeline
       if (isLayoutVirtual) {
@@ -1648,6 +1676,7 @@ function _tipoAcaoIcone(tipo) {
     CRIACAO_LEAD:    '🌱',
     EDICAO_DADOS:    '✏️',
     MUDANCA_ETAPA:   '➡️',
+    LEAD_GANHO:      '🏆',
     VENDA_GANHA:     '🏆',
     LEAD_PERDIDO:    '❌',
     CLONE_CARTEIRA:  '🔄',
@@ -1666,6 +1695,7 @@ function _tipoAcaoTitulo(tipo) {
     CRIACAO_LEAD:    'Lead criado',
     EDICAO_DADOS:    'Dados atualizados',
     MUDANCA_ETAPA:   'Etapa alterada',
+    LEAD_GANHO:      'Venda/Ganho',
     VENDA_GANHA:     'Venda/Ganho',
     LEAD_PERDIDO:    'Lead perdido',
     CLONE_CARTEIRA:  'Enviado para Carteira Recorrente',

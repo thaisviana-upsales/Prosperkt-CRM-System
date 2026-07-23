@@ -103,24 +103,40 @@ async function carregarFunis() {
 async function carregarUsuarios() {
   try {
     const r = await Auth.api('GET', '/usuarios');
-    const todos = (r?.data?.dados || []).filter(u => u.ativo);
+    const raw = r?.data?.dados || [];
+    console.log('[Metas] carregarUsuarios | raw:', raw.length, '| ok:', r?.ok);
+
+    // Filtra ativos (aceita boolean true, integer 1 ou string '1') e roles comerciais
+    const todos = raw.filter(u => {
+      const estaAtivo = u.ativo === true || u.ativo === 1 || u.ativo === '1';
+      const roleComercial = ['SUPER_ADMIN', 'GESTOR', 'VENDEDOR'].includes(u.role);
+      return estaAtivo && roleComercial;
+    }).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+
     _usuarios = todos;
+    console.log('[Metas] vendedores comerciais ativos:', todos.length, '|', todos.map(u => u.nome).join(', '));
+
+    if (todos.length === 0) {
+      console.warn('[Metas] Nenhum vendedor ativo encontrado — verifique a API /usuarios e o campo ativo no banco.');
+    }
 
     // Se é vendedor, injeta só ele mesmo nas opções
     if (_usuario.role === 'VENDEDOR') {
       const me = todos.find(u => u.id === _usuario.id);
-      const opt = me ? `<option value="${me.id}" selected>${me.nome}</option>` : '';
-      document.getElementById('m-vendedor').innerHTML = opt || '<option value="">Seu usuário</option>';
+      const opt = me ? `<option value="${me.id}" selected>${escHtml(me.nome)}</option>` : '';
+      document.getElementById('m-vendedor').innerHTML = opt || `<option value="${_usuario.id}">${escHtml(_usuario.nome || 'Você')}</option>`;
       return;
     }
 
-    // Admin/Gestor: lista completa
-    const opts = todos.map(u => `<option value="${u.id}">${u.nome}</option>`).join('');
-    // Filtro
+    // Admin/Gestor: lista completa no filtro e no modal
+    const opts = todos.map(u => `<option value="${u.id}">${escHtml(u.nome)}</option>`).join('');
+    // Filtro da página
     const fv = document.getElementById('f-vendedor');
     if (fv) fv.innerHTML = '<option value="">Todos</option>' + opts;
-    // Modal
-    document.getElementById('m-vendedor').innerHTML = '<option value="">— selecione —</option>' + opts;
+    // Modal de criação/edição
+    const mv = document.getElementById('m-vendedor');
+    if (mv) mv.innerHTML = '<option value="">— selecione —</option>' + opts;
+
   } catch (e) {
     console.warn('[Metas] carregarUsuarios error:', e);
   }
