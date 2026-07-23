@@ -54,13 +54,17 @@ function normalizarTelefone(tel) {
 }
 
 // ── Helper: remove acentos e normaliza para comparação fuzzy ───────────────────────
-// Exemplo: "Indicação" === semAcento("Indicacao") => true
 function semAcento(str) {
   return String(str || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .trim();
+}
+
+// ── Helper: remove acentos, espaços e pontuação — match ultra-robusto de nomes ────────
+function soLetras(str) {
+  return semAcento(str).replace(/[^a-z0-9]/g, '');
 }
 
 // ── Helper: normaliza data ─────────────────────────────────────────────────────────
@@ -219,13 +223,16 @@ async function validar(req, res) {
       }
     });
 
-    // usuarioByEmail: email normalizado -> usuario
-    const usuarioByEmail = {};
-    // usuarioByNome: nome sem acento -> usuario (para quando preenchem nome no lugar do email)
-    const usuarioByNome  = {};
+    // usuarioByEmail: email -> usuario
+    const usuarioByEmail      = {};
+    // usuarioByNome: nome sem acento -> usuario
+    const usuarioByNome       = {};
+    // usuarioByNomeCompacto: nome sem acento/espacos/pontuacao -> usuario (match definitivo)
+    const usuarioByNomeCompacto = {};
     usuariosList.forEach(u => {
       usuarioByEmail[u.email.toLowerCase().trim()] = u;
       usuarioByNome[semAcento(u.nome)] = u;
+      usuarioByNomeCompacto[soLetras(u.nome)] = u;
     });
 
     // ── Valida cada linha ─────────────────────────────────────────────────────
@@ -233,11 +240,9 @@ async function validar(req, res) {
       const numero = idx + 2; // 1=cabeçalho, linhas começam em 2
       const erros  = [];
 
-      // Mapeia colunas: tenta nome exato, depois lowercase, depois normalizado (sem espaços)
+      // get: retorna valor como string (para campos texto)
       const get = (col) => {
-        // Tenta correspondência exata
         if (row[col] !== undefined) return String(row[col]).trim();
-        // Tenta lowercase
         const colLower = col.toLowerCase();
         for (const key of Object.keys(row)) {
           if (key.toLowerCase().replace(/\s+/g,'_') === colLower) {
@@ -247,22 +252,38 @@ async function validar(req, res) {
         return '';
       };
 
+      // getRaw: retorna o valor bruto da celula sem forcar String()
+      // Necessario para datas: com cellDates:true o xlsx retorna objeto Date, nao string
+      const getRaw = (col) => {
+        if (row[col] !== undefined) return row[col];
+        const colLower = col.toLowerCase();
+        for (const key of Object.keys(row)) {
+          if (key.toLowerCase().replace(/\s+/g,'_') === colLower) return row[key];
+        }
+        return '';
+      };
+
       const nome     = get('nome_lead');
       const telefone = normalizarTelefone(get('telefone_whatsapp'));
       const email    = get('email').toLowerCase();
       const funilNm  = get('funil');
       const etapaNm  = get('etapa');
-      // Aceita tanto vendedor_usuario quanto vendedor_email (retrocompatibilidade)
+      // Aceita vendedor_usuario OU vendedor_email (retrocompatibilidade)
       const vendLogin = (get('vendedor_usuario') || get('vendedor_email')).toLowerCase().trim();
-      const dataEntrada = get('data_entrada');
+      // IMPORTANTE: usa getRaw para preservar objeto Date retornado pelo xlsx
+      const dataEntradaRaw  = getRaw('data_entrada');
+      const dataEntrada     = String(dataEntradaRaw).trim(); // para checar se e vazio
+      const dataEntradaNorm = normalizarData(dataEntradaRaw);
+
 
       // ── Campos obrigatórios ───────────────────────────────────────────────
-      if (!nome)       erros.push(`Linha ${numero}: nome_lead é obrigatório.`);
-      if (!telefone)   erros.push(`Linha ${numero}: telefone_whatsapp é obrigatório.`);
-      if (!funilNm)    erros.push(`Linha ${numero}: funil é obrigatório.`);
-      if (!etapaNm)    erros.push(`Linha ${numero}: etapa é obrigatória.`);
-      if (!vendLogin)  erros.push(`Linha ${numero}: vendedor_usuario é obrigatório.`);
-      if (!dataEntrada)erros.push(`Linha ${numero}: data_entrada é obrigatória.`);
+      if (!nome)          erros.push(`Linha ${numero}: nome_lead é obrigatório.`);
+      if (!telefone)      erros.push(`Linha ${numero}: telefone_whatsapp é obrigatório.`);
+      if (!funilNm)       erros.push(`Linha ${numero}: funil é obrigatório.`);
+      if (!etapaNm)       erros.push(`Linha ${numero}: etapa é obrigatória.`);
+      if (!vendLogin)     erros.push(`Linha ${numero}: vendedor_usuario é obrigatório.`);
+      if (!dataEntrada || dataEntrada === '[object Object]')
+                          erros.push(`Linha ${numero}: data_entrada é obrigatória.`);
 
       // ── Funil válido (sem acento) ──────────────────────────────────────────────
       let funilObj = null, etapaObj = null, vendedorObj = null;
@@ -284,9 +305,16 @@ async function validar(req, res) {
 
       // ── Vendedor ativo (por email OU nome, sem acento) ─────────────────────────────
       if (vendLogin) {
-        // Tenta por email primeiro, depois por nome normalizado
-        vendedorObj = usuarioByEmail[vendLogin] || usuarioByNome[semAcento(vendLogin)];
-        if (!vendedorObj) erros.push(`Linha ${numero}: Vendedor "${vendLogin}" não encontrado ou inativo no CRM.`);
+        // 1º tenta por email exato
+        // 2º tenta por nome sem acento ("lais basilio" == "Lais Basilio")
+        // 3º tenta por nome compacto sem espacos/pontuacao (match definitivo)
+        vendedorObj =
+          usuarioByEmail[vendLogin]
+          || usuarioByNome[semAcento(vendLogin)]
+          || usuarioByNomeCompacto[soLetras(vendLogin)];
+        if (!vendedorObj) {
+          erros.push(`Linha ${numero}: Vendedor "${vendLogin}" não encontrado ou inativo no CRM. Use o email ou nome exato do usuário.`);
+        }
       }
 
       // ── Prioridade ────────────────────────────────────────────────────────
@@ -306,10 +334,9 @@ async function validar(req, res) {
         erros.push(`Linha ${numero}: telefone_whatsapp muito curto (mínimo 8 dígitos).`);
       }
 
-      // ── Data entrada válida ───────────────────────────────────────────────
-      const dataEntradaNorm = normalizarData(dataEntrada);
-      if (dataEntrada && !dataEntradaNorm) {
-        erros.push(`Linha ${numero}: data_entrada inválida. Use dd/mm/aaaa ou aaaa-mm-dd.`);
+      // ── Data entrada válida (usa dataEntradaNorm já calculado acima) ────────────
+      if (dataEntradaRaw && !dataEntradaNorm) {
+        erros.push(`Linha ${numero}: data_entrada inválida. Use dd/mm/aaaa (ex: 20/07/2026).`);
       }
 
       // ── Duplicidade ───────────────────────────────────────────────────────
