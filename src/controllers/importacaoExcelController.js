@@ -233,9 +233,14 @@ async function validar(req, res) {
       const [fR, eR, uR, lR] = await Promise.all([
         sb.from('funis').select('id,nome,ativo'),
         sb.from('etapas').select('id,nome,pipeline_id,oculta').eq('oculta', false),
-        sb.from('usuarios').select('id,nome,email,role,ativo').eq('ativo', true),
+        // IMPORTANTE: busca TODOS sem filtro de ativo e filtra no Node
+        // Resolve casos onde ativo é boolean true/false OU integer 1/0 no Supabase
+        sb.from('usuarios').select('id,nome,email,role,ativo'),
         sb.from('leads').select('telefone,email').is('deleted_at', null),
       ]);
+
+      if (uR.error) console.error('[validar] Erro ao buscar usuarios:', uR.error.message);
+
       // Resolve funil_id por etapa via pipelines
       const [pR] = await Promise.all([
         sb.from('pipelines').select('id,funil_id'),
@@ -243,12 +248,25 @@ async function validar(req, res) {
       const pipelineMap = Object.fromEntries((pR.data||[]).map(p => [p.id, p.funil_id]));
       funisList   = (fR.data||[]).filter(f => f.ativo !== false && f.ativo !== 0);
       etapasList  = (eR.data||[]).map(e => ({ ...e, funil_id: pipelineMap[e.pipeline_id] || null }));
-      usuariosList = (uR.data||[]).filter(u => ['VENDEDOR','SUPER_ADMIN','GESTOR'].includes(u.role));
+
+      // Filtra usuários ativos no Node — aceita boolean true OU integer 1
+      const rolesComerciais = ['VENDEDOR', 'SUPER_ADMIN', 'GESTOR'];
+      usuariosList = (uR.data||[]).filter(u => {
+        const isAtivo = u.ativo === true || u.ativo === 1 || u.ativo === '1' || u.ativo === 'true';
+        return isAtivo && rolesComerciais.includes(u.role);
+      });
+
+      console.log(`[validar] usuariosList carregados: ${usuariosList.length} | funisList: ${funisList.length}`);
+      if (usuariosList.length > 0) {
+        console.log('[validar] amostra usuarios:', usuariosList.slice(0,3).map(u => ({ nome: u.nome, ativo: u.ativo })));
+      }
+
       (lR.data||[]).forEach(l => {
         if (l.telefone) telefonesExistentes.add(normalizarTelefone(l.telefone));
         if (l.email)    emailsExistentes.add(l.email.toLowerCase().trim());
       });
     }
+
 
     // Mapas de busca rápida (com normalização de acentos)
     // funilMap: sem acento -> objeto funil
