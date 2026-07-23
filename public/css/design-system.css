@@ -6,13 +6,13 @@
 
 /* ── CSS Variables ─────────────────────────────────────────── */
 :root {
-  /* Backgrounds */
-  --bg:          #0A0A0A;
-  --bg-main:     #0A0A0A;
-  --surface:     #131313;
-  --surface-2:   #1A1A1A;
-  --surface-3:   #202020;
-  --bg-card:     rgba(255,255,255,0.032);
+  /* Backgrounds — Azul Petróleo Premium */
+  --bg:          #002A33;
+  --bg-main:     #002A33;
+  --surface:     #04343F;
+  --surface-2:   #073D4A;
+  --surface-3:   #0A4757;
+  --bg-card:     rgba(4, 52, 63, 0.85);
 
   /* Borders */
   --border:       rgba(255,255,255,0.07);
@@ -44,8 +44,8 @@
   --info:    #3B8BFF;
 
   /* Gradients */
-  --grad-brand:  linear-gradient(135deg, #5BDE3E 0%, #D6008E 100%);
-  --grad-surface: linear-gradient(135deg, #1A1A1A 0%, #131313 100%);
+  --grad-brand:   linear-gradient(135deg, #5BDE3E 0%, #D6008E 100%);
+  --grad-surface: linear-gradient(135deg, #04343F 0%, #002A33 100%);
 
   /* Shadows */
   --shadow-sm:   0 1px 3px rgba(0,0,0,0.5);
@@ -95,7 +95,13 @@ html { height: 100%; font-size: 14px; }
 
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  background-color: var(--bg);
+  /* Fundo premium azul petróleo profundo — 4 camadas */
+  background:
+    radial-gradient(circle at top left,    rgba(10, 89, 104, 0.18), transparent 28%),
+    radial-gradient(circle at top right,   rgba(0,  80,  95, 0.14), transparent 24%),
+    radial-gradient(circle at bottom left, rgba(0,  59,  70, 0.16), transparent 30%),
+    linear-gradient(180deg, #014654 0%, #003B46 28%, #022D35 62%, #021F27 100%);
+  background-attachment: fixed;
   color: var(--text-primary);
   min-height: 100vh;
   line-height: 1.5;
@@ -104,21 +110,28 @@ body {
   position: relative;
 }
 
-/* Fundo global com glow sutil — mesma linguagem do login */
+/* Textura sutil + vinheta — pseudo-elemento fixo atrás de todo o conteúdo */
 body::before {
   content: '';
   position: fixed;
   inset: 0;
-  background:
-    radial-gradient(ellipse 55% 45% at -5% -5%, rgba(91,222,62,.06) 0%, transparent 60%),
-    radial-gradient(ellipse 45% 38% at 105% 105%, rgba(214,0,142,.05) 0%, transparent 55%);
+  /* Grid 24px discreto */
+  background-image:
+    linear-gradient(rgba(255,255,255,0.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.022) 1px, transparent 1px);
+  background-size: 24px 24px;
   pointer-events: none;
   z-index: 0;
-  animation: bgBreath 18s ease-in-out infinite;
 }
-@keyframes bgBreath {
-  0%,100% { opacity: 1; }
-  50%      { opacity: .85; }
+
+/* Vinheta de profundidade — segundo pseudo-elemento */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(circle at center, transparent 45%, rgba(0,0,0,0.22) 100%);
+  pointer-events: none;
+  z-index: 0;
 }
 
 /* ── Typography ─────────────────────────────────────────────── */
@@ -277,8 +290,9 @@ textarea.input { resize: vertical; min-height: 80px; }
   height: 100vh;
   position: fixed;
   left: 0; top: 0;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
+  /* Sidebar mais fechada para contraste com fundo teal das páginas */
+  background: linear-gradient(180deg, #061B22 0%, #04141A 100%);
+  border-right: 1px solid rgba(255,255,255,0.06);
   display: flex;
   flex-direction: column;
   padding: var(--space-5) 0;

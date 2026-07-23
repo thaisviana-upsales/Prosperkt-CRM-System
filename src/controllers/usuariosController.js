@@ -246,7 +246,12 @@ async function atualizar(req, res) {
       if (req.body.email) upd.email = req.body.email.toLowerCase().trim();
       if (req.body.avatar_url !== undefined) upd.avatar_url = req.body.avatar_url;
       if (req.body.role && roleAtual === 'SUPER_ADMIN') upd.role = req.body.role;
-      if (req.body.ativo !== undefined && roleAtual !== 'VENDEDOR') upd.ativo = !!req.body.ativo; // boolean para Supabase
+      if (req.body.ativo !== undefined && roleAtual !== 'VENDEDOR') {
+        // Campo ativo no Supabase é INTEGER (1/0), não boolean.
+        // Enviar boolean false causa: "invalid input syntax for type integer: 'false'"
+        const ativoVal = req.body.ativo === true || req.body.ativo === 1 || req.body.ativo === '1';
+        upd.ativo = ativoVal ? 1 : 0;
+      }
       if (req.body.senha) upd.senha_hash = await bcrypt.hash(req.body.senha, 12);
 
       if (Object.keys(upd).length === 1) {
@@ -299,10 +304,10 @@ async function deletar(req, res) {
     if (isSupa) {
       const { data: u, error: e0 } = await sb.from('usuarios').select('id,nome').eq('id', id).single();
       if (e0 || !u) return res.status(404).json({ sucesso: false, erro: 'Usuário não encontrado.' });
-      // Supabase usa boolean true/false — nunca 0/1 para campo boolean do Postgres
+      // Campo ativo é INTEGER no Supabase — enviar 0 (não false/boolean)
       const { error: eUpd } = await sb
         .from('usuarios')
-        .update({ ativo: false })
+        .update({ ativo: 0, atualizado_em: new Date().toISOString() })
         .eq('id', id);
       if (eUpd) {
         console.error('[usuarios.deletar] Supabase update error:', eUpd.message);
