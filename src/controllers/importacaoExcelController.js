@@ -30,7 +30,7 @@ const upload = multer({
 // ── Colunas da planilha modelo ───────────────────────────────────────────────
 const COLUNAS_MODELO = [
   'nome_lead','empresa','telefone_whatsapp','email','cpf_cnpj',
-  'funil','etapa','vendedor_email','vendedor_nome',
+  'funil','etapa','vendedor_usuario','vendedor_nome',
   'data_entrada','valor_estimado','prioridade','observacoes_historico_inicial',
   'tags','cep_entrega','endereco_entrega','numero_entrega','complemento_entrega',
   'referencia_entrega','bairro_entrega','cidade_entrega','uf_entrega',
@@ -38,7 +38,7 @@ const COLUNAS_MODELO = [
   'origem_planilha','observacao_interna',
 ];
 
-const CAMPOS_OBRIGATORIOS = ['nome_lead','telefone_whatsapp','funil','etapa','vendedor_email'];
+const CAMPOS_OBRIGATORIOS = ['nome_lead','telefone_whatsapp','funil','etapa','vendedor_usuario','data_entrada'];
 
 const PRIORIDADES_VALIDAS = ['Baixa','Média','Alta','Crítica','Media','Critica'];
 
@@ -89,7 +89,7 @@ async function downloadModelo(req, res) {
       cpf_cnpj: '123.456.789-00',
       funil: 'LinkedIn',
       etapa: 'Lead Recebido',
-      vendedor_email: 'vendedor@prospekt.com',
+      vendedor_usuario: 'vendedor@prospekt.com',
       vendedor_nome: 'Maria Vendedora',
       data_entrada: '20/07/2026',
       valor_estimado: '5000',
@@ -192,10 +192,18 @@ async function validar(req, res) {
       const numero = idx + 2; // 1=cabeçalho, linhas começam em 2
       const erros  = [];
 
-      // Mapeia colunas (case insensitive)
+      // Mapeia colunas: tenta nome exato, depois lowercase, depois normalizado (sem espaços)
       const get = (col) => {
-        const v = row[col] ?? row[col.toLowerCase()] ?? '';
-        return String(v).trim();
+        // Tenta correspondência exata
+        if (row[col] !== undefined) return String(row[col]).trim();
+        // Tenta lowercase
+        const colLower = col.toLowerCase();
+        for (const key of Object.keys(row)) {
+          if (key.toLowerCase().replace(/\s+/g,'_') === colLower) {
+            return String(row[key]).trim();
+          }
+        }
+        return '';
       };
 
       const nome     = get('nome_lead');
@@ -203,20 +211,23 @@ async function validar(req, res) {
       const email    = get('email').toLowerCase();
       const funilNm  = get('funil');
       const etapaNm  = get('etapa');
-      const vendEmail= get('vendedor_email').toLowerCase();
+      // Aceita tanto vendedor_usuario quanto vendedor_email (retrocompatibilidade)
+      const vendLogin = (get('vendedor_usuario') || get('vendedor_email')).toLowerCase().trim();
+      const dataEntrada = get('data_entrada');
 
       // ── Campos obrigatórios ───────────────────────────────────────────────
-      if (!nome)     erros.push('nome_lead é obrigatório.');
-      if (!telefone) erros.push('telefone_whatsapp é obrigatório.');
-      if (!funilNm)  erros.push('funil é obrigatório.');
-      if (!etapaNm)  erros.push('etapa é obrigatória.');
-      if (!vendEmail)erros.push('vendedor_email é obrigatório.');
+      if (!nome)       erros.push(`Linha ${numero}: nome_lead é obrigatório.`);
+      if (!telefone)   erros.push(`Linha ${numero}: telefone_whatsapp é obrigatório.`);
+      if (!funilNm)    erros.push(`Linha ${numero}: funil é obrigatório.`);
+      if (!etapaNm)    erros.push(`Linha ${numero}: etapa é obrigatória.`);
+      if (!vendLogin)  erros.push(`Linha ${numero}: vendedor_usuario é obrigatório.`);
+      if (!dataEntrada)erros.push(`Linha ${numero}: data_entrada é obrigatória.`);
 
       // ── Funil válido ──────────────────────────────────────────────────────
       let funilObj = null, etapaObj = null, vendedorObj = null;
       if (funilNm) {
         funilObj = funilMap[funilNm.toLowerCase()];
-        if (!funilObj) erros.push(`Funil "${funilNm}" não encontrado ou inativo.`);
+        if (!funilObj) erros.push(`Linha ${numero}: Funil "${funilNm}" não encontrado ou inativo.`);
       }
 
       // ── Etapa válida no funil ────────────────────────────────────────────
@@ -224,28 +235,40 @@ async function validar(req, res) {
         const etapasDoFunil = etapasByFunil[funilObj.id] || [];
         etapaObj = etapasDoFunil.find(e => e.nome.toLowerCase() === etapaNm.toLowerCase());
         if (!etapaObj) {
-          erros.push(`Etapa "${etapaNm}" não pertence ao funil "${funilNm}" ou está oculta.`);
+          erros.push(`Linha ${numero}: Etapa "${etapaNm}" não pertence ao funil "${funilNm}" ou está oculta.`);
         }
       } else if (!funilObj && etapaNm) {
-        erros.push('Etapa não pôde ser validada pois o funil é inválido.');
+        erros.push(`Linha ${numero}: Etapa não pôde ser validada pois o funil é inválido.`);
       }
 
       // ── Vendedor ativo ───────────────────────────────────────────────────
-      if (vendEmail) {
-        vendedorObj = usuarioByEmail[vendEmail];
-        if (!vendedorObj) erros.push(`Vendedor "${vendEmail}" não encontrado ou inativo.`);
+      if (vendLogin) {
+        // Busca por email (login) ou por nome de usuário
+        vendedorObj = usuarioByEmail[vendLogin];
+        if (!vendedorObj) erros.push(`Linha ${numero}: Vendedor "${vendLogin}" não encontrado ou inativo no CRM.`);
       }
 
       // ── Prioridade ────────────────────────────────────────────────────────
       const prioridade = get('prioridade');
       if (prioridade && !PRIORIDADES_VALIDAS.includes(prioridade)) {
-        erros.push(`Prioridade "${prioridade}" inválida. Use: Baixa, Média, Alta ou Crítica.`);
+        erros.push(`Linha ${numero}: Prioridade "${prioridade}" inválida. Use: Baixa, Média, Alta ou Crítica.`);
       }
 
       // ── UF ────────────────────────────────────────────────────────────────
       const uf = get('uf_entrega').toUpperCase();
       if (uf && !UFS_VALIDAS.includes(uf)) {
-        erros.push(`UF "${uf}" inválida.`);
+        erros.push(`Linha ${numero}: UF "${uf}" inválida.`);
+      }
+
+      // ── Tamanho mínimo telefone ───────────────────────────────────────────
+      if (telefone && telefone.length < 8) {
+        erros.push(`Linha ${numero}: telefone_whatsapp muito curto (mínimo 8 dígitos).`);
+      }
+
+      // ── Data entrada válida ───────────────────────────────────────────────
+      const dataEntradaNorm = normalizarData(dataEntrada);
+      if (dataEntrada && !dataEntradaNorm) {
+        erros.push(`Linha ${numero}: data_entrada inválida. Use dd/mm/aaaa ou aaaa-mm-dd.`);
       }
 
       // ── Duplicidade ───────────────────────────────────────────────────────
@@ -253,11 +276,11 @@ async function validar(req, res) {
       const motivosDupl = [];
       if (telefone && telefonesExistentes.has(telefone)) {
         isDuplicado = true;
-        motivosDupl.push(`Telefone ${telefone} já existe no CRM.`);
+        motivosDupl.push(`Linha ${numero}: Telefone ${telefone} já existe no CRM.`);
       }
       if (email && emailsExistentes.has(email)) {
         isDuplicado = true;
-        motivosDupl.push(`E-mail ${email} já existe no CRM.`);
+        motivosDupl.push(`Linha ${numero}: E-mail ${email} já existe no CRM.`);
       }
 
       // ── Dados normalizados ────────────────────────────────────────────────
@@ -271,10 +294,10 @@ async function validar(req, res) {
         funil_id:                funilObj?.id || null,
         etapa:                   etapaNm,
         etapa_id:                etapaObj?.id || null,
-        vendedor_email:          vendEmail,
+        vendedor_usuario:        vendLogin,
         vendedor_id:             vendedorObj?.id || null,
         vendedor_nome:           vendedorObj?.nome || get('vendedor_nome'),
-        data_entrada:            normalizarData(get('data_entrada')) || agora.slice(0,10),
+        data_entrada:            dataEntradaNorm || agora.slice(0,10),
         valor_estimado:          parseFloat(get('valor_estimado')) || 0,
         prioridade:              prioridade || null,
         observacoes_historico_inicial: get('observacoes_historico_inicial'),
@@ -362,7 +385,7 @@ async function validar(req, res) {
         telefone:     l.dados_json.telefone_whatsapp,
         funil:        l.dados_json.funil,
         etapa:        l.dados_json.etapa,
-        vendedor:     l.dados_json.vendedor_email,
+        vendedor:     l.dados_json.vendedor_usuario || l.dados_json.vendedor_nome,
       })),
     });
 
@@ -470,15 +493,17 @@ async function importar(req, res) {
           usuarioId,
           usuarioNome,
           tipoAcao:   'IMPORTACAO_LEAD',
-          descricao:  `Lead importado via planilha: "${imp.nome_arquivo}".`,
+          descricao:  `Lead importado via planilha: "${imp.nome_arquivo}". Importado por: ${usuarioNome}.`,
           dadosNovos: {
             arquivo:   imp.nome_arquivo,
             funil:     d.funil,
             etapa:     d.etapa,
-            vendedor:  d.vendedor_nome || d.vendedor_email,
+            vendedor:  d.vendedor_nome || d.vendedor_usuario || d.vendedor_email,
             telefone:  d.telefone_whatsapp,
             origem:    d.origem_planilha || 'importacao_excel',
             historico_inicial: d.observacoes_historico_inicial || null,
+            data_entrada: d.data_entrada,
+            importado_em: agora,
           },
           origem: 'importacao_excel',
         }).catch(e => console.warn('[TIMELINE_IMPORT]', e.message));
