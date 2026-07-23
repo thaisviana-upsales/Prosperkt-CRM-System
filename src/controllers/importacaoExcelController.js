@@ -22,8 +22,8 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits:  { fileSize: 20 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    if (file.originalname.match(/\.(xlsx)$/i)) cb(null, true);
-    else cb(new Error('Apenas arquivos .xlsx são aceitos.'), false);
+    if (file.originalname.match(/\.(xlsx|xlsm)$/i)) cb(null, true);
+    else cb(new Error('Apenas arquivos .xlsx ou .xlsm são aceitos.'), false);
   },
 });
 

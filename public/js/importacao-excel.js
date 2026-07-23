@@ -66,8 +66,8 @@
 
   function selecionarArquivo(file) {
     if (!file) return;
-    if (!file.name.match(/\.xlsx$/i)) {
-      mostrarAlert(alertUpload, 'danger', '❌ Apenas arquivos .xlsx são aceitos.');
+    if (!file.name.match(/\.(xlsx|xlsm)$/i)) {
+      mostrarAlert(alertUpload, 'danger', '❌ Apenas arquivos .xlsx ou .xlsm são aceitos.');
       return;
     }
     if (file.size > 20 * 1024 * 1024) {
