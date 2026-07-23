@@ -2,6 +2,9 @@
  * PROSPEKT CRM — importacao-excel.js
  * Lógica da página de Importação de Leads via Excel
  * Acesso: SOMENTE SUPER_ADMIN
+ *
+ * v3: Suporte a correlação inteligente (fuzzy match vendedor/funil/etapa)
+ *     com UI de revisão de sugestões antes de importar.
  */
 
 (async () => {
@@ -9,9 +12,8 @@
 
   // ── Inicializa sidebar (exige SUPER_ADMIN) ───────────────────────────────
   const usuario = await Sidebar.init('importacao-excel', 'SUPER_ADMIN');
-  if (!usuario) return; // redirecionado pelo auth
+  if (!usuario) return;
 
-  // Bloqueio extra: se role não é SUPER_ADMIN
   if (usuario.role !== 'SUPER_ADMIN') {
     document.getElementById('main-content').innerHTML = `
       <div style="display:flex;align-items:center;justify-content:center;min-height:80vh;flex-direction:column;gap:16px">
@@ -27,6 +29,8 @@
   let arquivoSelecionado = null;
   let importacaoIdAtual  = null;
   let linhasValidacao    = [];
+  // Mapa de correções confirmadas pelo admin: { "2": { vendedor_id, vendedor_nome, ... } }
+  let correcoesConfirmadas = {};
 
   // ── Elementos ─────────────────────────────────────────────────────────────
   const uploadZone     = document.getElementById('upload-zone');
@@ -115,6 +119,7 @@
     animarProg(30);
     secaoResumo.style.display = 'none';
     alertUpload.style.display = 'none';
+    correcoesConfirmadas = {}; // resetar correções
 
     try {
       const token = Auth.getToken?.() || localStorage.getItem('prospekt_access_token') || localStorage.getItem('access_token');
@@ -143,34 +148,28 @@
       linhasValidacao   = data.linhas;
 
       // Resumo
-      document.getElementById('sum-total').textContent      = data.resumo.total;
-      document.getElementById('sum-validas').textContent    = data.resumo.validas;
-      document.getElementById('sum-erros').textContent      = data.resumo.erros;
-      document.getElementById('sum-duplicados').textContent = data.resumo.duplicados;
+      const rs = data.resumo;
+      document.getElementById('sum-total').textContent      = rs.total;
+      document.getElementById('sum-validas').textContent    = rs.validas;
+      document.getElementById('sum-erros').textContent      = rs.erros;
+      document.getElementById('sum-duplicados').textContent = rs.duplicados;
 
-      // Tabela de prévia
-      tbodyPrevia.innerHTML = linhasValidacao.map(l => `
-        <tr>
-          <td style="font-size:.7rem;color:var(--text-muted)">${l.numero_linha}</td>
-          <td>${badgeLinha(l.status)}</td>
-          <td>${esc(l.nome_lead)}</td>
-          <td style="font-family:monospace">${esc(l.telefone)}</td>
-          <td>${esc(l.funil)}</td>
-          <td>${esc(l.etapa)}</td>
-          <td style="font-size:.7rem">${esc(l.vendedor)}</td>
-          <td style="font-size:.7rem;color:${l.status==='invalido'?'#FF3B5C':l.status==='duplicado'?'#F5A623':'var(--text-muted)'};max-width:240px">${esc(l.erro||l.duplicado||'—')}</td>
-        </tr>`).join('');
-      countPrevia.textContent = `(${linhasValidacao.length} linhas)`;
-
+      // Renderiza tabela + seção sugestões
+      renderizarResultados(data);
       secaoResumo.style.display = 'block';
-      btnImportar.disabled = data.resumo.validas === 0;
-      btnBaixarErros.style.display = (data.resumo.erros + data.resumo.duplicados) > 0 ? '' : 'none';
 
-      // Mensagem de aviso
-      if (data.resumo.validas === 0) {
+      // Habilita botão de importar se há válidas ou sugestões
+      const temValidas = rs.validas > 0;
+      const temSugestoes = rs.sugestoes > 0;
+      btnImportar.disabled = !temValidas && !temSugestoes;
+      btnBaixarErros.style.display = (rs.erros + rs.duplicados) > 0 ? '' : 'none';
+
+      if (temSugestoes) {
+        mostrarAlert(alertUpload, 'warning', `⚠️ ${rs.sugestoes} linha(s) aguardando sua confirmação de correlação. Revise as sugestões abaixo antes de importar.`);
+      } else if (!temValidas) {
         mostrarAlert(alertUpload, 'warning', '⚠️ Nenhuma linha válida encontrada. Corrija os erros e reenvie a planilha.');
       } else {
-        mostrarAlert(alertUpload, 'success', `✅ Validação concluída. ${data.resumo.validas} linha(s) pronta(s) para importação.`);
+        mostrarAlert(alertUpload, 'success', `✅ Validação concluída. ${rs.validas} linha(s) pronta(s) para importação.`);
       }
       btnValidar.disabled = false;
 
@@ -180,6 +179,185 @@
       btnValidar.disabled = false;
     }
   });
+
+  // ── Renderiza tabela de pré-validação + seção de sugestões ──────────────
+  function renderizarResultados(data) {
+    const linhas = data.linhas;
+
+    // Tabela de prévia
+    tbodyPrevia.innerHTML = linhas.map(l => `
+      <tr>
+        <td style="font-size:.7rem;color:var(--text-muted)">${l.numero_linha}</td>
+        <td>${badgeLinha(l.status, l.sugestoes)}</td>
+        <td>${esc(l.nome_lead)}</td>
+        <td style="font-family:monospace">${esc(l.telefone)}</td>
+        <td>${esc(l.funil)}</td>
+        <td>${esc(l.etapa)}</td>
+        <td style="font-size:.7rem">${esc(l.vendedor)}</td>
+        <td style="font-size:.7rem;color:${corMsgStatus(l.status)};max-width:240px">${esc(msgLinha(l))}</td>
+      </tr>`).join('');
+    countPrevia.textContent = `(${linhas.length} linhas)`;
+
+    // Seção de sugestões
+    renderizarSugestoes(linhas);
+  }
+
+  // ── Seção de Correções Sugeridas ──────────────────────────────────────────
+  function renderizarSugestoes(linhas) {
+    let secaoSug = document.getElementById('section-sugestoes');
+
+    const linhasComSug = linhas.filter(l => l.status === 'sugestao' && l.sugestoes);
+    // Também mostra sugestões auto aceitas para transparência
+    const linhasAutoSug = linhas.filter(l => l.sugestoes && Object.values(l.sugestoes).some(s => s?.tipo === 'auto'));
+
+    if (!linhasComSug.length && !linhasAutoSug.length) {
+      if (secaoSug) secaoSug.remove();
+      return;
+    }
+
+    if (!secaoSug) {
+      secaoSug = document.createElement('div');
+      secaoSug.id = 'section-sugestoes';
+      // Insere antes da barra de ações
+      const actionBar = document.querySelector('.action-bar');
+      actionBar.parentNode.insertBefore(secaoSug, actionBar);
+    }
+
+    const htmlManual = linhasComSug.map(l => {
+      const sug = l.sugestoes;
+      const itens = Object.entries(sug)
+        .filter(([, v]) => v && v.tipo === 'manual')
+        .map(([campo, v]) => {
+          const key = `${l.numero_linha}_${campo}`;
+          const confirmado = correcoesConfirmadas[String(l.numero_linha)]?.[`${campo}_id`];
+          return `
+          <div class="sug-item" id="sugitem-${key}">
+            <div class="sug-campo">${nomeCampo(campo)}</div>
+            <div class="sug-detail">
+              <span class="sug-informado">"${esc(v.informado)}"</span>
+              <span class="sug-arrow">→</span>
+              <span class="sug-sugerido">"${esc(v.sugerido)}"</span>
+              <span class="sug-score">${v.score}% similar</span>
+            </div>
+            <div class="sug-actions">
+              ${confirmado
+                ? `<span class="sug-confirmado">✓ Confirmado</span>
+                   <button class="sug-btn sug-btn-rejeitar" onclick="recusarSugestao(${l.numero_linha},'${campo}')">Desfazer</button>`
+                : `<button class="sug-btn sug-btn-aceitar" onclick="confirmarSugestao(${l.numero_linha},'${campo}','${esc(v.id)}','${esc(v.sugerido)}')">✓ Sim, usar "${esc(v.sugerido)}"</button>
+                   <button class="sug-btn sug-btn-rejeitar" onclick="recusarSugestao(${l.numero_linha},'${campo}')">✕ Não</button>`
+              }
+            </div>
+          </div>`;
+        }).join('');
+      if (!itens) return '';
+      return `
+      <div class="sug-linha-card" id="sugcard-linha-${l.numero_linha}">
+        <div class="sug-linha-header">
+          <span class="sug-linha-num">Linha ${l.numero_linha}</span>
+          <span style="color:var(--text-muted);font-size:.75rem">${esc(l.nome_lead)}</span>
+        </div>
+        ${itens}
+      </div>`;
+    }).filter(Boolean).join('');
+
+    const htmlAuto = linhasAutoSug.length ? `
+    <div class="sug-auto-section">
+      <div class="sug-auto-title">✔ Correlações automáticas aplicadas (alta confiança)</div>
+      ${linhasAutoSug.map(l => {
+        const itens = Object.entries(l.sugestoes)
+          .filter(([,v]) => v?.tipo === 'auto')
+          .map(([campo, v]) => `<div class="sug-auto-item"><span class="sug-campo">${nomeCampo(campo)}:</span> "${esc(v.informado)}" → "${esc(v.sugerido)}" <span class="sug-score">${v.score}%</span></div>`)
+          .join('');
+        return `<div style="font-size:.72rem;color:var(--text-muted);margin-bottom:4px"><b>Linha ${l.numero_linha}</b>: ${itens}</div>`;
+      }).join('')}
+    </div>` : '';
+
+    const totalManualPendente = linhasComSug.reduce((acc, l) => {
+      return acc + Object.values(l.sugestoes).filter(v => v?.tipo === 'manual' && !correcoesConfirmadas[String(l.numero_linha)]?.[`${v.tipo}_id`]).length;
+    }, 0);
+
+    secaoSug.innerHTML = `
+    <div class="imp-section sug-section">
+      <div class="imp-section-title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        Correções Sugeridas
+        ${linhasComSug.length ? `<span class="sug-badge-count">${linhasComSug.length} linha(s) aguardando</span>` : ''}
+      </div>
+      <p style="font-size:.8rem;color:var(--text-muted);margin:0 0 14px">
+        O CRM encontrou correspondências para campos que não batem exatamente. Confirme as substituições para liberar as linhas para importação.
+      </p>
+      ${linhasComSug.length ? `
+      <div style="margin-bottom:12px">
+        <button class="btn btn-secondary" id="btn-aplicar-todas" onclick="aplicarTodasSugestoes()" style="font-size:.78rem;padding:6px 14px">
+          ✓ Aplicar todas as sugestões
+        </button>
+      </div>` : ''}
+      <div id="sug-lista-manual">${htmlManual || '<div style="font-size:.8rem;color:#6CFF4E;padding:8px 0">✓ Todas as correções foram revisadas.</div>'}</div>
+      ${htmlAuto}
+    </div>`;
+  }
+
+  // ── Ações de sugestão (globais para onclick inline) ──────────────────────
+  window.confirmarSugestao = function(numeroLinha, campo, id, nome) {
+    if (!correcoesConfirmadas[String(numeroLinha)]) correcoesConfirmadas[String(numeroLinha)] = { _historico: [] };
+    const cor = correcoesConfirmadas[String(numeroLinha)];
+
+    const sug = linhasValidacao.find(l => l.numero_linha === numeroLinha)?.sugestoes?.[campo];
+    if (sug) {
+      cor._historico.push(`${nomeCampo(campo)}: "${sug.informado}" → "${sug.sugerido}"`);
+    }
+
+    if (campo === 'vendedor') { cor.vendedor_id = id; cor.vendedor_nome = nome; }
+    if (campo === 'funil')    { cor.funil_id    = id; cor.funil_nome    = nome; }
+    if (campo === 'etapa')    { cor.etapa_id    = id; cor.etapa_nome    = nome; }
+
+    atualizarContadores();
+    renderizarSugestoes(linhasValidacao);
+  };
+
+  window.recusarSugestao = function(numeroLinha, campo) {
+    if (correcoesConfirmadas[String(numeroLinha)]) {
+      if (campo === 'vendedor') { delete correcoesConfirmadas[String(numeroLinha)].vendedor_id; }
+      if (campo === 'funil')    { delete correcoesConfirmadas[String(numeroLinha)].funil_id; }
+      if (campo === 'etapa')    { delete correcoesConfirmadas[String(numeroLinha)].etapa_id; }
+    }
+    atualizarContadores();
+    renderizarSugestoes(linhasValidacao);
+  };
+
+  window.aplicarTodasSugestoes = function() {
+    linhasValidacao.forEach(l => {
+      if (l.status !== 'sugestao' || !l.sugestoes) return;
+      Object.entries(l.sugestoes).forEach(([campo, v]) => {
+        if (v && v.tipo === 'manual') {
+          window.confirmarSugestao(l.numero_linha, campo, v.id, v.sugerido);
+        }
+      });
+    });
+  };
+
+  function atualizarContadores() {
+    // Recalcula validas = originais validas + sugestoes com todas correções confirmadas
+    const linhasOriginaisValidas = linhasValidacao.filter(l => l.status === 'valido').length;
+    const linhasComSugTotalmenteConfirmadas = linhasValidacao.filter(l => {
+      if (l.status !== 'sugestao' || !l.sugestoes) return false;
+      const camposManual = Object.entries(l.sugestoes).filter(([,v]) => v?.tipo === 'manual');
+      const cor = correcoesConfirmadas[String(l.numero_linha)] || {};
+      return camposManual.every(([campo]) => cor[`${campo}_id`]);
+    }).length;
+
+    const validas = linhasOriginaisValidas + linhasComSugTotalmenteConfirmadas;
+    const sugestoesPendentes = linhasValidacao.filter(l => l.status === 'sugestao').length - linhasComSugTotalmenteConfirmadas;
+
+    document.getElementById('sum-validas').textContent = validas;
+    btnImportar.disabled = validas === 0;
+
+    if (sugestoesPendentes > 0) {
+      mostrarAlert(alertUpload, 'warning', `⚠️ ${sugestoesPendentes} linha(s) ainda aguardando confirmação.`);
+    } else if (validas > 0) {
+      mostrarAlert(alertUpload, 'success', `✅ ${validas} linha(s) prontas para importação.`);
+    }
+  }
 
   // ── Importar (Fase 2) ─────────────────────────────────────────────────────
   btnImportar.addEventListener('click', async () => {
@@ -191,7 +369,9 @@
     alertImportar.style.display = 'none';
 
     try {
-      const resp = await Auth.api('POST', `/importacao-excel/importar/${importacaoIdAtual}`);
+      const resp = await Auth.api('POST', `/importacao-excel/importar/${importacaoIdAtual}`, {
+        correcoes: correcoesConfirmadas,
+      });
       if (!resp.ok || !resp.data?.sucesso) {
         throw new Error(resp.data?.erro || 'Erro ao importar.');
       }
@@ -199,7 +379,6 @@
       mostrarAlert(alertImportar, 'success', `🎉 Importação concluída! ${r.importados} lead(s) criado(s).${r.erros ? ` ${r.erros} com erro.` : ''}`);
       btnImportar.innerHTML = '✅ Importação concluída';
 
-      // Recarrega histórico
       setTimeout(carregarHistorico, 1000);
 
     } catch (e) {
@@ -215,8 +394,11 @@
     secaoResumo.style.display = 'none';
     importacaoIdAtual = null;
     linhasValidacao   = [];
+    correcoesConfirmadas = {};
     alertImportar.style.display = 'none';
     alertUpload.style.display   = 'none';
+    const secSug = document.getElementById('section-sugestoes');
+    if (secSug) secSug.remove();
     btnImportar.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Importar leads válidos`;
   });
 
@@ -312,12 +494,46 @@
     el.style.display = 'block';
   }
 
-  function badgeLinha(status) {
-    if (status === 'valido')    return '<span class="badge-val">✓ Válido</span>';
+  function badgeLinha(status, sugestoes) {
+    if (status === 'valido') {
+      const temAuto = sugestoes && Object.values(sugestoes).some(s => s?.tipo === 'auto');
+      return temAuto
+        ? '<span class="badge-sug-auto">✓ Válido*</span>'
+        : '<span class="badge-val">✓ Válido</span>';
+    }
+    if (status === 'sugestao')  return '<span class="badge-sug">⚠ Aguardando</span>';
     if (status === 'invalido')  return '<span class="badge-inv">✗ Inválido</span>';
     if (status === 'duplicado') return '<span class="badge-dupl">⊘ Duplicado</span>';
     if (status === 'importado') return '<span class="badge-imp">✔ Importado</span>';
     return `<span style="color:var(--text-muted)">${status}</span>`;
+  }
+
+  function corMsgStatus(status) {
+    if (status === 'invalido')  return '#FF3B5C';
+    if (status === 'duplicado') return '#F5A623';
+    if (status === 'sugestao')  return '#F5A623';
+    return 'var(--text-muted)';
+  }
+
+  function msgLinha(l) {
+    if (l.status === 'sugestao' && l.sugestoes) {
+      return Object.values(l.sugestoes)
+        .filter(v => v?.tipo === 'manual')
+        .map(v => v.msg)
+        .join(' | ') || '—';
+    }
+    if (l.status === 'valido' && l.sugestoes) {
+      return Object.values(l.sugestoes)
+        .filter(v => v?.tipo === 'auto')
+        .map(v => v.msg)
+        .join(' | ') || '—';
+    }
+    return l.erro || l.duplicado || '—';
+  }
+
+  function nomeCampo(campo) {
+    const M = { vendedor: 'Vendedor', funil: 'Funil', etapa: 'Etapa' };
+    return M[campo] || campo;
   }
 
   function badgeStatus(status) {

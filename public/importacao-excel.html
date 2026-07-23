@@ -190,6 +190,51 @@
     .alert-msg.success { background:#6CFF4E18; border:1px solid #6CFF4E44; color:#6CFF4E; }
     .alert-msg.danger  { background:#FF3B5C18; border:1px solid #FF3B5C44; color:#FF3B5C; }
     .alert-msg.warning { background:#F5A62318; border:1px solid #F5A62344; color:#F5A623; }
+
+    /* ── Badges de linha adicionais ─────────────────────────────────────────── */
+    .badge-sug      { background:#F5A62322; color:#F5A623; border:1px solid #F5A62344; border-radius:6px; padding:2px 8px; font-size:.7rem; font-weight:600; }
+    .badge-sug-auto { background:#6CFF4E18; color:#6CFF4E; border:1px solid #6CFF4E44; border-radius:6px; padding:2px 8px; font-size:.7rem; font-weight:600; }
+
+    /* ── Seção de Correções Sugeridas ───────────────────────────────────────── */
+    .sug-section { border: 1px solid #F5A62355 !important; background: linear-gradient(135deg, #F5A62308 0%, #0D1117 100%) !important; }
+    .sug-section .imp-section-title { color: #F5A623; }
+    .sug-badge-count { background:#F5A62322; color:#F5A623; border-radius:20px; padding:2px 10px; font-size:.68rem; font-weight:600; margin-left:8px; }
+
+    /* ── Cards por linha ─────────────────────────────────────────────────────── */
+    .sug-linha-card {
+      background: #161B22; border: 1px solid #ffffff10; border-radius: 10px;
+      padding: 14px 16px; margin-bottom: 10px;
+    }
+    .sug-linha-header {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+    }
+    .sug-linha-num { font-weight: 700; font-size: .8rem; color: var(--text-primary); }
+
+    /* ── Item de sugestão ────────────────────────────────────────────────────── */
+    .sug-item {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 8px 0; border-top: 1px solid #ffffff08;
+    }
+    .sug-campo { font-size: .72rem; font-weight: 600; color: var(--text-muted); min-width: 60px; text-transform: uppercase; letter-spacing: .03em; }
+    .sug-detail { display: flex; align-items: center; gap: 6px; flex: 1; flex-wrap: wrap; }
+    .sug-informado { color: #FF3B5C; font-size: .78rem; font-family: monospace; }
+    .sug-arrow { color: var(--text-muted); font-size: .8rem; }
+    .sug-sugerido { color: #6CFF4E; font-size: .78rem; font-family: monospace; font-weight: 600; }
+    .sug-score { background: #ffffff10; border-radius: 4px; padding: 1px 6px; font-size: .68rem; color: var(--text-muted); }
+
+    /* ── Botões de ação ──────────────────────────────────────────────────────── */
+    .sug-actions { display: flex; gap: 8px; align-items: center; }
+    .sug-btn { border: none; border-radius: 6px; padding: 5px 12px; font-size: .73rem; font-weight: 600; cursor: pointer; transition: all .15s; }
+    .sug-btn-aceitar { background: #6CFF4E20; color: #6CFF4E; border: 1px solid #6CFF4E44; }
+    .sug-btn-aceitar:hover { background: #6CFF4E35; }
+    .sug-btn-rejeitar { background: #FF3B5C18; color: #FF3B5C; border: 1px solid #FF3B5C33; }
+    .sug-btn-rejeitar:hover { background: #FF3B5C30; }
+    .sug-confirmado { color: #6CFF4E; font-size: .73rem; font-weight: 600; }
+
+    /* ── Seção de auto-aceitas ────────────────────────────────────────────────── */
+    .sug-auto-section { margin-top: 10px; padding: 10px 12px; background: #6CFF4E08; border: 1px solid #6CFF4E22; border-radius: 8px; }
+    .sug-auto-title { font-size: .75rem; font-weight: 600; color: #6CFF4E; margin-bottom: 6px; }
+    .sug-auto-item { display: inline; }
   </style>
 </head>
 <body>

@@ -67,6 +67,47 @@ function soLetras(str) {
   return semAcento(str).replace(/[^a-z0-9]/g, '');
 }
 
+// ── Helper: Levenshtein distance ──────────────────────────────────────────────
+function levenshtein(a, b) {
+  const la = a.length, lb = b.length;
+  if (!la) return lb; if (!lb) return la;
+  const dp = Array.from({ length: la + 1 }, (_, i) => Array(lb + 1).fill(0).map((_, j) => j ? j : i));
+  for (let i = 1; i <= la; i++) {
+    for (let j = 1; j <= lb; j++) {
+      dp[i][j] = a[i-1] === b[j-1]
+        ? dp[i-1][j-1]
+        : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+    }
+  }
+  return dp[la][lb];
+}
+
+// ── Helper: similaridade 0-1 entre duas strings (sem acento) ────────────────────
+function calcSim(a, b) {
+  const na = semAcento(a), nb = semAcento(b);
+  if (na === nb) return 1.0;
+  if (!na || !nb) return 0;
+  // Tenta por soLetras (remove tudo exceto alfanúmerico)
+  if (soLetras(a) === soLetras(b)) return 0.98;
+  const dist = levenshtein(na, nb);
+  const maxLen = Math.max(na.length, nb.length);
+  const simBase = maxLen === 0 ? 1.0 : 1 - dist / maxLen;
+  // Bonus: se todas as palavras do input estão no candidato (parcial)
+  const wordsIn = semAcento(a).split(/\s+/).every(w => semAcento(b).includes(w));
+  return wordsIn ? Math.max(simBase, 0.85) : simBase;
+}
+
+// ── Helper: melhor candidato fuzzy ──────────────────────────────────────────────
+// Retorna { item, score } ou null se não encontrar nada aceitável
+function melhorMatch(input, candidatos, getKey, minScore = 0.65) {
+  let best = null, bestScore = 0;
+  for (const c of candidatos) {
+    const s = calcSim(input, getKey(c));
+    if (s > bestScore) { bestScore = s; best = c; }
+  }
+  return best && bestScore >= minScore ? { item: best, score: bestScore } : null;
+}
+
 // ── Helper: normaliza data ─────────────────────────────────────────────────────────
 // Aceita: Date JS (cellDates:true), número serial Excel, dd/mm/aaaa, aaaa-mm-dd
 function normalizarData(val) {
@@ -285,35 +326,94 @@ async function validar(req, res) {
       if (!dataEntrada || dataEntrada === '[object Object]')
                           erros.push(`Linha ${numero}: data_entrada é obrigatória.`);
 
-      // ── Funil válido (sem acento) ──────────────────────────────────────────────
+      // ── Sugestões de correlação (funil, etapa, vendedor) ─────────────────────────
+      // Campos que precisam de confirmação humana quando score é médio
+      const sugestoes = {};
+
+      // ── Funil válido (sem acento + fuzzy) ────────────────────────────────────────
       let funilObj = null, etapaObj = null, vendedorObj = null;
       if (funilNm) {
         funilObj = funilMap[semAcento(funilNm)];
-        if (!funilObj) erros.push(`Linha ${numero}: Funil "${funilNm}" não encontrado ou inativo.`);
+        if (!funilObj) {
+          // Fuzzy no funil
+          const mf = melhorMatch(funilNm, funisList, f => f.nome);
+          if (mf && mf.score >= 0.90) {
+            funilObj = mf.item;
+            sugestoes.funil = {
+              informado: funilNm, sugerido: mf.item.nome, id: mf.item.id,
+              score: Math.round(mf.score * 100), tipo: 'auto',
+              msg: `Funil "${funilNm}" reconhecido como "${mf.item.nome}" (${Math.round(mf.score*100)}% similar).`,
+            };
+          } else if (mf && mf.score >= 0.65) {
+            sugestoes.funil = {
+              informado: funilNm, sugerido: mf.item.nome, id: mf.item.id,
+              score: Math.round(mf.score * 100), tipo: 'manual',
+              msg: `Funil "${funilNm}" não encontrado. Sugestão: "${mf.item.nome}". Confirme para prosseguir.`,
+            };
+          } else {
+            erros.push(`Linha ${numero}: Funil "${funilNm}" não encontrado ou inativo.`);
+          }
+        }
       }
 
-      // ── Etapa válida no funil (sem acento) ──────────────────────────────────────
+      // ── Etapa válida no funil (sem acento + fuzzy) ─────────────────────────────
       if (funilObj && etapaNm) {
         const etapasDoFunil = etapasByFunil[funilObj.id] || [];
         etapaObj = etapasDoFunil.find(e => semAcento(e.nome) === semAcento(etapaNm));
         if (!etapaObj) {
-          erros.push(`Linha ${numero}: Etapa "${etapaNm}" não pertence ao funil "${funilNm}" ou está oculta.`);
+          // Fuzzy na etapa
+          const me = melhorMatch(etapaNm, etapasDoFunil, e => e.nome);
+          if (me && me.score >= 0.88) {
+            etapaObj = me.item;
+            sugestoes.etapa = {
+              informado: etapaNm, sugerido: me.item.nome, id: me.item.id,
+              score: Math.round(me.score * 100), tipo: 'auto',
+              msg: `Etapa "${etapaNm}" reconhecida como "${me.item.nome}" (${Math.round(me.score*100)}% similar).`,
+            };
+          } else if (me && me.score >= 0.65) {
+            sugestoes.etapa = {
+              informado: etapaNm, sugerido: me.item.nome, id: me.item.id,
+              score: Math.round(me.score * 100), tipo: 'manual',
+              msg: `Etapa "${etapaNm}" não encontrada em "${funilNm}". Sugestão: "${me.item.nome}". Confirme para prosseguir.`,
+            };
+          } else {
+            erros.push(`Linha ${numero}: Etapa "${etapaNm}" não encontrada em "${funilNm}".`);
+          }
         }
       } else if (!funilObj && etapaNm) {
-        erros.push(`Linha ${numero}: Etapa não pôde ser validada pois o funil é inválido.`);
+        erros.push(`Linha ${numero}: Etapa não pode ser validada pois o funil é inválido.`);
       }
 
-      // ── Vendedor ativo (por email OU nome, sem acento) ─────────────────────────────
+      // ── Vendedor ativo (por email OU nome, sem acento, com fuzzy) ───────────────────
       if (vendLogin) {
-        // 1º tenta por email exato
-        // 2º tenta por nome sem acento ("lais basilio" == "Lais Basilio")
-        // 3º tenta por nome compacto sem espacos/pontuacao (match definitivo)
+        // 1º email exato, 2º nome sem acento, 3º soLetras, 4º fuzzy
         vendedorObj =
           usuarioByEmail[vendLogin]
           || usuarioByNome[semAcento(vendLogin)]
           || usuarioByNomeCompacto[soLetras(vendLogin)];
+
         if (!vendedorObj) {
-          erros.push(`Linha ${numero}: Vendedor "${vendLogin}" não encontrado ou inativo no CRM. Use o email ou nome exato do usuário.`);
+          // Fuzzy match
+          const m = melhorMatch(vendLogin, usuariosList, u => u.nome);
+          if (m && m.score >= 0.90) {
+            // Alta confiança: aceita automaticamente
+            vendedorObj = m.item;
+            sugestoes.vendedor = {
+              informado: vendLogin, sugerido: m.item.nome, id: m.item.id,
+              score: Math.round(m.score * 100), tipo: 'auto',
+              msg: `Vendedor "${vendLogin}" reconhecido automaticamente como "${m.item.nome}" (${Math.round(m.score*100)}% similar).`,
+            };
+          } else if (m && m.score >= 0.68) {
+            // Confiaça média: pede confirmação
+            sugestoes.vendedor = {
+              informado: vendLogin, sugerido: m.item.nome, id: m.item.id,
+              score: Math.round(m.score * 100), tipo: 'manual',
+              msg: `Vendedor "${vendLogin}" não encontrado exatamente. Sugestão: "${m.item.nome}" (${Math.round(m.score*100)}% similar). Confirme para prosseguir.`,
+            };
+            // Não seta vendedorObj: linha fica aguardando confirmação
+          } else {
+            erros.push(`Linha ${numero}: Vendedor "${vendLogin}" não encontrado no CRM.${m ? ` Mais próximo: "${m.item.nome}".` : ' Verifique o nome ou email.'}`);
+          }
         }
       }
 
@@ -385,21 +485,28 @@ async function validar(req, res) {
         observacao_interna:      get('observacao_interna'),
       };
 
-      const status = erros.length > 0 ? 'invalido'
-        : isDuplicado ? 'duplicado' : 'valido';
+      // Determina status final
+      const temSugestaoManual = Object.values(sugestoes).some(s => s && s.tipo === 'manual');
+      const status =
+        erros.length > 0 ? 'invalido'
+        : isDuplicado      ? 'duplicado'
+        : temSugestaoManual ? 'sugestao'
+        : 'valido';
 
       return {
         numero_linha: numero,
         status,
+        sugestoes: Object.keys(sugestoes).length ? sugestoes : null,
         erro:      erros.length  ? erros.join(' | ')          : null,
         duplicado: isDuplicado   ? motivosDupl.join(' | ')    : null,
         dados_json: dadosNorm,
       };
     });
 
-    // ── Salva importação no banco (status aguardando_confirmacao) ────────────
+    // ── Salva importação no banco (status aguardando_confirmacao) ─────────────────
     const importacaoId = crypto.randomBytes(16).toString('hex');
     const totalValidas    = linhas.filter(l => l.status === 'valido').length;
+    const totalSugestoes  = linhas.filter(l => l.status === 'sugestao').length;
     const totalErros      = linhas.filter(l => l.status === 'invalido').length;
     const totalDuplicados = linhas.filter(l => l.status === 'duplicado').length;
 
@@ -410,7 +517,7 @@ async function validar(req, res) {
         usuario_nome:     usuarioNome,
         nome_arquivo:     nomeArquivo,
         total_linhas:     rows.length,
-        total_validas:    totalValidas,
+        total_validas:    totalValidas + totalSugestoes, // sugestoes auto aceitas contam como validas
         total_erros:      totalErros,
         total_duplicados: totalDuplicados,
         total_importados: 0,
@@ -441,12 +548,14 @@ async function validar(req, res) {
       resumo: {
         total:      rows.length,
         validas:    totalValidas,
+        sugestoes:  totalSugestoes,
         erros:      totalErros,
         duplicados: totalDuplicados,
       },
       linhas: linhas.map(l => ({
         numero_linha: l.numero_linha,
         status:       l.status,
+        sugestoes:    l.sugestoes,
         erro:         l.erro,
         duplicado:    l.duplicado,
         nome_lead:    l.dados_json.nome_lead,
@@ -488,9 +597,31 @@ async function importar(req, res) {
     // Marca como importando
     await sb.from('importacoes_leads').update({ status: 'importando' }).eq('id', importacaoId);
 
-    // Busca linhas válidas
-    const { data: linhas } = await sb.from('importacao_lead_linhas')
+    // Busca linhas válidas + sugestoes confirmadas (via req.body.correcoes)
+    const correcoes = req.body?.correcoes || {}; // { "2": { vendedor_id, vendedor_nome, funil_id, etapa_id, ... } }
+
+    // Linhas válidas do banco
+    const { data: linhasValidas } = await sb.from('importacao_lead_linhas')
       .select('*').eq('importacao_id', importacaoId).eq('status', 'valido');
+
+    // Linhas sugestão que foram confirmadas pelo admin
+    const { data: linhasSugestao } = await sb.from('importacao_lead_linhas')
+      .select('*').eq('importacao_id', importacaoId).eq('status', 'sugestao');
+
+    // Filtra sugestoes confirmadas: linha só entra se req.body.correcoes[numero_linha] existir
+    const linhasConfirmadas = (linhasSugestao || []).filter(l => correcoes[String(l.numero_linha)]);
+
+    // Aplica correções confirmadas nos dados_json
+    for (const linha of linhasConfirmadas) {
+      const cor = correcoes[String(linha.numero_linha)];
+      if (cor.vendedor_id)  { linha.dados_json.vendedor_id    = cor.vendedor_id;  linha.dados_json.vendedor_nome = cor.vendedor_nome || linha.dados_json.vendedor_nome; }
+      if (cor.funil_id)     { linha.dados_json.funil_id       = cor.funil_id;     linha.dados_json.funil = cor.funil_nome || linha.dados_json.funil; }
+      if (cor.etapa_id)     { linha.dados_json.etapa_id       = cor.etapa_id;     linha.dados_json.etapa = cor.etapa_nome || linha.dados_json.etapa; }
+      // Registra historico da correção
+      linha.dados_json._correcoes = cor._historico || [];
+    }
+
+    const linhas = [...(linhasValidas || []), ...linhasConfirmadas];
 
     let importados = 0;
     let erros = 0;
