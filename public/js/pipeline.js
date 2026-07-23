@@ -1008,7 +1008,7 @@ async function onFlFunilChange(overrideFunilId) {
 }
 
 function showTab(tab) {
-  const ABAS = ['dados', 'hist', 'venda', 'producao', 'arquivos'];
+  const ABAS = ['dados', 'hist', 'venda', 'producao', 'arquivos', 'conta-azul'];
   ABAS.forEach(t => {
     const el  = document.getElementById(`tab-${t}`);
     const btn = document.getElementById(`tab-btn-${t}`);
@@ -1738,6 +1738,27 @@ function bindEvents() {
   });
   document.getElementById('tab-btn-venda').addEventListener('click', () => showTab('venda'));
   document.getElementById('tab-btn-producao').addEventListener('click', () => showTab('producao'));
+  document.getElementById('tab-btn-arquivos').addEventListener('click', () => showTab('arquivos'));
+  document.getElementById('tab-btn-conta-azul').addEventListener('click', () => {
+    console.log('[CONTA_AZUL_TAB_CLICK] aba clicada');
+    showTab('conta-azul');
+    // Renderiza a aba Conta Azul com os dados do lead atual
+    const lead = _leadEmEdicao;
+    if (window.ContaAzul && lead) {
+      console.log('[CONTA_AZUL_TAB_RENDER_START] lead id:', lead.id, '| status:', lead.status);
+      // Reseta campos para não acumular dados de lead anterior
+      const caObs = document.getElementById('ca-obs');
+      if (caObs) caObs.value = '';
+      try {
+        window.ContaAzul.renderTab(lead);
+        console.log('[CONTA_AZUL_TAB_RENDER_SUCCESS] lead id:', lead.id);
+      } catch(e) {
+        console.error('[CONTA_AZUL_TAB_RENDER_ERROR]', e.message);
+      }
+    } else if (!lead) {
+      console.warn('[CONTA_AZUL_TAB_RENDER_ERROR] _leadEmEdicao não definido ainda');
+    }
+  });
   document.getElementById('fl-funil').addEventListener('change', () => onFlFunilChange());
   // Modal motivo de perda
   document.getElementById('btn-motivo-confirmar').addEventListener('click', confirmarMotivo);
