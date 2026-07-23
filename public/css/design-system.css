@@ -390,11 +390,31 @@ textarea.input { resize: vertical; min-height: 80px; }
   gap: 0;
 }
 
+/* Logo original PROSPEKT — sidebar expandida */
 .sidebar-logo {
   padding: 0 var(--space-4) var(--space-5);
   border-bottom: 1px solid var(--border);
   margin-bottom: var(--space-3);
 }
+/* Sidebar collapsed: mostra apenas o símbolo cubo (cortando o texto da logo) */
+.sidebar.collapsed .sidebar-logo {
+  padding: 0 0 var(--space-5);
+  display: flex;
+  justify-content: center;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar.collapsed .sidebar-logo .logo-img-wrap {
+  justify-content: center;
+  gap: 0;
+}
+/* Na sidebar collapsed a logo horizontal fica só com o ícone (overflow hidden no wrap) */
+.sidebar.collapsed .sidebar-logo-img {
+  max-width: 36px;
+  height: 36px;
+  object-fit: none;
+  object-position: left center;
+}
+/* Texto antigo (logo-text, logo-sub) — mantidos ocultos quando não usados */
 .sidebar-logo .logo-text {
   font-size: 1rem;
   font-weight: 800;

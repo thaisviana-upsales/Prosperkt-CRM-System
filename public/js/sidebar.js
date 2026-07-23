@@ -73,14 +73,17 @@ const Sidebar = (() => {
         </button>
 
         <div class="sidebar-logo">
-          <div class="logo-img-wrap" style="display:flex;align-items:center;gap:10px">
-            <img src="/img/logo_original_backup.png" alt="PROSPEKT Logo" style="width:36px;height:36px;object-fit:contain;flex-shrink:0;">
-            <div>
-              <div class="logo-text">PROSPEKT</div>
-              <div class="logo-sub">CRM Enterprise</div>
-            </div>
+          <div class="logo-img-wrap" style="display:flex;align-items:center;">
+            <!-- Logo original PROSPEKT PERSONALIZADOS — fundo transparente, neon verde/magenta -->
+            <img
+              src="/img/logo_prospekt.png"
+              alt="PROSPEKT Personalizados"
+              class="sidebar-logo-img"
+              style="height:40px;width:auto;max-width:190px;object-fit:contain;flex-shrink:0;"
+            >
           </div>
         </div>
+
 
         <nav class="sidebar-nav">${navHTML}</nav>
 

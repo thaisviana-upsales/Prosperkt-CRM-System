@@ -157,7 +157,10 @@
 .lead-tab-btn.active { color: var(--green); border-bottom-color: var(--green); font-weight: 600; }
 .lead-tab-btn svg { flex-shrink: 0; opacity: .7; }
 .lead-tab-btn.active svg { opacity: 1; }
-.lead-tab-content { animation: fadeIn .18s ease; }
+.lead-tab-content {
+  animation: fadeIn .18s ease;
+  padding-bottom: 28px; /* garante que o último campo da aba Venda não fique cortado */
+}
 @keyframes fadeIn { from { opacity:0; transform:translateY(3px); } to { opacity:1; transform:none; } }
 
 /* ── Inputs compactos ────────────────────────────────────────── */
@@ -399,7 +402,12 @@
     0 2px 8px rgba(0,0,0,0.5),
     inset 0 1px 0 rgba(255,255,255,0.06);
   position: relative;
-  overflow: hidden;
+  /* SCROLL FIX: flex column com altura limitada — o scroll fica no wrapper interno */
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 40px);
+  overflow: hidden; /* mantém overflow:hidden para os pseudoelementos decorativos */
+  padding: 0; /* padding vai para o wrapper interno */
 }
 
 /* Reflexo sutil no topo do card */
@@ -783,13 +791,56 @@
   border-color: rgba(205,175,132,0.10);
 }
 
+/* ── SCROLL INTERNO DO MODAL DE LEAD ───────────────────────────
+   Estrutura:
+     .modal-box (flex-column, overflow:hidden, max-height:calc(100vh - 40px))
+       └── .modal-lead-scroll (flex:1, overflow-y:auto — recebe o scroll)
+             ├── .mh (header com nome do lead + botão fechar)
+             ├── .lead-tabs (abas)
+             └── .lead-tab-content (conteúdo de cada aba)
+   Os pseudoelementos ::before/::after ficam no .modal-box (position:absolute)
+   e não interferem com o scroll interno.
+──────────────────────────────────────────────────────────────── */
+#ov-lead .modal-lead-scroll {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 0; /* essencial para o flex-child respeitar o scroll */
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 20px 22px;
+}
+
+/* Scrollbar discreta dentro do modal */
+#ov-lead .modal-lead-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+#ov-lead .modal-lead-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+#ov-lead .modal-lead-scroll::-webkit-scrollbar-thumb {
+  background: rgba(205,175,132,0.25);
+  border-radius: 3px;
+}
+#ov-lead .modal-lead-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(205,175,132,0.45);
+}
+
+/* Header e abas: flex-shrink:0 para não comprimirem */
+#ov-lead .mh {
+  flex-shrink: 0;
+}
+#ov-lead .lead-tabs {
+  flex-shrink: 0;
+}
+
 /* ── Responsivo: modal full-width em mobile ─────────────────── */
 @media (max-width: 600px) {
   #ov-lead .modal-box {
     border-radius: 14px;
-    padding: 16px 14px;
+    max-height: calc(100vh - 20px);
   }
-  #ov-lead .modal-box::before {
-    display: none;
+  #ov-lead .modal-lead-scroll {
+    padding: 14px 14px;
   }
 }
