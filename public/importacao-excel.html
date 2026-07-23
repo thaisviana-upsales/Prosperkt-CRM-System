@@ -8,6 +8,17 @@
   <link rel="stylesheet" href="/css/design-system.css" />
   <link rel="stylesheet" href="/css/mobile.css" />
   <style>
+    /* ── Fundo azul marinho — scoped somente nesta página ─────── */
+    /* Não afeta Dashboard, Pipeline nem nenhuma outra tela.       */
+    .main-content {
+      background: #0D1117 !important;
+    }
+    /* --surface-1 não existe no design-system; define aqui        */
+    /* para cards, upload-zone e seções ficarem em azul marinho    */
+    :root {
+      --surface-1: #161B22;
+    }
+
     /* ── Importação de Leads — Premium Dark ─────────────────── */
     .imp-hero {
       background: linear-gradient(135deg, rgba(108,255,78,.08) 0%, rgba(108,71,255,.08) 100%);

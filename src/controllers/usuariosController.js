@@ -250,7 +250,7 @@ async function atualizar(req, res) {
       if (req.body.email) upd.email = req.body.email.toLowerCase().trim();
       if (req.body.avatar_url !== undefined) upd.avatar_url = req.body.avatar_url;
       if (req.body.role && roleAtual === 'SUPER_ADMIN') upd.role = req.body.role;
-      if (req.body.ativo !== undefined && roleAtual !== 'VENDEDOR') upd.ativo = req.body.ativo ? 1 : 0;
+      if (req.body.ativo !== undefined && roleAtual !== 'VENDEDOR') upd.ativo = !!req.body.ativo; // boolean para Supabase
       if (req.body.senha) upd.senha_hash = await bcrypt.hash(req.body.senha, 12);
 
       if (Object.keys(upd).length === 1) {
@@ -303,7 +303,15 @@ async function deletar(req, res) {
     if (isSupa) {
       const { data: u, error: e0 } = await sb.from('usuarios').select('id,nome').eq('id', id).single();
       if (e0 || !u) return res.status(404).json({ sucesso: false, erro: 'Usuário não encontrado.' });
-      await sb.from('usuarios').update({ ativo: 0, atualizado_em: new Date().toISOString() }).eq('id', id);
+      // Supabase usa boolean true/false — nunca 0/1 para campo boolean do Postgres
+      const { error: eUpd } = await sb
+        .from('usuarios')
+        .update({ ativo: false })
+        .eq('id', id);
+      if (eUpd) {
+        console.error('[usuarios.deletar] Supabase update error:', eUpd.message);
+        return res.status(500).json({ sucesso: false, erro: 'Falha ao desativar no banco: ' + eUpd.message });
+      }
       req.log({ acao: 'DELETE', entidade: 'usuarios', entidade_id: id, antes: u });
       return res.json({ sucesso: true, mensagem: 'Usuário desativado com sucesso.' });
     }
