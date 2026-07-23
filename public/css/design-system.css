@@ -335,16 +335,7 @@ textarea.input { resize: vertical; min-height: 80px; }
 .sidebar.collapsed #sidebar-powered {
   display: none;
 }
-/* Logo: esconde texto, mantém ícone */
-.sidebar.collapsed .sidebar-logo {
-  padding: 0 0 var(--space-5);
-  display: flex;
-  justify-content: center;
-}
-.sidebar.collapsed .sidebar-logo .logo-img-wrap {
-  justify-content: center;
-  gap: 0;
-}
+/* Regras de collapsed para .sidebar-logo e .brand-container estão na seção de BRANDING abaixo */
 /* Nav items: apenas ícone centralizado */
 .sidebar.collapsed .nav-item {
   justify-content: center;
@@ -390,31 +381,104 @@ textarea.input { resize: vertical; min-height: 80px; }
   gap: 0;
 }
 
-/* Logo original PROSPEKT — sidebar expandida */
+/* ── BRANDING SIDEBAR — área premium da logo/marca ─────────────────
+   Estrutura expandida:
+     .sidebar-logo (wrapper com padding e border-bottom)
+       └── .brand-container (container premium com glow sutil)
+             ├── .sidebar-logo-img (logo PNG transpaeente, neon)
+             └── .brand-text-wrap
+                   ├── .brand-name (PROSPEKT — gradient brand)
+                   └── .brand-sub (CRM Enterprise)
+─────────────────────────────────────────────────────────────── */
 .sidebar-logo {
-  padding: 0 var(--space-4) var(--space-5);
-  border-bottom: 1px solid var(--border);
+  padding: 4px var(--space-3) 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
   margin-bottom: var(--space-3);
 }
-/* Sidebar collapsed: mostra apenas o símbolo cubo (cortando o texto da logo) */
+
+/* Container premium: fundo sutil, borda, glow */
+.brand-container {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(91,222,62,0.06) 0%, rgba(255,255,255,0.03) 100%);
+  border: 1px solid rgba(91,222,62,0.12);
+  box-shadow: 0 0 18px rgba(91,222,62,0.06), inset 0 1px 0 rgba(255,255,255,0.05);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.brand-container:hover {
+  border-color: rgba(91,222,62,0.22);
+  box-shadow: 0 0 24px rgba(91,222,62,0.10), inset 0 1px 0 rgba(255,255,255,0.07);
+}
+
+/* Logo PNG: fundo transparente, neon verde/magenta */
+.sidebar-logo-img {
+  height: 48px;
+  width: auto;
+  max-width: 56px;
+  object-fit: contain;
+  object-position: left center;
+  flex-shrink: 0;
+  /* Glow sutil que realiza o neon da logo */
+  filter: drop-shadow(0 0 6px rgba(91,222,62,0.25));
+}
+
+/* Bloco de texto ao lado da logo */
+.brand-text-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+/* PROSPEKT — nome principal */
+.brand-name {
+  font-size: 0.875rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: var(--grad-brand);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+/* CRM Enterprise — assinatura institucional */
+.brand-sub {
+  font-size: 0.5625rem;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.32);
+  white-space: nowrap;
+  margin-top: 1px;
+}
+
+/* ── Collapsed: exibe só o ícone da logo (object-position corta o texto) ── */
 .sidebar.collapsed .sidebar-logo {
-  padding: 0 0 var(--space-5);
+  padding: 4px 0 14px;
   display: flex;
   justify-content: center;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid rgba(255,255,255,0.07);
 }
-.sidebar.collapsed .sidebar-logo .logo-img-wrap {
-  justify-content: center;
+.sidebar.collapsed .brand-container {
+  padding: 8px;
   gap: 0;
+  justify-content: center;
+  border-radius: 10px;
 }
-/* Na sidebar collapsed a logo horizontal fica só com o ícone (overflow hidden no wrap) */
+.sidebar.collapsed .brand-text-wrap { display: none; }
 .sidebar.collapsed .sidebar-logo-img {
-  max-width: 36px;
   height: 36px;
-  object-fit: none;
-  object-position: left center;
+  max-width: 36px;
+  object-position: left center; /* mostra só o cubo da logo */
 }
-/* Texto antigo (logo-text, logo-sub) — mantidos ocultos quando não usados */
+
+/* Legacy (preserva compatibilidade caso algum template ainda use) */
 .sidebar-logo .logo-text {
   font-size: 1rem;
   font-weight: 800;
@@ -431,6 +495,7 @@ textarea.input { resize: vertical; min-height: 80px; }
   text-transform: uppercase;
   margin-top: 2px;
 }
+
 
 .sidebar-nav {
   flex: 1;

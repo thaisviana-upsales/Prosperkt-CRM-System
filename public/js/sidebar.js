@@ -73,14 +73,19 @@ const Sidebar = (() => {
         </button>
 
         <div class="sidebar-logo">
-          <div class="logo-img-wrap" style="display:flex;align-items:center;">
-            <!-- Logo original PROSPEKT PERSONALIZADOS — fundo transparente, neon verde/magenta -->
+          <!-- Container premium da marca — logo + tipografia executiva -->
+          <div class="brand-container">
+            <!-- Ícone cubo da logo (parte esquerda da PNG — object-position corta o texto) -->
             <img
               src="/img/logo_prospekt.png"
-              alt="PROSPEKT Personalizados"
+              alt="PROSPEKT"
               class="sidebar-logo-img"
-              style="height:40px;width:auto;max-width:190px;object-fit:contain;flex-shrink:0;"
             >
+            <!-- Texto da marca -->
+            <div class="brand-text-wrap">
+              <span class="brand-name">PROSPEKT</span>
+              <span class="brand-sub">CRM Enterprise</span>
+            </div>
           </div>
         </div>
 
