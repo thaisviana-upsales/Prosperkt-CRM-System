@@ -758,6 +758,12 @@ async function abrirLead(id) {
   if (window.Producao) window.Producao.renderTab(id, l);
   // Arquivos — carrega lista de anexos do lead
   if (window.LeadArquivos) window.LeadArquivos.carregar(id);
+  // Conta Azul — renderiza aba (ficha da venda para e-mail)
+  const caObs = document.getElementById('ca-obs');
+  const caAssunto = document.getElementById('ca-assunto');
+  if (caObs) caObs.value = '';
+  if (caAssunto) caAssunto.value = '';
+  if (window.ContaAzul) window.ContaAzul.renderTab(l);
   // Tags na aba Informações — chips com botão remover
   _renderTagsDisplay(l.tags, id);
   const tagWrap = document.getElementById('tag-input-wrap');

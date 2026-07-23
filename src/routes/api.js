@@ -31,6 +31,7 @@ const arquivosCtrl       = require('../controllers/arquivosController');
 const arquivosWaCtrl     = require('../controllers/arquivosWhatsappController');
 const admVendasCtrl      = require('../controllers/admVendasController');
 const importacaoExcelCtrl = require('../controllers/importacaoExcelController');
+const contaAzulCtrl      = require('../controllers/contaAzulController');
 
 // Seed funis iniciais (só roda se vazio)
 funisCtrl.seedFunis();
@@ -411,6 +412,13 @@ router.get('/health', (req, res) => {
     status: 'online',
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONTA AZUL
+// ─────────────────────────────────────────────────────────────────────────────
+router.get ('/conta-azul/destinatarios',        autenticar, contaAzulCtrl.listarDestinatarios);
+router.get ('/conta-azul/historico/:leadId',     autenticar, contaAzulCtrl.historico);
+router.post('/conta-azul/enviar/:leadId',        autenticar, contaAzulCtrl.enviar);
 
 
 module.exports = router;
