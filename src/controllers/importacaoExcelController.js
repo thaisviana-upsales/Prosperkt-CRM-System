@@ -47,27 +47,56 @@ const UFS_VALIDAS = [
   'PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'
 ];
 
-// ── Helper: normaliza telefone ───────────────────────────────────────────────
+// ── Helper: normaliza telefone ────────────────────────────────────────────────────
 function normalizarTelefone(tel) {
   if (!tel) return '';
   return String(tel).replace(/\D/g, '');
 }
 
-// ── Helper: normaliza data ───────────────────────────────────────────────────
+// ── Helper: remove acentos e normaliza para comparação fuzzy ───────────────────────
+// Exemplo: "Indicação" === semAcento("Indicacao") => true
+function semAcento(str) {
+  return String(str || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+// ── Helper: normaliza data ─────────────────────────────────────────────────────────
+// Aceita: Date JS (cellDates:true), número serial Excel, dd/mm/aaaa, aaaa-mm-dd
 function normalizarData(val) {
-  if (!val) return null;
-  if (typeof val === 'number') {
-    // Excel date serial
-    const d = XLSX.SSF.parse_date_code(val);
-    if (d) return new Date(d.y, d.m - 1, d.d).toISOString().slice(0, 10);
+  if (!val && val !== 0) return null;
+
+  // 1. Objeto Date (retornado pelo xlsx com cellDates:true)
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return null;
+    return val.toISOString().slice(0, 10);
   }
+
+  // 2. Número serial do Excel (fallback sem cellDates)
+  if (typeof val === 'number') {
+    try {
+      const d = XLSX.SSF.parse_date_code(val);
+      if (d && d.y > 1900) return new Date(Date.UTC(d.y, d.m - 1, d.d)).toISOString().slice(0, 10);
+    } catch (_) {}
+    return null;
+  }
+
   const s = String(val).trim();
-  // dd/mm/yyyy ou yyyy-mm-dd
+  // 3. dd/mm/aaaa
   if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
     const [d, m, y] = s.split('/');
-    return `${y}-${m}-${d}`;
+    const dt = new Date(Date.UTC(+y, +m - 1, +d));
+    if (isNaN(dt.getTime())) return null;
+    return dt.toISOString().slice(0, 10);
   }
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  // 4. aaaa-mm-dd
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    const dt = new Date(s);
+    if (isNaN(dt.getTime())) return null;
+    return s.slice(0, 10);
+  }
   return null;
 }
 
@@ -139,8 +168,8 @@ async function validar(req, res) {
   const agora       = new Date().toISOString();
 
   try {
-    // Parse do Excel
-    const wb    = XLSX.read(arquivo.buffer, { type: 'buffer' });
+    // Parse do Excel com cellDates:true para receber datas como objetos Date
+    const wb    = XLSX.read(arquivo.buffer, { type: 'buffer', cellDates: true });
     const ws    = wb.Sheets[wb.SheetNames[0]];
     const rows  = XLSX.utils.sheet_to_json(ws, { defval: '' });
 
@@ -176,16 +205,28 @@ async function validar(req, res) {
       });
     }
 
-    // Mapas de busca rápida
-    const funilMap   = Object.fromEntries(funisList.map(f => [f.nome.toLowerCase().trim(), f]));
-    const etapasByFunil = {}; // funilId → [etapa]
+    // Mapas de busca rápida (com normalização de acentos)
+    // funilMap: sem acento -> objeto funil
+    const funilMap   = {};
+    funisList.forEach(f => { funilMap[semAcento(f.nome)] = f; });
+
+    // etapasByFunil: funilId -> [etapa]
+    const etapasByFunil = {};
     etapasList.forEach(e => {
       if (e.funil_id) {
         if (!etapasByFunil[e.funil_id]) etapasByFunil[e.funil_id] = [];
         etapasByFunil[e.funil_id].push(e);
       }
     });
-    const usuarioByEmail = Object.fromEntries(usuariosList.map(u => [u.email.toLowerCase().trim(), u]));
+
+    // usuarioByEmail: email normalizado -> usuario
+    const usuarioByEmail = {};
+    // usuarioByNome: nome sem acento -> usuario (para quando preenchem nome no lugar do email)
+    const usuarioByNome  = {};
+    usuariosList.forEach(u => {
+      usuarioByEmail[u.email.toLowerCase().trim()] = u;
+      usuarioByNome[semAcento(u.nome)] = u;
+    });
 
     // ── Valida cada linha ─────────────────────────────────────────────────────
     const linhas = rows.map((row, idx) => {
@@ -223,17 +264,17 @@ async function validar(req, res) {
       if (!vendLogin)  erros.push(`Linha ${numero}: vendedor_usuario é obrigatório.`);
       if (!dataEntrada)erros.push(`Linha ${numero}: data_entrada é obrigatória.`);
 
-      // ── Funil válido ──────────────────────────────────────────────────────
+      // ── Funil válido (sem acento) ──────────────────────────────────────────────
       let funilObj = null, etapaObj = null, vendedorObj = null;
       if (funilNm) {
-        funilObj = funilMap[funilNm.toLowerCase()];
+        funilObj = funilMap[semAcento(funilNm)];
         if (!funilObj) erros.push(`Linha ${numero}: Funil "${funilNm}" não encontrado ou inativo.`);
       }
 
-      // ── Etapa válida no funil ────────────────────────────────────────────
+      // ── Etapa válida no funil (sem acento) ──────────────────────────────────────
       if (funilObj && etapaNm) {
         const etapasDoFunil = etapasByFunil[funilObj.id] || [];
-        etapaObj = etapasDoFunil.find(e => e.nome.toLowerCase() === etapaNm.toLowerCase());
+        etapaObj = etapasDoFunil.find(e => semAcento(e.nome) === semAcento(etapaNm));
         if (!etapaObj) {
           erros.push(`Linha ${numero}: Etapa "${etapaNm}" não pertence ao funil "${funilNm}" ou está oculta.`);
         }
@@ -241,10 +282,10 @@ async function validar(req, res) {
         erros.push(`Linha ${numero}: Etapa não pôde ser validada pois o funil é inválido.`);
       }
 
-      // ── Vendedor ativo ───────────────────────────────────────────────────
+      // ── Vendedor ativo (por email OU nome, sem acento) ─────────────────────────────
       if (vendLogin) {
-        // Busca por email (login) ou por nome de usuário
-        vendedorObj = usuarioByEmail[vendLogin];
+        // Tenta por email primeiro, depois por nome normalizado
+        vendedorObj = usuarioByEmail[vendLogin] || usuarioByNome[semAcento(vendLogin)];
         if (!vendedorObj) erros.push(`Linha ${numero}: Vendedor "${vendLogin}" não encontrado ou inativo no CRM.`);
       }
 
