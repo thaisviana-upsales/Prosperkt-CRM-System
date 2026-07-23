@@ -958,22 +958,46 @@ async function mover(req, res) {
         if (!vv || Number(vv) <= 0)                  faltando.push('Valor da Venda');
         const fp = req.body.forma_pagamento ?? lead.forma_pagamento;
         if (!fp)                                     faltando.push('Forma de Pagamento');
-        // Verifica produtos: tenta lead_produtos (multi-produto), fallback para campo legado
-        let temProduto = false;
+
+        // ── Verifica produto oficial ativo (validarProdutosObrigatoriosParaGanho) ────
+        // Exige: pelo menos 1 lead_produto com produto_id vinculado a produto ativo
+        let temProdutoOficial = false;
         try {
+          // Busca itens de lead_produtos com produto_id não-nulo
           const { data: itensProd } = await sb.from('lead_produtos')
-            .select('id').eq('lead_id', id).is('deleted_at', null).limit(1);
-          temProduto = (itensProd?.length ?? 0) > 0;
-        } catch { /* tabela pode não existir ainda */ }
-        if (!temProduto) {
-          const pid = req.body.produto_id ?? lead.produto_id;
-          const pnm = req.body.produto_nome ?? lead.produto_nome;
-          temProduto = !!(pid || pnm);
+            .select('id, produto_id, produto_nome')
+            .eq('lead_id', id)
+            .is('deleted_at', null)
+            .not('produto_id', 'is', null);
+
+          if (itensProd && itensProd.length > 0) {
+            // Verifica se pelo menos 1 produto_id existe e está ativo no catálogo
+            const ids = itensProd.map(p => p.produto_id).filter(Boolean);
+            if (ids.length > 0) {
+              const { data: prodsAtivos } = await sb.from('produtos')
+                .select('id, ativo')
+                .in('id', ids);
+              // Filtra ativos (aceita boolean ou integer)
+              temProdutoOficial = (prodsAtivos || []).some(
+                p => p.ativo === true || p.ativo === 1 || p.ativo === '1'
+              );
+            }
+          }
+        } catch (errProd) {
+          console.warn('[validar_ganho] Erro ao checar lead_produtos:', errProd.message);
         }
-        if (!temProduto) faltando.push('Produto Adquirido');
-        // Previão de próxima compra
+
+        if (!temProdutoOficial) {
+          return res.status(400).json({
+            sucesso: false,
+            erro: 'Para concluir a venda, selecione pelo menos um produto válido da lista oficial. Acesse a aba Venda e adicione um produto.',
+            campos_faltando: ['Produto Oficial Ativo'],
+          });
+        }
+
+        // Previsão de próxima compra
         const previsao = req.body.previsao_proxima_compra ?? lead.previsao_proxima_compra;
-        if (!previsao) faltando.push('Previão de Próxima Compra');
+        if (!previsao) faltando.push('Previsão de Próxima Compra');
         // Endereço completo de entrega — todos os campos obrigatórios
         const _e = (f) => (req.body[f] ?? lead[f] ?? '').toString().trim();
         if (!_e('cep_entrega') || _e('cep_entrega').replace(/\D/g,'').length < 8) faltando.push('CEP de Entrega');
@@ -991,6 +1015,7 @@ async function mover(req, res) {
             campos_faltando: faltando,
           });
       }
+
 
       const novoStatus = isGanho ? 'ganho' : isPerdido ? 'perdido' : 'ativo';
       const agora = new Date().toISOString();

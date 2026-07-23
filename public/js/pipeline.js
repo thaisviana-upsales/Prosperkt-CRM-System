@@ -1044,7 +1044,7 @@ async function salvarLead() {
     if (!fp)      faltando.push('Forma de Pagamento');
     if (prodAtivos.length === 0) {
       alertEl.className='alert alert-error';
-      alertEl.textContent='Para concluir a venda, selecione ao menos um produto vendido.';
+      alertEl.textContent='Para concluir a venda, selecione ao menos um produto da lista oficial.';
       alertEl.style.display='';
       abrirSecaoComercial();
       showTab('venda');
@@ -1056,6 +1056,18 @@ async function salvarLead() {
         btnAddProd.scrollIntoView({ behavior: 'smooth', block: 'center' });
         setTimeout(() => { btnAddProd.style.outline = ''; btnAddProd.style.boxShadow = ''; }, 4000);
       }
+      return;
+    }
+    // Exige que pelo menos 1 produto seja da lista oficial (produto_id preenchido)
+    const prodOficial = prodAtivos.find(p => p.produto_id && p.produto_id !== '');
+    if (!prodOficial) {
+      alertEl.className='alert alert-error';
+      alertEl.textContent='Para concluir a venda, selecione ao menos um produto da lista oficial (busque pelo nome e clique na opção da lista).';
+      alertEl.style.display='';
+      abrirSecaoComercial();
+      showTab('venda');
+      const btnAddProd = document.getElementById('btn-add-linha-produto');
+      if (btnAddProd) btnAddProd.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
     const prodIncompleto = prodAtivos.find(p => !p.produto_nome || !(p.quantidade > 0) || !(p.valor_unitario >= 0));
@@ -1455,13 +1467,30 @@ function renderProdutosLead() {
     inputProd.addEventListener('change', async e => {
       const pidx     = +e.target.dataset.idx;
       const nomeDigitado = e.target.value.trim();
-      // Tenta encontrar produto exato no catálogo
+      // Tenta encontrar produto EXATO no catálogo oficial
       const opt = [...dl.querySelectorAll('option')].find(
         o => o.value.trim().toLowerCase() === nomeDigitado.toLowerCase()
       );
       _leadProdutos[pidx].produto_nome = nomeDigitado;
       _leadProdutos[pidx].produto_id   = opt ? opt.dataset.id  : '';
       _leadProdutos[pidx].produto_cor  = opt ? opt.dataset.cor : '#6CFF4E';
+
+      // Feedback visual: produto não encontrado no catálogo oficial
+      const aviso = row.querySelector('.lp-aviso-nao-oficial');
+      if (!opt && nomeDigitado) {
+        if (!aviso) {
+          const span = document.createElement('span');
+          span.className = 'lp-aviso-nao-oficial';
+          span.style.cssText = 'grid-column:1/-1;font-size:.68rem;color:#F5A623;padding:2px 2px 0';
+          span.textContent = '⚠ Produto não encontrado na lista oficial. Selecione um produto do catálogo.';
+          row.appendChild(span);
+        }
+        e.target.style.borderColor = '#F5A623';
+      } else {
+        if (aviso) aviso.remove();
+        e.target.style.borderColor = '';
+      }
+
       await salvarLinhaProduto(pidx);
       recalcularTotalVenda();
     });

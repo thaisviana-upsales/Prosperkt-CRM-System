@@ -29,19 +29,22 @@ async function listar(req, res) {
   const { sb, isSupa, sqlite } = getProvider();
   try {
     if (isSupa) {
-      // Tenta com campos extras; fallback sem eles se coluna não existir ainda
+      // IMPORTANTE: busca todos e filtra no Node
+      // Resolve casos onde ativo é boolean true/false OU integer 1/0 no Supabase
       let { data, error } = await sb.from('produtos')
         .select('id, nome, categoria, descricao, cor, ordem, ativo, criado_em, atualizado_em')
-        .eq('ativo', true)
         .order('ordem', { ascending: true, nullsFirst: false })
         .order('nome', { ascending: true });
       if (error) {
         // Fallback sem colunas extras (patch v10 não rodou ainda)
-        const r2 = await sb.from('produtos').select('*').eq('ativo', true).order('nome');
+        const r2 = await sb.from('produtos').select('*').order('nome');
         if (r2.error) throw r2.error;
         data = r2.data;
       }
-      return res.json({ sucesso: true, dados: data || [] });
+      // Filtra ativos no Node — aceita boolean true OU integer 1
+      const ativos = (data || []).filter(p => p.ativo === true || p.ativo === 1 || p.ativo === '1');
+      console.log(`[produtos.listar] total: ${(data||[]).length} | ativos: ${ativos.length}`);
+      return res.json({ sucesso: true, dados: ativos });
     }
     // SQLite fallback
     ensureTable(sqlite);
