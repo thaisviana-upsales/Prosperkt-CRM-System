@@ -127,7 +127,6 @@ function phoneVariants(tel) {
 async function registrarAlias(sb, { conversaId, tel, rawJid, lidNumero, nome }) {
   if (!conversaId) return;
   try {
-    const agora = new Date().toISOString();
     const remotejid = rawJid && rawJid.includes('@') ? rawJid : null;
     const lid = lidNumero || null;
 
@@ -139,7 +138,7 @@ async function registrarAlias(sb, { conversaId, tel, rawJid, lidNumero, nome }) 
         // Já existe — atualiza se a conversa mudou
         if (existing[0].conversa_id !== conversaId) {
           await sb.from('whatsapp_conversa_aliases')
-            .update({ conversa_id: conversaId, telefone_normalizado: tel || null, lid, push_name: nome || null, atualizado_em: agora })
+            .update({ conversa_id: conversaId, telefone_normalizado: tel || null, lid, push_name: nome || null })
             .eq('id', existing[0].id);
           console.log('WHATSAPP_RESOLVE_ALIAS_UPDATED', { conversaId, remotejid, lid });
         }
@@ -147,23 +146,32 @@ async function registrarAlias(sb, { conversaId, tel, rawJid, lidNumero, nome }) 
       }
     }
 
-    // Insere novo alias
+    // Também verifica por telefone (sem remoteJid)
+    if (!remotejid && tel) {
+      const { data: existingTel } = await sb.from('whatsapp_conversa_aliases')
+        .select('id,conversa_id').eq('telefone_normalizado', tel).eq('conversa_id', conversaId).limit(1);
+      if (existingTel?.[0]) return; // já existe para esta conversa+telefone
+    }
+
+    // Insere novo alias — deixa criado_em/atualizado_em com DEFAULT do banco (timestamp)
     const { error } = await sb.from('whatsapp_conversa_aliases').insert({
-      conversa_id: conversaId,
-      telefone_normalizado: tel || null,
-      remote_jid: remotejid,
-      lid: lid,
-      push_name: nome || null,
-      criado_em: agora,
-      atualizado_em: agora,
+      conversa_id:          conversaId,
+      telefone_normalizado: tel    || null,
+      remote_jid:           remotejid,
+      lid:                  lid,
+      push_name:            nome   || null,
+      // NÃO envia criado_em/atualizado_em: o banco usa DEFAULT now() (tipo timestamp correto)
     });
     if (!error) {
-      console.log('WHATSAPP_RESOLVE_ALIAS_FOUND', { conversaId, remotejid, lid, tel });
+      console.log('WHATSAPP_ALIAS_REGISTERED', { conversaId, remotejid, lid, tel });
+    } else {
+      console.warn('WHATSAPP_ALIAS_INSERT_WARN:', error.message);
     }
   } catch (e) {
     console.warn('WHATSAPP_ALIAS_REGISTER_WARN (não crítico):', e.message);
   }
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // resolverConversaWhatsapp — FUNÇÃO CENTRAL DE RESOLUÇÃO
