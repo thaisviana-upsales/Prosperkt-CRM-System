@@ -778,31 +778,43 @@ async function enviarMensagem(req, res) {
       const msg = { ...nova, vendedor_nome: req.usuario.nome };
       console.log('SUPA_INSERT_OK', { msgId, status: msg.status, evoMsgId });
 
-      // ── Solução 3: Armazena mapeamento LID → telefone ───────────────────────
-      // A Evolution v1.8.6 com Multi-Device retorna @lid no key.remoteJid.
-      // Salvamos em dados_extras para que o webhook resolva respostas futuras.
+      // ── Fix CRÍTICO: registra alias após envio ────────────────────────────
+      // Garante que quando o cliente responder, o Passo 0 do resolver
+      // encontre a mesma conversa via whatsapp_conversa_aliases.
       const _evoRemoteJid = evoRes?.dados?.key?.remoteJid || '';
-      if (evoOk && _evoRemoteJid.endsWith('@lid')) {
-        const _lid = _evoRemoteJid.split('@')[0];
-        console.log('LID_DETECTADO_NO_ENVIO:', { lid: _lid, conversaId: id, telefone: telNormalizado });
+      const _lidEnvio = _evoRemoteJid.endsWith('@lid') ? _evoRemoteJid.split('@')[0] : null;
+      // Registra alias: telefone real + JID usado na resposta da Evolution
+      registrarAlias(sb, {
+        conversaId: id,
+        tel:        telNormalizado,
+        rawJid:     _evoRemoteJid || `${telNormalizado}@s.whatsapp.net`,
+        lidNumero:  _lidEnvio,
+        nome:       null,
+      }).catch(e => console.warn('WHATSAPP_ALIAS_REGISTER_SEND_WARN:', e.message));
+
+      // Também mantém LID em dados_extras para compatibilidade com código anterior
+      if (_lidEnvio) {
+        console.log('LID_DETECTADO_NO_ENVIO:', { lid: _lidEnvio, conversaId: id, telefone: telNormalizado });
         sb.from('conversas_whatsapp').select('dados_extras').eq('id', id).single()
           .then(({ data: _cv }) => {
             const _ex = (() => { try { return JSON.parse(_cv?.dados_extras || '{}'); } catch { return {}; } })();
-            if (!_ex.lid || _ex.lid !== _lid) {
-              _ex.lid = _lid;
+            if (!_ex.lid || _ex.lid !== _lidEnvio) {
+              _ex.lid = _lidEnvio;
               _ex.lid_telefone = telNormalizado;
               return sb.from('conversas_whatsapp')
                 .update({ dados_extras: JSON.stringify(_ex), atualizado_em: new Date().toISOString() })
                 .eq('id', id)
-                .then(() => console.log('LID_MAPEADO_SUCESSO (Supabase):', { lid: _lid, conversaId: id }));
+                .then(() => console.log('LID_MAPEADO_SUCESSO (Supabase):', { lid: _lidEnvio, conversaId: id }));
             }
           })
           .catch(e => console.warn('LID_MAPEAMENTO_WARN (nao critico):', e.message));
       }
 
       req.log({ acao: 'WHATSAPP_SEND', entidade: 'conversas_whatsapp', entidade_id: id, depois: { mensagem: mensagem?.slice(0, 100), tipo, evo_ok: evoOk, evoMsgId } });
+      console.log('WHATSAPP_SEND_SUCCESS', { conversaId: id, tel: telNormalizado, msgId, lidEnvio: _lidEnvio || 'nenhum' });
       return res.status(201).json({ sucesso: true, dados: msg });
     }
+
 
 
     // SQLite path
@@ -2211,6 +2223,20 @@ async function webhookReceberMensagem(req, res) {
 
     if (msgSalva) {
       console.log('MENSAGEM_SALVA_COM_SUCESSO:', resultado);
+      console.log('WHATSAPP_MESSAGE_SAVED_IN_CONVERSA', { mensagemId: msgId, conversaId, direcao, tel: telFinal });
+
+      // ── Fix CRÍTICO: registra alias após receber mensagem ─────────────────
+      // Popula whatsapp_conversa_aliases para que próximas mensagens deste
+      // cliente sejam resolvidas na mesma conversa (Passo 0 do resolver).
+      if (isSupa && conversaId) {
+        registrarAlias(sb, {
+          conversaId,
+          tel:       telFinal,
+          rawJid:    rawJid || null,
+          lidNumero: lidNumero || null,
+          nome:      !fromMe ? nome : null,
+        }).catch(e => console.warn('WHATSAPP_ALIAS_REGISTER_RECV_WARN:', e.message));
+      }
 
       // ── 9. Se há mídia recebida: registra metadados em lead_arquivos ───────
       // Só para mensagens RECEBIDAS (fromMe=false) que tenham URL de mídia

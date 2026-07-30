@@ -163,6 +163,8 @@ async function resumo(req, res) {
         const idsParaExcluir = funisInativosIds.filter(id => id !== carteiraFunilId);
         if (idsParaExcluir.length) q = q.not('funil_id', 'in', `(${idsParaExcluir.join(',')})`);
       }
+      // Fix #3: exclui clones de Carteira Recorrente da contagem de leads recebidos
+      q = q.is('tipo_clone', null);
       if (responsavel_id)     q = q.eq('responsavel_id', responsavel_id);
       if (req.usuario.role === 'VENDEDOR') q = q.eq('responsavel_id', req.usuario.id);
 
@@ -178,35 +180,30 @@ async function resumo(req, res) {
       if (error) throw error;
 
       // ── 3. KPIs ──────────────────────────────────────────────────────────────
+      // Fix #4: perdidos filtrados por data separadamente
+      let perdidos = leads.filter(l => isPerdidoLead(l, etapaMap));
+      if (periodo?.ini || periodo?.fim) {
+        if (data_tipo === 'perdido' || data_tipo === 'perda') {
+          const ini = periodo.ini ? new Date(periodo.ini + 'T00:00:00').getTime() : null;
+          const fim = periodo.fim ? new Date(periodo.fim + 'T23:59:59').getTime() : null;
+          perdidos = perdidos.filter(l => {
+            if (!l.perdido_em) return false;
+            const t = new Date(l.perdido_em).getTime();
+            if (ini && t < ini) return false;
+            if (fim && t > fim) return false;
+            return true;
+          });
+        }
+      }
       const ganhos   = leads.filter(l => isGanhoLead(l, etapaMap));
-      const perdidos = leads.filter(l => isPerdidoLead(l, etapaMap));
       const abertos  = leads.filter(l => !isGanhoLead(l, etapaMap) && !isPerdidoLead(l, etapaMap));
 
+      // Fix #1: NO modo Todos-Novos, Carteira Recorrente NÃO é somada ao faturamento.
       let faturamento  = ganhos.reduce((s,l) => s + valorVenda(l), 0);
       let totalGanhos  = ganhos.length;
 
-      // ── Regra de negócio: no modo "Todos - Novos", soma vendas+faturamento
-      // da Carteira Recorrente (mas não inclui leads/funil/conversão da Carteira)
-      if (excluiCarteira && carteiraFunilId) {
-        let qCart = sb.from('leads')
-          .select('id,status,valor,valor_venda,etapa_id,ganho_em')
-          .eq('funil_id', carteiraFunilId);
-        if (responsavel_id) qCart = qCart.eq('responsavel_id', responsavel_id);
-        if (req.usuario.role === 'VENDEDOR') qCart = qCart.eq('responsavel_id', req.usuario.id);
-        if (periodo?.ini || periodo?.fim) {
-          const campo = campoData(data_tipo);
-          if (periodo.ini) qCart = qCart.gte(campo, periodo.ini + 'T00:00:00');
-          if (periodo.fim) qCart = qCart.lte(campo, periodo.fim + 'T23:59:59');
-        }
-        const { data: leadsCart } = await qCart;
-        const ganhosCart = (leadsCart || []).filter(l => isGanhoLead(l, etapaMap));
-        if (ganhosCart.length) {
-          const fatCart = ganhosCart.reduce((s,l) => s + valorVenda(l), 0);
-          faturamento += fatCart;
-          totalGanhos += ganhosCart.length;
-          console.log('[DASHBOARD_CARTEIRA_VENDAS] vendas Carteira somadas ao Todos:', ganhosCart.length, '| fat +', fatCart.toFixed(2));
-        }
-      }
+      // Fix #1: Carteira Recorrente excluída da query via neq('funil_id', carteiraFunilId)
+      // NÃO somamos vendas da Carteira no total de Todos-Novos — cada funil conta separado.
 
       const ticket_medio   = totalGanhos ? faturamento / totalGanhos : 0;
       const taxa_conversao = leads.length > 0 ? ((ganhos.length/leads.length)*100).toFixed(1) : '0.0';
@@ -404,7 +401,8 @@ async function resumo(req, res) {
       });
 
       const ranking = Object.values(vendedorMap)
-        .sort((a,b) => b.faturamento - a.faturamento)
+        .filter(r => r.leads > 0 || r.ganhos > 0) // Fix #5: inclui mesmo sem ganhos
+        .sort((a,b) => b.faturamento - a.faturamento || b.ganhos - a.ganhos)
         .slice(0, 10)
         .map(r => {
           // Usa total real de leads para conversão
@@ -413,8 +411,13 @@ async function resumo(req, res) {
             ...r,
             nome: usuariosAtivosMap[r.id]?.nome || '—',
             conversao: totalLeads > 0 ? ((r.ganhos/totalLeads)*100).toFixed(1) : '0.0',
+            ticket_medio: r.ganhos > 0 ? (r.faturamento / r.ganhos).toFixed(2) : '0.00',
           };
         });
+
+      console.log('[DASHBOARD_RANKING]', ranking.length, 'vendedores |',
+        ranking.map(r => `${r.nome}: ${r.ganhos}v R$${r.faturamento.toFixed(0)}`).join(', ') || '(vazio)');
+
 
       // ── 6. Por funil ─────────────────────────────────────────────────────────
       const porFunilMap = {};

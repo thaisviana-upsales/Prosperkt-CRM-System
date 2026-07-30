@@ -163,20 +163,21 @@ function renderListaConversas() {
     const isEnviada = c.ultima_direcao === 'enviada';
     const hora      = c.ultima_msg_em ? fmtHora(c.ultima_msg_em) : '';
     const isAtiva   = _convAtiva?.id === c.id;
-    const unread    = c.nao_lidas > 0 ? `<div class="wa-unread-badge">${c.nao_lidas}</div>` : '';
+    const unread    = (c.nao_lidas > 0) ? `<div class="wa-unread-badge">${c.nao_lidas}</div>` : '';
+    const temNaoLidas = c.nao_lidas > 0 && !isAtiva;
 
     return `
-    <div class="wa-conv-item${isAtiva ? ' active' : ''}" data-id="${c.id}" id="conv-item-${c.id}">
+    <div class="wa-conv-item${isAtiva ? ' active' : ''}${temNaoLidas ? ' tem-nao-lidas' : ''}" data-id="${c.id}" id="conv-item-${c.id}">
       <div class="wa-conv-avatar" style="${c.status === 'ABERTA' ? '' : 'opacity:.6'}">
         ${initials}
         ${c.status === 'ABERTA' ? '<div class="wa-conv-status-dot"></div>' : ''}
       </div>
       <div class="wa-conv-info">
-        <div class="wa-conv-name">${escHtml(nome)}</div>
+        <div class="wa-conv-name" style="${temNaoLidas ? 'font-weight:800;color:var(--text-primary)' : ''}">${escHtml(nome)}</div>
         <div class="wa-conv-preview${isEnviada ? ' enviada' : ''}">${preview}</div>
       </div>
       <div class="wa-conv-meta">
-        <div class="wa-conv-time">${hora}</div>
+        <div class="wa-conv-time" style="${temNaoLidas ? 'color:var(--green);font-weight:700' : ''}">${hora}</div>
         ${unread}
       </div>
     </div>`;
@@ -509,8 +510,18 @@ async function carregarMensagens(convId, silencioso = false) {
   }
   _mensagens = r.data.dados || [];
   console.log('WHATSAPP_MESSAGES_LOADED', _mensagens.length, 'msgs | convId:', convId);
+
+  // Zera nao_lidas localmente — backend já foi avisado pelo endpoint que retorna mensagens
+  _conversas = _conversas.map(c =>
+    c.id === convId ? { ...c, nao_lidas: 0 } : c
+  );
+  renderListaConversas();
+  // Re-destaca a conversa ativa após re-render
+  document.getElementById('conv-item-' + convId)?.classList.add('active');
+
   renderMensagens();
 }
+
 
 // ─── Poll silencioso de mensagens novas ─────────────────────────────────────
 // Chamado pelo setInterval — só re-renderiza se houver mensagens novas,
@@ -526,8 +537,6 @@ async function pollMensagens(convId) {
     if (novas.length !== qtdAntes || idAnterior !== idNovo) {
       _mensagens = novas;
       renderMensagens(); // scrollToBottom interno
-      // Indicador visual discreto de nova mensagem
-      const novaRecebida = novas.find(m => m.direcao !== 'enviada' && !_mensagens.find(old => old.id === m.id));
       console.log('CONVERSA_MESSAGES_HAS_RECEIVED', novas.filter(m => m.direcao === 'recebida').length);
     }
     console.log('CONVERSA_MESSAGES_LOAD_COUNT', novas.length);

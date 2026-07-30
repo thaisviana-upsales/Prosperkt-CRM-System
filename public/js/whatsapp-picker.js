@@ -281,18 +281,49 @@ function renderItem(m){
 }
 
 // ── Inserção (lógica original preservada) ─────────────────────────────────────
-function usarMensagem(id,texto){
-  const ta=document.getElementById('msg-input');
-  if(!ta){Toast.show('Campo de mensagem não encontrado.','error');return;}
-  ta.value=texto;
-  ta.dispatchEvent(new Event('input',{bubbles:true}));
-  ta.style.height='auto';
-  ta.style.height=Math.min(ta.scrollHeight,100)+'px';
+function usarMensagem(id, texto) {
+  const ta = document.getElementById('msg-input');
+  if (!ta) { Toast.show('Campo de mensagem não encontrado.', 'error'); return; }
+
+  console.log('SCRIPT_SELECTED', { id, textoSlice: texto?.slice(0, 80) });
+
+  // Substitui variáveis — fallback limpa placeholders não resolvidos
+  const textoComVars = substituirVars(texto);
+
+  // Limpa placeholders que ficaram sem valor (ex: [Nome], [Empresa])
+  // para não enviar payload quebrado para a Evolution
+  const textoFinal = textoComVars
+    .replace(/\[Nome\]/gi, '')
+    .replace(/\[Empresa\]/gi, '')
+    .replace(/\[Vendedor\]/gi, '')
+    .replace(/\[Produto\]/gi, '')
+    .replace(/\[Último Pedido\]/gi, '')
+    .replace(/\[nome_lead\]/gi, '')
+    .replace(/\[nome_vendedor\]/gi, '')
+    .replace(/\[nome_empresa\]/gi, '')
+    .replace(/\[telefone_lead\]/gi, '')
+    .replace(/\[funil\]/gi, '')
+    .replace(/\[etapa\]/gi, '')
+    .trim();
+
+  console.log('SCRIPT_MESSAGE_RENDERED', { id, textoFinalSlice: textoFinal.slice(0, 80), temConteudo: textoFinal.length > 0 });
+
+  if (!textoFinal) {
+    Toast.show('O script ficou vazio após substituir as variáveis. Verifique o conteúdo.', 'error');
+    return;
+  }
+
+  ta.value = textoFinal;
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 100) + 'px';
   fecharPicker();
   ta.focus();
-  setTimeout(()=>{ta.selectionStart=ta.selectionEnd=ta.value.length;},50);
-  Toast.show('Script inserido! Edite e envie quando quiser.','success');
+  setTimeout(() => { ta.selectionStart = ta.selectionEnd = ta.value.length; }, 50);
+  Toast.show('Script inserido! Edite e envie quando quiser.', 'success');
+  console.log('SCRIPT_SEND_USING_MANUAL_FLOW', { mensagemPronta: true });
 }
+
 
 // ── Abrir / Fechar ────────────────────────────────────────────────────────────
 async function abrirPicker(){

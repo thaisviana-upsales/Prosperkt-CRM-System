@@ -995,23 +995,20 @@ async function mover(req, res) {
           });
         }
 
-        // Previsão de próxima compra
-        const previsao = req.body.previsao_proxima_compra ?? lead.previsao_proxima_compra;
-        if (!previsao) faltando.push('Previsão de Próxima Compra');
-        // Endereço completo de entrega — todos os campos obrigatórios
+        // Previsão de próxima compra — opcional (não bloqueia ganho)
+        // Endereço de entrega — campos essenciais; complemento e referência são opcionais
         const _e = (f) => (req.body[f] ?? lead[f] ?? '').toString().trim();
         if (!_e('cep_entrega') || _e('cep_entrega').replace(/\D/g,'').length < 8) faltando.push('CEP de Entrega');
         if (!_e('endereco_entrega'))    faltando.push('Logradouro/Rua');
         if (!_e('numero_entrega'))      faltando.push('Número');
-        if (!_e('complemento_entrega')) faltando.push('Complemento');
-        if (!_e('referencia_entrega'))  faltando.push('Referência');
+        // complemento_entrega e referencia_entrega são opcionais — não bloqueiam
         if (!_e('bairro_entrega'))      faltando.push('Bairro');
         if (!_e('cidade_entrega'))      faltando.push('Cidade');
         if (!_e('uf_entrega'))          faltando.push('UF');
         if (faltando.length > 0)
           return res.status(400).json({
             sucesso: false,
-            erro: 'Para concluir a venda, preencha todos os dados do Endereço de Entrega.',
+            erro: `Para registrar a venda, preencha: ${faltando.join(', ')}.`,
             campos_faltando: faltando,
           });
       }
