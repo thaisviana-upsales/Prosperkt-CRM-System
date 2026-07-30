@@ -1,7 +1,7 @@
 -- ============================================================================
--- PATCH v24: whatsapp_conversa_aliases — garante existência da tabela e índices
+-- PATCH v24 (v2 CORRIGIDA): whatsapp_conversa_aliases — garante tabela e índices
 -- Corrige: conversas duplicadas ao receber resposta do cliente
--- Safe: usa IF NOT EXISTS em tudo — pode rodar múltiplas vezes
+-- Safe: usa IF NOT EXISTS — pode rodar múltiplas vezes
 -- ============================================================================
 
 -- 1. Cria tabela se não existir
@@ -24,13 +24,14 @@ CREATE INDEX IF NOT EXISTS idx_wca_remote_jid   ON whatsapp_conversa_aliases(rem
 CREATE INDEX IF NOT EXISTS idx_wca_lid          ON whatsapp_conversa_aliases(lid);
 CREATE INDEX IF NOT EXISTS idx_wca_lead_id      ON whatsapp_conversa_aliases(lead_id);
 
--- 3. Retroativamente popula aliases para conversas existentes com telefone real
-INSERT INTO whatsapp_conversa_aliases (id, conversa_id, telefone_normalizado, lead_id, criado_em, atualizado_em)
+-- 3. Retroativamente popula aliases para conversas com telefone real
+-- NOTA: não referencia c.lead_id aqui pois o schema pode variar.
+-- O lead_id nos aliases será preenchido automaticamente pelo Node nas próximas mensagens.
+INSERT INTO whatsapp_conversa_aliases (id, conversa_id, telefone_normalizado, criado_em, atualizado_em)
 SELECT
   gen_random_uuid()::text,
   c.id,
   c.telefone,
-  c.lead_id,
   now()::text,
   now()::text
 FROM conversas_whatsapp c
