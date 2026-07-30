@@ -101,10 +101,18 @@ async function call(method, path, body = null) {
 
     if (!res.ok) {
       const msg = data?.message || data?.error || data?.raw || `HTTP ${res.status}`;
+      // Log detalhado para diagnóstico — mostra URL completa e instância usada
+      console.error('[EVO] CALL_ERROR', {
+        method, url, status: res.status,
+        instancia: EVOLUTION_INSTANCE,
+        msg,
+        data: JSON.stringify(data).slice(0, 300),
+      });
       return { sucesso: false, erro: msg, status: res.status, dados: data };
     }
     return { sucesso: true, dados: data, status: res.status };
   } catch (e) {
+    console.error('[EVO] CALL_NETWORK_ERROR', { method, url, erro: e.message });
     return { sucesso: false, erro: `Erro de rede: ${e.message}` };
   }
 }
