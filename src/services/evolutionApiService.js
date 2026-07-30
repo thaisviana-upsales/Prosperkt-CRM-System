@@ -17,10 +17,15 @@ const EVOLUTION_INSTANCE = (process.env.EVOLUTION_INSTANCE || process.env.EVOLUT
 // Log de startup — confirma qual instância está ativa neste servidor
 if (EVOLUTION_INSTANCE) {
   const src = process.env.EVOLUTION_INSTANCE ? 'EVOLUTION_INSTANCE' : 'EVOLUTION_INSTANCE_NAME';
-  console.log(`[EVO] Instância carregada: "${EVOLUTION_INSTANCE}" (fonte: ${src})`);
+  console.log('[EVO] WHATSAPP_SEND_ENV_LOADED ✅');
+  console.log('[EVO] WHATSAPP_SEND_INSTANCE_USED:', EVOLUTION_INSTANCE, `(fonte: ${src})`);
+  console.log('[EVO] WHATSAPP_SEND_API_KEY_PRESENT:', EVOLUTION_KEY ? '✅ configurada' : '❌ AUSENTE');
+  console.log('[EVO] EVOLUTION_API_URL:', EVOLUTION_URL || '❌ não configurada');
 } else {
-  console.error('[EVO] ATENÇÃO: EVOLUTION_INSTANCE e EVOLUTION_INSTANCE_NAME não estão configuradas no ambiente. Defina no Railway/env.');
+  console.error('[EVO] ❌ EVOLUTION_INSTANCE e EVOLUTION_INSTANCE_NAME não configuradas. Defina no Railway.');
+  console.error('[EVO] Exemplo: EVOLUTION_INSTANCE=Prospekt_v3');
 }
+
 
 function obterWebhookUrl() {
   let source = 'ENV_WEBHOOK_URL';
@@ -100,8 +105,16 @@ async function call(method, path, body = null) {
     try { data = JSON.parse(text); } catch { data = { raw: text }; }
 
     if (!res.ok) {
-      const msg = data?.message || data?.error || data?.raw || `HTTP ${res.status}`;
-      // Log detalhado para diagnóstico — mostra URL completa e instância usada
+      const rawMsg = data?.message || data?.error || data?.raw || `HTTP ${res.status}`;
+      // Mensagens de erro específicas por código HTTP
+      let msg = rawMsg;
+      if (res.status === 401 || res.status === 403) {
+        msg = `Evolution API recusou o envio por autenticação. Confira EVOLUTION_API_KEY. (${rawMsg})`;
+      } else if (res.status === 404) {
+        msg = `Instância WhatsApp não encontrada: "${EVOLUTION_INSTANCE}". Verifique EVOLUTION_INSTANCE no Railway. (${rawMsg})`;
+      } else if (res.status === 400) {
+        msg = `Evolution API recusou o payload (Bad Request). Verifique telefone e mensagem. (${rawMsg})`;
+      }
       console.error('[EVO] CALL_ERROR', {
         method, url, status: res.status,
         instancia: EVOLUTION_INSTANCE,
@@ -113,9 +126,10 @@ async function call(method, path, body = null) {
     return { sucesso: true, dados: data, status: res.status };
   } catch (e) {
     console.error('[EVO] CALL_NETWORK_ERROR', { method, url, erro: e.message });
-    return { sucesso: false, erro: `Erro de rede: ${e.message}` };
+    return { sucesso: false, erro: `Erro de rede ao conectar Evolution API: ${e.message}` };
   }
 }
+
 
 // ── Instância ──────────────────────────────────────────────────────────────────
 

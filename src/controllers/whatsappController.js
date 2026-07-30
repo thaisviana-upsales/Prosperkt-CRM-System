@@ -16,9 +16,14 @@ const evoSvc  = require('../services/evolutionApiService');
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-// Número oficial da Prospekt — NUNCA deve virar contato de cliente
-// Atualizado em 2026-07-30: novo número 5511987994910
-const NUMERO_OFICIAL_PROSPEKT = '5511987994910';
+// Número oficial do CRM lido do ambiente — NUNCA deve virar contato de cliente
+// Configure: WHATSAPP_OFFICIAL_NUMBER=5511987994910 no Railway/env
+const NUMERO_OFICIAL_PROSPEKT = (process.env.WHATSAPP_OFFICIAL_NUMBER || '').replace(/\D/g, '');
+if (NUMERO_OFICIAL_PROSPEKT) {
+  console.log('[WA] WHATSAPP_SEND_OFFICIAL_NUMBER_ENV carregado:', NUMERO_OFICIAL_PROSPEKT);
+} else {
+  console.warn('[WA] WHATSAPP_OFFICIAL_NUMBER não configurado — número oficial não será bloqueado como cliente.');
+}
 
 
 function normalizePhoneBR(value) {
@@ -633,6 +638,13 @@ async function enviarMensagem(req, res) {
       const payload  = { number: telNormalizado, textMessage: { text: textoParaCliente } };
 
       // Logs obrigatórios antes do envio
+      console.log('WHATSAPP_SEND_START', { conversaId: id });
+      console.log('WHATSAPP_SEND_INSTANCE_USED', evoSvc.EVOLUTION_INSTANCE);
+      console.log('WHATSAPP_SEND_TO_PHONE_NORMALIZED', telNormalizado);
+      console.log('WHATSAPP_SEND_ENDPOINT', `${process.env.EVOLUTION_API_URL || ''}${endpoint}`);
+      console.log('WHATSAPP_SEND_API_KEY_PRESENT', process.env.EVOLUTION_API_KEY ? '✅ sim' : '❌ AUSENTE');
+      console.log('WHATSAPP_SEND_PAYLOAD_SAFE', JSON.stringify({ number: telNormalizado, textPreview: textoParaCliente?.slice(0, 80) }));
+      // Compat: log antigo preservado
       console.log('CRM_SEND_WHATSAPP_START', {
         conversaId: id,
         leadId: conversa.lead_id || null,
@@ -641,8 +653,6 @@ async function enviarMensagem(req, res) {
         textoDigitado: mensagem?.slice(0, 80),
         textoFinal: textoParaCliente?.slice(0, 80),
       });
-      console.log('EVOLUTION_SEND_ENDPOINT', `${process.env.EVOLUTION_API_URL || ''}${endpoint}`);
-      console.log('EVOLUTION_SEND_PAYLOAD', JSON.stringify(payload, null, 2));
 
       evoRes = await evoSvc.enviarTexto(telNormalizado, textoParaCliente);
 
