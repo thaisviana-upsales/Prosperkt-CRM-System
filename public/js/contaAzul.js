@@ -40,8 +40,8 @@ const ContaAzul = (() => {
     const assuntoEl = document.getElementById('ca-assunto');
     if (assuntoEl && !assuntoEl.value) assuntoEl.value = assuntoAuto;
 
-    // Preview de texto
-    _renderPreview(lead);
+    // Preview de texto (async — busca produtos)
+    _renderPreview(lead).catch(e => console.warn('[ContaAzul] preview:', e));
 
     // Destinatários e histórico em paralelo
     _carregarDestinatarios();
@@ -96,11 +96,27 @@ const ContaAzul = (() => {
   }
 
   // ── Preview de texto da ficha ─────────────────────────────────────────────
-  function _renderPreview(lead) {
+  async function _renderPreview(lead) {
     const el = document.getElementById('ca-preview');
     if (!el) return;
     const fmtMoney = v => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
     const fmtDate  = d => d ? new Date(d).toLocaleDateString('pt-BR') : '—';
+
+    // Busca produtos do lead via API
+    let produtosTexto = '— Nenhum produto registrado —';
+    try {
+      const rProd = await Auth.api('GET', `/leads/${lead.id}/produtos`);
+      const prods = rProd?.data?.dados || rProd?.data || [];
+      if (prods.length > 0) {
+        produtosTexto = prods.map(lp => {
+          const nome = lp.produto_nome || lp.produto?.nome || 'Produto';
+          const qtd  = lp.quantidade || 1;
+          const vUnit = lp.valor_unitario ? ` | Unit: ${fmtMoney(lp.valor_unitario)}` : '';
+          const vTot  = lp.valor_total   ? ` | Total: ${fmtMoney(lp.valor_total)}`   : '';
+          return `• ${nome} (Qtd: ${qtd})${vUnit}${vTot}`;
+        }).join('\n');
+      }
+    } catch(e) { /* produto não crítico — mantém placeholder */ }
 
     el.textContent = [
       '=== DADOS DO CLIENTE ===',
@@ -111,18 +127,28 @@ const ContaAzul = (() => {
       '',
       '=== DADOS DA VENDA ===',
       `Vendedor:      ${lead.responsavel_nome || '—'}`,
+      `Funil:         ${lead.funil_nome || '—'}`,
       `Data fecham.:  ${fmtDate(lead.data_fechamento)}`,
       `Valor total:   ${fmtMoney(lead.valor_venda || lead.valor)}`,
       `Forma pagto:   ${lead.forma_pagamento || '—'}`,
+      `Prev. próx. compra: ${lead.previsao_proxima_compra || '—'}`,
+      '',
+      '=== PRODUTOS ===',
+      produtosTexto,
       '',
       '=== ENDEREÇO DE ENTREGA ===',
       `CEP:           ${lead.cep_entrega || '—'}`,
       `Endereço:      ${[lead.endereco_entrega, lead.numero_entrega].filter(Boolean).join(', ') || '—'}`,
       `Complemento:   ${lead.complemento_entrega || '—'}`,
+      `Referência:    ${lead.referencia_entrega || '—'}`,
       `Bairro:        ${lead.bairro_entrega || '—'}`,
       `Cidade / UF:   ${[lead.cidade_entrega, lead.uf_entrega].filter(Boolean).join(' / ') || '—'}`,
+      '',
+      '=== OBSERVAÇÕES ===',
+      `${lead.observacoes || '—'}`,
     ].join('\n');
   }
+
 
   // ── Carrega destinatários ──────────────────────────────────────────────────
   async function _carregarDestinatarios() {
@@ -200,9 +226,16 @@ const ContaAzul = (() => {
         _atualizarStatusBar('enviado', { conta_azul_enviado_em: new Date().toISOString(), conta_azul_enviado_por: '' });
         _carregarHistorico(leadId);
       } else {
-        const erro = r?.data?.erro || 'Não foi possível enviar a ficha Conta Azul. Verifique os dados e a configuração de e-mail.';
-        if (typeof Toast !== 'undefined') Toast.show(erro, 'error');
-        _atualizarStatusBar('erro', { conta_azul_ultimo_erro: erro });
+        const dados = r?.data || {};
+        // Se houver lista de pendências, exibe de forma legível
+        if (dados.pendencias && dados.pendencias.length > 0) {
+          const lista = dados.pendencias.join(', ');
+          if (typeof Toast !== 'undefined') Toast.show(`Preencha os campos obrigatórios: ${lista}.`, 'error');
+        } else {
+          const erro = dados.erro || 'Não foi possível enviar a ficha Conta Azul. Verifique os dados e a configuração de e-mail.';
+          if (typeof Toast !== 'undefined') Toast.show(erro, 'error');
+        }
+        _atualizarStatusBar('erro', { conta_azul_ultimo_erro: dados.erro || '' });
       }
     } catch (e) {
       if (typeof Toast !== 'undefined') Toast.show('Erro inesperado ao enviar.', 'error');

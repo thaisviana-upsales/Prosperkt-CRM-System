@@ -332,6 +332,18 @@ function renderCard(v, et) {
   // Data de entrada na etapa atual
   const entrou = v.etapa_atualizada_em
     ? new Date(v.etapa_atualizada_em).toLocaleDateString('pt-BR') : '';
+  // Badge Conta Azul
+  const caBadge = (() => {
+    const s = v.conta_azul_status || 'nao_aplicavel';
+    if (s === 'nao_aplicavel') return '';
+    const cfg = {
+      pendente: { icon: '⏳', label: 'CA Pendente', color: '#F5A623', bg: 'rgba(245,166,35,0.12)', border: 'rgba(245,166,35,0.35)' },
+      enviado:  { icon: '✅', label: 'CA Enviado',  color: '#5BDE3E', bg: 'rgba(91,222,62,0.10)',  border: 'rgba(91,222,62,0.3)' },
+      erro:     { icon: '❌', label: 'CA Erro',     color: '#FF3B5C', bg: 'rgba(255,59,92,0.10)',  border: 'rgba(255,59,92,0.3)' },
+    }[s] || null;
+    if (!cfg) return '';
+    return `<div style="margin-top:5px;display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:20px;font-size:.64rem;font-weight:700;letter-spacing:.03em;background:${cfg.bg};border:1px solid ${cfg.border};color:${cfg.color}">${cfg.icon} ${cfg.label}</div>`;
+  })();
   return `<div class="av-card" data-id="${v.id}" style="--card-cor:${et.cor}">
     <style>.av-card[data-id="${v.id}"]::before{background:${et.cor}}</style>
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
@@ -343,6 +355,7 @@ function renderCard(v, et) {
     ${data?`<div class="av-card-data">🗓 Venda: ${data}</div>`:''}
     ${entrou?`<div class="av-card-data" style="color:var(--text-muted)">📍 Entrou aqui: ${entrou}</div>`:''}
     ${resp?`<div class="av-card-data" style="margin-top:2px">👤 ${resp.nome}</div>`:''}
+    ${caBadge}
   </div>`;
 }
 

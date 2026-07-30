@@ -1091,6 +1091,12 @@ async function mover(req, res) {
         if (req.body.produto_nome)               upd.produto_nome      = req.body.produto_nome;
         if (req.body.produto_cor)                upd.produto_cor       = req.body.produto_cor;
         if (previsaoProxima)                     upd.previsao_proxima_compra = previsaoProxima;
+        // ── Conta Azul: muda para 'pendente' automaticamente ao ganhar ────────
+        // Se ainda era 'nao_aplicavel', sinaliza que a ficha está pronta para envio
+        if (!lead.conta_azul_status || lead.conta_azul_status === 'nao_aplicavel') {
+          upd.conta_azul_status = 'pendente';
+          console.log('CONTA_AZUL_STATUS_PENDENTE', { leadId: id, motivo: 'lead_ganho' });
+        }
         // Calcula data_prevista_proxima_compra e alerta 7 dias antes
         if (previsaoProxima && PREVISAO_DIAS[previsaoProxima]) {
           const dppc = new Date();

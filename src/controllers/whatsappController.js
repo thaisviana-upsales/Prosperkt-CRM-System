@@ -16,43 +16,50 @@ const evoSvc  = require('../services/evolutionApiService');
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
+// Número oficial da Prospekt — NUNCA deve virar contato de cliente
+const NUMERO_OFICIAL_PROSPEKT = '5511967668883';
+
 function normalizePhoneBR(value) {
   if (!value) return null;
   let t = String(value).trim();
-  
+
   // Se contiver letras no nome do contato / JID, rejeita
   let username = t.split('@')[0].split(':')[0];
   if (/[a-zA-Z]/.test(username)) {
     return null;
   }
-  
+
   // Remove sufixo do whatsapp
   t = t.split('@')[0].split(':')[0];
-  
+
   // Remove caracteres não numéricos
   t = t.replace(/\D/g, '');
   if (!t) return null;
-  
+
   // Rejeita se for timestamp unix
   const numVal = Number(t);
   if ((t.length === 10 && numVal >= 1000000000 && numVal <= 2200000000) ||
       (t.length === 13 && numVal >= 1000000000000 && numVal <= 2200000000000)) {
     return null;
   }
-  
+
   // Se tiver 10 ou 11 dígitos, adiciona 55 (Brasil)
   if (t.length === 10 || t.length === 11) {
     t = '55' + t;
   }
-  
+
   // Valida: se começar com 55 e tiver 12 ou 13 dígitos
   // Ou se for qualquer outro número internacional válido (entre 10 e 15 dígitos)
   const isValid = /^55\d{10,11}$/.test(t) || /^\d{10,15}$/.test(t);
-  if (isValid) {
-    return t;
+  if (!isValid) return null;
+
+  // REGRA ABSOLUTA: número oficial da Prospekt NUNCA é telefone de cliente
+  if (t === NUMERO_OFICIAL_PROSPEKT) {
+    console.warn('WHATSAPP_NUMERO_PROSPEKT_BLOQUEADO — rejeitando número oficial como contato de cliente:', t);
+    return null;
   }
-  
-  return null;
+
+  return t;
 }
 
 function normalizePhone(tel) {
@@ -107,10 +114,56 @@ function phoneVariants(tel) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// registrarAlias — salva mapeamento remoteJid/LID → conversa na tabela de aliases
+// Chamado após localizar ou criar conversa para garantir deduplicação futura.
+// ─────────────────────────────────────────────────────────────────────────────
+async function registrarAlias(sb, { conversaId, tel, rawJid, lidNumero, nome }) {
+  if (!conversaId) return;
+  try {
+    const agora = new Date().toISOString();
+    const remotejid = rawJid && rawJid.includes('@') ? rawJid : null;
+    const lid = lidNumero || null;
+
+    // Verifica se já existe alias para esse remoteJid
+    if (remotejid) {
+      const { data: existing } = await sb.from('whatsapp_conversa_aliases')
+        .select('id,conversa_id').eq('remote_jid', remotejid).limit(1);
+      if (existing?.[0]) {
+        // Já existe — atualiza se a conversa mudou
+        if (existing[0].conversa_id !== conversaId) {
+          await sb.from('whatsapp_conversa_aliases')
+            .update({ conversa_id: conversaId, telefone_normalizado: tel || null, lid, push_name: nome || null, atualizado_em: agora })
+            .eq('id', existing[0].id);
+          console.log('WHATSAPP_RESOLVE_ALIAS_UPDATED', { conversaId, remotejid, lid });
+        }
+        return;
+      }
+    }
+
+    // Insere novo alias
+    const { error } = await sb.from('whatsapp_conversa_aliases').insert({
+      conversa_id: conversaId,
+      telefone_normalizado: tel || null,
+      remote_jid: remotejid,
+      lid: lid,
+      push_name: nome || null,
+      criado_em: agora,
+      atualizado_em: agora,
+    });
+    if (!error) {
+      console.log('WHATSAPP_RESOLVE_ALIAS_FOUND', { conversaId, remotejid, lid, tel });
+    }
+  } catch (e) {
+    console.warn('WHATSAPP_ALIAS_REGISTER_WARN (não crítico):', e.message);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // resolverConversaWhatsapp — FUNÇÃO CENTRAL DE RESOLUÇÃO
 // Garante que NUNCA se cria conversa duplicada para o mesmo telefone/LID.
 //
 // Ordem de busca:
+//   0. Tabela whatsapp_conversa_aliases (remoteJid ou LID)
 //   1. LID em dados_extras (like + jsonb)
 //   2. lead_id
 //   3. Telefone — exact match todas as variantes
@@ -127,7 +180,53 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
   let conversaId = null;
   let fonte = null;
 
-  console.log('CONVERSA_RESOLVE_START', { tel, lidNumero, leadId, isLidJid, fromMe, nome: nome?.slice(0,30) });
+  console.log('WHATSAPP_RESOLVE_START', { tel, lidNumero, leadId, isLidJid, fromMe, nome: nome?.slice(0,30) });
+  console.log('WHATSAPP_RESOLVE_PHONE_NORMALIZED', { tel });
+  if (rawJid) console.log('WHATSAPP_RESOLVE_REMOTE_JID', { rawJid });
+  if (lidNumero) console.log('WHATSAPP_RESOLVE_LID', { lidNumero });
+
+  // ── Passo 0 (NOVO): Tabela whatsapp_conversa_aliases ────────────────────
+  // Consulta ANTES de qualquer outra busca — é a fonte mais confiável
+  // pois mapeia exatamente o remoteJid/LID para uma conversa conhecida.
+  try {
+    const remotejid = rawJid && rawJid.includes('@') ? rawJid : null;
+    const lidBusca  = lidNumero || null;
+
+    if (remotejid) {
+      const { data: porJid } = await sb.from('whatsapp_conversa_aliases')
+        .select('conversa_id').eq('remote_jid', remotejid).limit(1);
+      if (porJid?.[0]) {
+        conversaId = porJid[0].conversa_id; fonte = 'alias_remote_jid';
+        console.log('WHATSAPP_RESOLVE_ALIAS_FOUND', { conversaId, fonte, remotejid });
+        console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte });
+        console.log('WHATSAPP_DUPLICATE_CONVERSA_PREVENTED', { remotejid, conversaId });
+      }
+    }
+
+    if (!conversaId && lidBusca) {
+      const { data: porLid } = await sb.from('whatsapp_conversa_aliases')
+        .select('conversa_id').eq('lid', lidBusca).limit(1);
+      if (porLid?.[0]) {
+        conversaId = porLid[0].conversa_id; fonte = 'alias_lid';
+        console.log('WHATSAPP_RESOLVE_ALIAS_FOUND', { conversaId, fonte, lidBusca });
+        console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte });
+        console.log('WHATSAPP_DUPLICATE_CONVERSA_PREVENTED', { lidBusca, conversaId });
+      }
+    }
+
+    if (!conversaId && tel) {
+      const { data: porTelAlias } = await sb.from('whatsapp_conversa_aliases')
+        .select('conversa_id').eq('telefone_normalizado', tel).limit(1);
+      if (porTelAlias?.[0]) {
+        conversaId = porTelAlias[0].conversa_id; fonte = 'alias_telefone';
+        console.log('WHATSAPP_RESOLVE_ALIAS_FOUND', { conversaId, fonte, tel });
+        console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte });
+      }
+    }
+  } catch (eAlias) {
+    // Tabela pode não existir ainda — continua com os outros passos
+    console.warn('WHATSAPP_ALIAS_LOOKUP_WARN (tabela pode nao existir):', eAlias.message);
+  }
 
   // ── Passo 1: LID em dados_extras ────────────────────────────────────────
   if (!conversaId && isLidJid && lidNumero) {
@@ -137,17 +236,19 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
       .neq('status', 'FECHADA').order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
     if (byLike?.[0]) {
       conversaId = byLike[0].id; fonte = 'lid_like';
-      console.log('CONVERSA_FOUND_EXISTING', { conversaId, fonte, lidNumero });
+      console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte, lidNumero });
     }
     if (!conversaId) {
-      const { data: byJson } = await sb.from('conversas_whatsapp')
-        .select('id,telefone,lead_id')
-        .filter('dados_extras', 'cs', JSON.stringify({ lid: lidNumero }))
-        .neq('status', 'FECHADA').order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
-      if (byJson?.[0]) {
-        conversaId = byJson[0].id; fonte = 'lid_jsonb';
-        console.log('CONVERSA_FOUND_EXISTING', { conversaId, fonte, lidNumero });
-      }
+      try {
+        const { data: byJson } = await sb.from('conversas_whatsapp')
+          .select('id,telefone,lead_id')
+          .filter('dados_extras', 'cs', JSON.stringify({ lid: lidNumero }))
+          .neq('status', 'FECHADA').order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
+        if (byJson?.[0]) {
+          conversaId = byJson[0].id; fonte = 'lid_jsonb';
+          console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte, lidNumero });
+        }
+      } catch(e) { /* dados_extras pode ser TEXT — ignora erro de filtro jsonb */ }
     }
   }
 
@@ -159,7 +260,7 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
       .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
     if (byLead?.[0]) {
       conversaId = byLead[0].id; fonte = 'lead_id';
-      console.log('CONVERSA_FOUND_EXISTING', { conversaId, fonte, leadId });
+      console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte, leadId });
     }
   }
 
@@ -173,7 +274,7 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
         .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
       if (byTel?.[0]) {
         conversaId = byTel[0].id; fonte = `telefone_eq`;
-        console.log('CONVERSA_FOUND_EXISTING', { conversaId, fonte, variante: v });
+        console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte, variante: v });
         break;
       }
     }
@@ -188,7 +289,7 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
         .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
       if (byIlike?.[0]) {
         conversaId = byIlike[0].id; fonte = `telefone_ilike`;
-        console.log('CONVERSA_FOUND_EXISTING', { conversaId, fonte, variante: v, telSalvo: byIlike[0].telefone });
+        console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte, variante: v, telSalvo: byIlike[0].telefone });
         await sb.from('conversas_whatsapp')
           .update({ telefone: tel, atualizado_em: agora }).eq('id', conversaId);
         break;
@@ -214,11 +315,11 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
               .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
             if (byEvo?.[0]) {
               conversaId = byEvo[0].id; fonte = 'lid_evo_phone';
-              console.log('CONVERSA_FOUND_EXISTING', { conversaId, fonte, lidNumero, telNorm });
-              const ext = (() => { try { return JSON.parse(byEvo[0].dados_extras || '{}'); } catch { return {}; } })();
+              console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte, lidNumero, telNorm });
+              const ext = (() => { try { return typeof byEvo[0].dados_extras === 'object' ? (byEvo[0].dados_extras || {}) : JSON.parse(byEvo[0].dados_extras || '{}'); } catch { return {}; } })();
               if (!ext.lid) {
                 await sb.from('conversas_whatsapp')
-                  .update({ dados_extras: JSON.stringify({ ...ext, lid: lidNumero }), atualizado_em: agora })
+                  .update({ dados_extras: { ...ext, lid: lidNumero }, atualizado_em: agora })
                   .eq('id', conversaId);
               }
               break;
@@ -238,11 +339,11 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
         .neq('status', 'FECHADA').order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(2);
       if (byNome?.length === 1) {
         conversaId = byNome[0].id; fonte = 'lid_nome_contato';
-        console.log('CONVERSA_FOUND_EXISTING', { conversaId, fonte, nome, primeiroNome });
-        const ext = (() => { try { return JSON.parse(byNome[0].dados_extras || '{}'); } catch { return {}; } })();
+        console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte, nome, primeiroNome });
+        const ext = (() => { try { return typeof byNome[0].dados_extras === 'object' ? (byNome[0].dados_extras || {}) : JSON.parse(byNome[0].dados_extras || '{}'); } catch { return {}; } })();
         if (!ext.lid) {
           await sb.from('conversas_whatsapp')
-            .update({ dados_extras: JSON.stringify({ ...ext, lid: lidNumero }), atualizado_em: agora })
+            .update({ dados_extras: { ...ext, lid: lidNumero }, atualizado_em: agora })
             .eq('id', conversaId);
         }
       } else if (byNome?.length > 1) {
@@ -258,8 +359,8 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
       .order('criado_em', { ascending: false }).limit(1);
     if (pendente?.[0]) {
       conversaId = pendente[0].id; fonte = 'lid_pending_existente';
-      console.log('CONVERSA_FOUND_EXISTING', { conversaId, fonte, lidNumero });
-      console.log('CONVERSA_CREATE_BLOCKED_DUPLICATE', { lidNumero, conversaId });
+      console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte, lidNumero });
+      console.log('WHATSAPP_DUPLICATE_CONVERSA_PREVENTED', { lidNumero, conversaId });
     }
   }
 
@@ -270,10 +371,11 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
   }
 
   if (conversaId) {
+    console.log('WHATSAPP_RESOLVE_SELECTED_CONVERSATION', { conversaId, fonte });
     return { conversaId, permiteCreate: false, fonte };
   }
 
-  console.log('CONVERSA_CREATE_ALLOWED', { tel, lidNumero, leadId });
+  console.log('WHATSAPP_RESOLVE_CONVERSA_CREATED', { tel, lidNumero, leadId, motivo: 'nenhuma_encontrada' });
   return { conversaId: null, permiteCreate: true, fonte: 'nao_encontrada' };
 }
 
@@ -324,6 +426,8 @@ async function listarConversas(req, res) {
         ...c,
         ultima_mensagem: ultimaMap[c.id]?.mensagem || null,
         ultima_direcao:  ultimaMap[c.id]?.direcao  || null,
+        // nao_lidas: usa o campo do banco (incrementado pelo webhook ao receber, zerado ao abrir)
+        nao_lidas: c.nao_lidas || 0,
       }));
       return res.json({ sucesso: true, dados: comUltima, total: comUltima.length });
     }
@@ -408,9 +512,16 @@ async function listarMensagens(req, res) {
       const normalizado = (msgs || []).map(m => ({ ...m, vendedor_nome: m.usuarios?.nome || null }));
       const convNorm = { ...conversa, vendedor_nome: conversa.usuarios?.nome, lead_nome: conversa.leads?.nome, lead_empresa: conversa.leads?.empresa };
 
-      // Marca como lidas (não bloqueia resposta)
-      sb.from('mensagens_whatsapp').update({ status: 'lido' })
-        .eq('conversa_id', id).eq('direcao', 'recebida').neq('status', 'lido').then(() => {});
+      // Marca como lidas e zera nao_lidas (não bloqueia resposta)
+      // WHATSAPP_MARK_READ: log obrigatório para auditoria
+      Promise.all([
+        sb.from('mensagens_whatsapp').update({ status: 'lido' })
+          .eq('conversa_id', id).eq('direcao', 'recebida').neq('status', 'lido'),
+        sb.from('conversas_whatsapp').update({ nao_lidas: 0, atualizado_em: new Date().toISOString() })
+          .eq('id', id).gt('nao_lidas', 0),
+      ]).then(() => {
+        console.log('WHATSAPP_MARK_READ', { conversaId: id });
+      }).catch(e => console.warn('[WA] mark-read warn:', e.message));
 
       return res.json({ sucesso: true, dados: normalizado, conversa: convNorm });
     }
@@ -1735,30 +1846,42 @@ async function webhookReceberMensagem(req, res) {
   console.log('WEBHOOK_FROM_ME_VALUE', fromMe);
   console.log('WEBHOOK_PHONE_NORMALIZED', { rawJid, telNormalizado: tel || '(inválido)' });
 
-  if (!tel) {
-    console.warn('WEBHOOK_PHONE_INVALID_REJECTED', { rawJid, body: JSON.stringify(body).slice(0, 200) });
-    return res.status(400).json({ sucesso: false, erro: 'Telefone não identificado no payload.' });
+  // ── BUG-FIX: tel pode ser nulo se normalização falhar (ex: LID sem participant)
+  // Nesse caso usa rawJid como identificador provisório em vez de rejeitar
+  let telFinal = tel;
+  if (!telFinal) {
+    if (rawJid && rawJid.length > 3) {
+      // Usa rawJid limpo (sem @) como telefone provisório para não perder a mensagem
+      telFinal = rawJid.split('@')[0].replace(/\D/g, '') || null;
+      console.warn('WHATSAPP_INBOUND_PHONE_FALLBACK_JID', { rawJid, telFinal, motivo: 'tel_nulo_usando_jid' });
+    }
+    if (!telFinal) {
+      console.warn('WEBHOOK_PHONE_INVALID_REJECTED', { rawJid, body: JSON.stringify(body).slice(0, 200) });
+      return res.status(400).json({ sucesso: false, erro: 'Telefone não identificado no payload.' });
+    }
   }
+  // Reatribui para manter compatibilidade com o restante do código
+  // (Nota: parsed.tel era const, criamos telFinal como variável mutável)
 
   // ── Detecta JID no formato LID (WhatsApp Multi-Device) ──────────────────────
   const isLidJid = rawJid.endsWith('@lid');
   if (isLidJid) {
-    console.log(`[WA Webhook] ⚠️ LID_DETECTADO: ${lidNumero || tel} (JID: ${rawJid}) participant_tel=${tel}`);
+    console.log(`[WA Webhook] ⚠️ LID_DETECTADO: ${lidNumero || telFinal} (JID: ${rawJid}) participant_tel=${telFinal}`);
   }
 
-  // ── Valida número antes de criar qualquer conversa ───────────────────────
+  // ── Valida número — permissivo para não bloquear recebimento ────────────────
   // Brasil: 55 + DDD(2) + número(8-9) = 12-13 dígitos
   // Internacional genérico: 10-15 dígitos
-  const numBrasileiro = /^55\d{10,11}$/.test(tel);
-
-  const numGenerico   = /^\d{10,15}$/.test(tel);
+  const numBrasileiro = /^55\d{10,11}$/.test(telFinal);
+  const numGenerico   = /^\d{10,15}$/.test(telFinal);
   if (!numBrasileiro && !numGenerico) {
-    console.warn('WEBHOOK_NUMERO_INVALIDO_NAO_CRIAR_CONVERSA', {
+    // APENAS LOGA — não descarta. Pode ser número LID ou formato não previsto.
+    console.warn('WEBHOOK_NUMERO_FORMATO_INCOMUM', {
       telefoneOriginal: rawJid,
-      telefoneNormalizado: tel,
+      telefoneNormalizado: telFinal,
       eventName: evento,
+      acao: 'prosseguindo_mesmo_assim',
     });
-    return res.json({ sucesso: true, ignorado: true, motivo: 'numero_invalido', telefone: tel });
   }
 
   // Ignora mensagens de grupos (JID com @g.us)
@@ -1767,9 +1890,11 @@ async function webhookReceberMensagem(req, res) {
     return res.json({ sucesso: true, ignorado: true, motivo: 'grupo_ignorado' });
   }
 
-  // Bloqueia se não houver conteúdo real — sem texto E não é mídia
-  if (!conteudo && tipo === 'texto') {
-    console.warn('PAYLOAD_SEM_TEXTO_RECONHECIDO — ignorando sem criar conversa:', JSON.stringify(req.body).slice(0, 300));
+  // ── Bloqueia SOMENTE se: tipo=texto, sem conteúdo E sem mídia ───────────────
+  // Áudios, imagens, vídeos e documentos devem passar mesmo sem texto.
+  const ehMidia = ['audio','imagem','video','documento','sticker'].includes(tipo);
+  if (!conteudo && tipo === 'texto' && !ehMidia) {
+    console.warn('WHATSAPP_INBOUND_SEM_CONTEUDO — ignorando mensagem sem texto e sem mídia:', JSON.stringify(req.body).slice(0, 300));
     return res.json({ sucesso: true, ignorado: true, motivo: 'sem_conteudo' });
   }
 
@@ -1781,33 +1906,29 @@ async function webhookReceberMensagem(req, res) {
     // ── 4. Idempotência por messageId ─────────────────────────────────────
     if (messageId) {
       if (isSupa) {
+        // Verifica ambos os IDs: local e o da Evolution (salvo em evolution_message_id)
         const { data: existing } = await sb.from('mensagens_whatsapp')
-          .select('id').eq('id', messageId).limit(1);
+          .select('id')
+          .or(`id.eq.${messageId},evolution_message_id.eq.${messageId}`)
+          .limit(1);
         if (existing?.[0]) {
           return res.json({ sucesso: true, ignorado: true, motivo: 'mensagem_ja_salva' });
         }
       } else if (db) {
-        const ex = db.prepare('SELECT id FROM mensagens_whatsapp WHERE id = ? LIMIT 1').get(messageId);
+        const ex = db.prepare('SELECT id FROM mensagens_whatsapp WHERE id = ? OR evolution_message_id = ? LIMIT 1').get(messageId, messageId);
         if (ex) return res.json({ sucesso: true, ignorado: true, motivo: 'mensagem_ja_salva' });
       }
     }
 
     // ── 4b. Se fromMe=true: deduplicação extra por conteúdo+telefone+janela 30s ─
-    // O CRM salva a mensagem ao enviar (com ID gerado localmente).
-    // O webhook chega logo depois com fromMe=true e um key.id diferente.
-    // Para evitar duplicação: verifica se existe msg enviada com mesmo texto/tel nos últimos 30s.
     if (fromMe) {
       console.log(`[WA Webhook] fromMe=true — mensagem enviada pelo número conectado para ${tel}`);
       if (conteudo) {
-        // O CRM salva o texto SEM cabeçalho (apenas o que o usuário digitou).
-        // A Evolution entrega com cabeçalho: "Nome | PROSPEKT\n\ntexto_usuario"
-        // Extrai o texto limpo (após cabeçalho) para comparar com o que está no banco.
         const CABECALHO_RE = /^.+\| PROSPEKT\n\n/;
         const textoLimpo = conteudo.replace(CABECALHO_RE, '').trim();
         const trintaSeg = new Date(Date.now() - 30_000).toISOString();
 
         if (isSupa) {
-          // Busca por texto exato (sem cabeçalho) OU pelo texto completo (mensagem enviada manualmente no app)
           const { data: msgDup } = await sb.from('mensagens_whatsapp')
             .select('id')
             .eq('telefone', tel)
@@ -1832,19 +1953,12 @@ async function webhookReceberMensagem(req, res) {
     }
 
     // ── 5. Busca lead pelo telefone (normalizado) ────────────────────────────
-    // Determina variantes de telefone: com 55 (5511964634949) e sem 55 (11964634949)
     let leadId = null;
-    const telSem55 = (tel.startsWith('55') && tel.length >= 12) ? tel.slice(2) : null;
-    const telVariants = telSem55 ? [tel, telSem55] : [tel];
-
-    console.log('[WA Webhook] INSTANCIA_CONECTADA:', process.env.EVOLUTION_INSTANCE_NAME || process.env.EVOLUTION_INSTANCE || '?');
-    console.log('[WA Webhook] REMOTE_JID_RECEBIDO:', body.data?.[0]?.key?.remoteJid || body.data?.key?.remoteJid || '(ver payload)');
-    console.log('[WA Webhook] FROM_ME:', fromMe);
-    console.log('[WA Webhook] TELEFONE_EXTRAIDO:', { rawTelUsado: tel, variantesSem55: telSem55, fromMe });
+    const telSem55 = (telFinal.startsWith('55') && telFinal.length >= 12) ? telFinal.slice(2) : null;
 
     if (isSupa) {
       let leadsFound = null;
-      const variantesCompletas = phoneVariants(tel);
+      const variantesCompletas = phoneVariants(telFinal);
       for (const variant of variantesCompletas) {
         const { data: found } = await sb.from('leads').select('id,telefone')
           .or(`telefone.eq.${variant},telefone.ilike.%${variant}%`)
@@ -1852,7 +1966,7 @@ async function webhookReceberMensagem(req, res) {
         if (found?.[0]) { leadsFound = found; break; }
       }
       leadId = leadsFound?.[0]?.id || null;
-      console.log(`WEBHOOK_LEAD_ENCONTRADO: tel=${tel} variantes=${variantesCompletas.join('|')} → leadId=${leadId}`);
+      console.log(`WEBHOOK_LEAD_ENCONTRADO: tel=${telFinal} variantes=${variantesCompletas.join('|')} → leadId=${leadId}`);
 
       // Só cria lead se for mensagem recebida (fromMe=false) e não existir
       if (!leadId && !fromMe) {
@@ -1861,23 +1975,23 @@ async function webhookReceberMensagem(req, res) {
         if (destino) {
           const novoLeadId = crypto.randomBytes(16).toString('hex');
           const { data: novoLead, error: errL } = await sb.from('leads').insert({
-            id: novoLeadId, nome: nome || `WhatsApp ${tel}`, telefone: tel,
+            id: novoLeadId, nome: nome || `WhatsApp ${telFinal}`, telefone: telFinal,
             status: 'ABERTO', funil_id: destino.funil.id,
             pipeline_id: destino.pipeline.id, etapa_id: destino.etapa.id,
-            dados_extras: JSON.stringify({ fonte: 'evolution_webhook', numero_wa: tel }),
+            dados_extras: JSON.stringify({ fonte: 'evolution_webhook', numero_wa: telFinal }),
             criado_em: agora, atualizado_em: agora,
           }).select('id').single();
-          if (!errL && novoLead) { leadId = novoLead.id; console.log(`[WA Webhook] ✅ Lead criado: ${leadId} (${tel})`); }
+          if (!errL && novoLead) { leadId = novoLead.id; console.log(`[WA Webhook] ✅ Lead criado: ${leadId} (${telFinal})`); }
           else console.warn('[WA Webhook] Lead não criado:', errL?.message);
         }
       }
     } else if (db) {
       // SQLite: tenta ambas variantes
-      let l = db.prepare("SELECT id FROM leads WHERE telefone = ? LIMIT 1").get(tel);
+      let l = db.prepare("SELECT id FROM leads WHERE telefone = ? LIMIT 1").get(telFinal);
       if (!l && telSem55) l = db.prepare("SELECT id FROM leads WHERE telefone = ? LIMIT 1").get(telSem55);
       leadId = l?.id || null;
     }
-    console.log('[WA Webhook] RESULTADO_BUSCA_LEAD:', { telefoneNormalizado: tel, variantesSem55: telSem55, leadId });
+    console.log('[WA Webhook] RESULTADO_BUSCA_LEAD:', { telefoneNormalizado: telFinal, variantesSem55: telSem55, leadId });
 
     // ── 6. Resolve conversa (FUNÇÃO CENTRAL — elimina duplicação) ─────────────
     // Usa resolverConversaWhatsapp() que executa 8 passos de busca em ordem antes
@@ -1885,12 +1999,12 @@ async function webhookReceberMensagem(req, res) {
     let conversaId = null;
     if (isSupa) {
       const resolucao = await resolverConversaWhatsapp(sb, {
-        tel, lidNumero, leadId, isLidJid, rawJid, fromMe, nome
+        tel: telFinal, lidNumero, leadId, isLidJid, rawJid, fromMe, nome
       });
 
       if (!resolucao.permiteCreate && !resolucao.conversaId) {
         // fromMe=true sem conversa — eco do CRM, descarta
-        console.log('WHATSAPP_FROM_ME_IGNORED_NO_CONVERSA', { tel, fonte: resolucao.fonte });
+        console.log('WHATSAPP_FROM_ME_IGNORED_NO_CONVERSA', { tel: telFinal, fonte: resolucao.fonte });
         return res.json({ sucesso: true, ignorado: true, motivo: 'fromMe_sem_conversa_existente' });
       }
 
@@ -1930,11 +2044,11 @@ async function webhookReceberMensagem(req, res) {
     if (isSupa && !conversaId) {
       // Cria nova conversa — só chega aqui se resolverConversaWhatsapp liberou (permiteCreate=true)
       const novoConvId = crypto.randomBytes(16).toString('hex');
-      const telParaConversa = (isLidJid && !leadId) ? `LID:${lidNumero}` : (tel || null);
+      const telParaConversa = (isLidJid && !leadId) ? `LID:${lidNumero}` : (telFinal || null);
       const dadosExtrasNova = isLidJid && lidNumero
         ? JSON.stringify({ lid: lidNumero, remoteJid: rawJid })
         : null;
-      console.log('CONVERSA_CREATE_NEEDED', { tel: telParaConversa, leadId, nomeContato });
+      console.log('WHATSAPP_INBOUND_CONVERSA_CREATED', { tel: telParaConversa, leadId, nomeContato });
       const { data: novaConv, error: errC } = await sb.from('conversas_whatsapp').insert({
         id: novoConvId, telefone: telParaConversa, nome_contato: nomeContato,
         lead_id: leadId || null, origem: 'WHATSAPP_WEBHOOK', status: 'ABERTA',
@@ -1952,9 +2066,10 @@ async function webhookReceberMensagem(req, res) {
         .select('telefone,lead_id,dados_extras,nome_contato').eq('id', conversaId).single();
       const upd = { ultima_msg_em: agora, atualizado_em: agora, status: 'ABERTA' };
       if (leadId) upd.lead_id = leadId;
-      if (convAtual && convAtual.telefone !== tel && tel && !tel.startsWith('LID:')) {
-        upd.telefone = tel;
+      if (convAtual && convAtual.telefone !== telFinal && telFinal && !telFinal.startsWith('LID:')) {
+        upd.telefone = telFinal;
       }
+      console.log('WHATSAPP_INBOUND_CONVERSA_FOUND', { conversaId, fonte: 'existente' });
       const nomeAtual = convAtual?.nome_contato || '';
       const nomeEhPlaceholder = nomeAtual === tel || nomeAtual === 'Contato WhatsApp não identificado' || nomeAtual.startsWith('LID:');
       if (leadId && nomeContato && nomeContato !== tel && nomeContato !== 'Contato WhatsApp não identificado') {
@@ -1977,7 +2092,7 @@ async function webhookReceberMensagem(req, res) {
       await sb.from('conversas_whatsapp').update(upd).eq('id', conversaId);
     } else if (db && !conversaId) {
       const cid = crypto.randomBytes(16).toString('hex');
-      db.prepare('INSERT INTO conversas_whatsapp (id,telefone,nome_contato,lead_id,origem,criado_em,atualizado_em) VALUES (?,?,?,?,?,?,?)').run(cid, tel, nome||null, leadId||null, 'WHATSAPP_WEBHOOK', agora, agora);
+      db.prepare('INSERT INTO conversas_whatsapp (id,telefone,nome_contato,lead_id,origem,criado_em,atualizado_em) VALUES (?,?,?,?,?,?,?)').run(cid, telFinal, nome||null, leadId||null, 'WHATSAPP_WEBHOOK', agora, agora);
       conversaId = cid;
     } else if (db && conversaId) {
       db.prepare('UPDATE conversas_whatsapp SET ultima_msg_em=?,atualizado_em=? WHERE id=?').run(agora, agora, conversaId);
@@ -1987,10 +2102,12 @@ async function webhookReceberMensagem(req, res) {
     console.log('WEBHOOK_CONVERSATION_TARGET', {
       conversaId,
       leadId,
-      telefoneNormalizado: tel,
+      telefoneNormalizado: telFinal,
     });
 
     // ── 7. Salva mensagem em mensagens_whatsapp ───────────────────────────
+    // evoMsgIdWebhook = ID da Evolution (key.id) — usado para idempotência e rastreio
+    const evoMsgIdWebhook = messageId || null;
     const msgId = messageId || crypto.randomBytes(16).toString('hex');
     let msgSalva = false;
     let erroSalvar = null;
@@ -2000,31 +2117,45 @@ async function webhookReceberMensagem(req, res) {
       // Para mensagens ENVIADAS: status 'sent'
       const insertPayload = {
         id: msgId, conversa_id: conversaId, lead_id: leadId || null,
-        telefone: tel, mensagem: conteudo || (tipo === 'audio' ? 'Áudio' : null), tipo,
+        telefone: telFinal, mensagem: conteudo || (tipo === 'audio' ? '[Áudio]' : tipo === 'imagem' ? '[Imagem]' : tipo === 'video' ? '[Vídeo]' : tipo === 'documento' ? '[Documento]' : null), tipo,
         direcao,
         arquivo_url: midiaUrl || null, arquivo_nome: arquivoNome || null,
         criado_em: agora,
       };
-      // Campos opcionais — adicionados com try/catch para não quebrar caso a coluna ainda não exista
-      try { if (mimeType)   insertPayload.mime_type             = mimeType; }   catch{}
-      try { if (messageId)  insertPayload.evolution_message_id  = messageId; }  catch{}
+      // Campos opcionais — sempre tenta incluir evolution_message_id e mime_type
+      try { if (mimeType)         insertPayload.mime_type            = mimeType; } catch{}
+      try { if (evoMsgIdWebhook)  insertPayload.evolution_message_id = evoMsgIdWebhook; } catch{}
       // Só adiciona status para mensagens enviadas — schema: CHECK(status IN ('enviado','entregue','lido','erro'))
       if (direcao === 'enviada') insertPayload.status = 'enviado';
       if (tipo === 'audio') console.log('WHATSAPP_AUDIO_RECEIVED_WEBHOOK', { msgId, mimeType, midiaUrl: midiaUrl ? '(presente)' : '(ausente)', duration: null });
       if (midiaUrl) console.log('WHATSAPP_AUDIO_MEDIA_DETECTED', { tipo, mimeType, midiaUrl: midiaUrl.slice(0,80) });
 
+      console.log('WHATSAPP_INBOUND_MESSAGE_SAVED', { msgId, conversaId, direcao, tel: telFinal, tipo });
       const { error: errM } = await sb.from('mensagens_whatsapp').insert(insertPayload);
       msgSalva = !errM;
       if (!errM) {
         console.log('WEBHOOK_MESSAGE_SAVED', { mensagemId: msgId, conversaId, direcao, telefone: tel });
-        console.log('WEBHOOK_MENSAGEM_SALVA_COM_SUCESSO:', { mensagemId: msgId, conversaId, telefoneNormalizado: tel, direcao });
+        console.log('WHATSAPP_MESSAGE_SAVED_EXISTING_CONVERSA', { mensagemId: msgId, conversaId, telefone: tel, direcao, evoMsgId: evoMsgIdWebhook });
         // Atualiza conversa — SOMENTE colunas que existem na tabela Supabase:
         // ultima_msg_em, atualizado_em, status (ultima_mensagem e ultima_direcao NÃO EXISTEM)
-        const { error: errConvUpd } = await sb.from('conversas_whatsapp').update({
+        const convUpdate = {
           ultima_msg_em: agora,
           atualizado_em: agora,
           status: 'ABERTA',
-        }).eq('id', conversaId);
+        };
+        // Incrementa nao_lidas APENAS para mensagens recebidas (não enviadas pelo CRM)
+        // O campo nao_lidas só existe após patch v21 — envolto em try/catch
+        if (direcao === 'recebida') {
+          try {
+            // Busca o valor atual e incrementa
+            const { data: convAtualNL } = await sb.from('conversas_whatsapp')
+              .select('nao_lidas').eq('id', conversaId).single();
+            const naoLidasAtual = convAtualNL?.nao_lidas || 0;
+            convUpdate.nao_lidas = naoLidasAtual + 1;
+            console.log('WHATSAPP_UNREAD_INCREMENT', { conversaId, nao_lidas: convUpdate.nao_lidas });
+          } catch(eNL) { console.warn('WHATSAPP_UNREAD_INCREMENT_WARN (coluna pode nao existir):', eNL.message); }
+        }
+        const { error: errConvUpd } = await sb.from('conversas_whatsapp').update(convUpdate).eq('id', conversaId);
         if (errConvUpd) console.warn('[WA Webhook] update conversa warn:', errConvUpd.message);
       }
       if (errM) {

@@ -61,10 +61,24 @@ async function listar(req, res) {
       const { data, error } = await q;
       if (error) throw error;
 
+      // Enriquece com conta_azul_status dos leads (join por email)
+      let contaAzulMap = {};
+      try {
+        const emails = [...new Set((data || []).map(v => v.email).filter(Boolean))];
+        if (emails.length > 0) {
+          const { data: leadsCA } = await sb.from('leads')
+            .select('email, conta_azul_status')
+            .in('email', emails)
+            .not('conta_azul_status', 'is', null);
+          (leadsCA || []).forEach(l => { if (l.email) contaAzulMap[l.email] = l.conta_azul_status; });
+        }
+      } catch(e) { /* coluna pode não existir ainda — ignora */ }
+
       const itens = (data || []).map(v => ({
         ...v,
         responsavel_nome: v.responsavel?.nome || null,
         etapa_label: ETAPAS_LABELS[v.etapa] || v.etapa,
+        conta_azul_status: contaAzulMap[v.email] || null,
       }));
       return res.json({ sucesso: true, dados: itens, total: itens.length });
     }

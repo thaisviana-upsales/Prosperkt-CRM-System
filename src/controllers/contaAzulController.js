@@ -105,13 +105,35 @@ async function enviar(req, res) {
       });
     }
 
-    // ── 4. Monta dados da ficha ───────────────────────────────────────────────
-    const fmtDate = (d) => d ? new Date(d).toLocaleDateString('pt-BR') : '—';
-    const fmtMoney = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-
+    // Parse de dados_extras antes da validação
     const dadosExtras = typeof lead.dados_extras === 'string'
       ? JSON.parse(lead.dados_extras || '{}')
       : (lead.dados_extras || {});
+
+    // ── 4. Validação de campos obrigatórios ──────────────────────────────────
+    const pendencias = [];
+    if (!lead.nome)                                          pendencias.push('Nome do cliente');
+    if (!lead.telefone)                                      pendencias.push('Telefone');
+    if (!leadProdutos || leadProdutos.length === 0)          pendencias.push('Produto(s)');
+    if (!lead.valor_venda && !lead.valor)                    pendencias.push('Valor da venda');
+    if (!lead.forma_pagamento)                               pendencias.push('Forma de pagamento');
+    if (!lead.data_fechamento)                               pendencias.push('Data de fechamento');
+    if (!lead.cep_entrega && !dadosExtras?.cep)              pendencias.push('CEP de entrega');
+    if (!lead.endereco_entrega && !dadosExtras?.endereco)    pendencias.push('Endereço de entrega');
+    if (!lead.cidade_entrega && !dadosExtras?.cidade)        pendencias.push('Cidade de entrega');
+    if (!lead.uf_entrega && !dadosExtras?.uf)                pendencias.push('UF de entrega');
+
+    if (pendencias.length > 0) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: `Não foi possível enviar. Preencha os campos obrigatórios: ${pendencias.join(', ')}.`,
+        pendencias,
+      });
+    }
+
+    // ── 5. Monta dados da ficha ───────────────────────────────────────────────
+    const fmtDate = (d) => d ? new Date(d).toLocaleDateString('pt-BR') : '—';
+    const fmtMoney = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
     const produtosList = (leadProdutos || []).map(lp => {
       const nome  = lp.produto?.nome || lp.produto_nome || 'Produto';
