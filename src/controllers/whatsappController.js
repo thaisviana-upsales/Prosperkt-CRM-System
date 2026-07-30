@@ -17,7 +17,9 @@ const evoSvc  = require('../services/evolutionApiService');
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 // Número oficial da Prospekt — NUNCA deve virar contato de cliente
-const NUMERO_OFICIAL_PROSPEKT = '5511967668883';
+// Atualizado em 2026-07-30: novo número 5511987994910
+const NUMERO_OFICIAL_PROSPEKT = '5511987994910';
+
 
 function normalizePhoneBR(value) {
   if (!value) return null;
