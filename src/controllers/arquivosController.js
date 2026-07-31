@@ -67,23 +67,36 @@ function handleUploadError(err, req, res, next) {
 }
 
 // ── GET /api/leads/:id/arquivos ──────────────────────────────────────────────
+// Suporta ?origem=producao|lead|whatsapp para filtrar por contexto
 async function listar(req, res) {
   const { sb, isSupa } = getProvider();
   const leadId = req.params.id;
+  const origem = req.query.origem || null; // null = todos
+
   try {
     if (isSupa) {
-      const { data, error } = await sb.from('lead_arquivos')
+      let q = sb.from('lead_arquivos')
         .select('*, enviado_por_usuario:usuarios!enviado_por(id,nome)')
-        .eq('lead_id', leadId).order('criado_em', { ascending: false });
+        .eq('lead_id', leadId)
+        .order('criado_em', { ascending: false });
+
+      if (origem) q = q.eq('origem', origem);
+
+      const { data, error } = await q;
       if (error) throw error;
+
+      console.log('[arquivos.listar] lead:', leadId, '| origem:', origem || 'todos', '| total:', (data || []).length);
       return res.json({ sucesso: true, dados: (data || []).map(a => ({
         ...a,
         enviado_por_nome: a.enviado_por_usuario?.nome || 'Sistema',
-        tamanho_fmt: fmtTamanho(a.tamanho),
+        tamanho_fmt:      fmtTamanho(a.tamanho),
+        // URL de download segura via backend (não expõe URL do Storage diretamente)
+        download_url:     `/api/leads/${leadId}/arquivos/${a.id}/download`,
       }))});
     }
     return res.json({ sucesso: true, dados: [] });
   } catch (e) {
+    console.error('[arquivos.listar]', e.message);
     return res.status(500).json({ sucesso: false, erro: e.message });
   }
 }

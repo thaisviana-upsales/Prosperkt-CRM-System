@@ -136,8 +136,10 @@ async function _salvarProducao(leadId) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function _carregarArquivos(leadId) {
-  const r = await Auth.api('GET', `/leads/${leadId}/arquivos`);
+  // Filtra apenas arquivos da Produção (origem=producao)
+  const r = await Auth.api('GET', `/leads/${leadId}/arquivos?origem=producao`);
   const lista = r?.data?.dados || [];
+  console.log('[PRODUCAO_ARQUIVOS_CARREGADOS] lead:', leadId, '| total:', lista.length);
   _renderArquivos(lista, leadId);
 }
 
@@ -145,33 +147,41 @@ function _renderArquivos(lista, leadId) {
   const el = document.getElementById('arquivos-lista');
   if (!el) return;
   if (!lista.length) {
-    el.innerHTML = '<p style="font-size:.72rem;color:var(--text-muted)">Nenhum arquivo anexado ainda.</p>';
+    el.innerHTML = '<p style="font-size:.72rem;color:var(--text-muted)">Nenhum arquivo de produção anexado.</p>';
     return;
   }
-  // Usuário atual (para checar permissão de exclusão)
   const usuarioId = window._usuario?.id;
   const role = window._usuario?.role;
 
   el.innerHTML = lista.map(a => {
-    const tamanho = a.tamanho
+    const tamanho = a.tamanho_fmt || (a.tamanho
       ? a.tamanho > 1024*1024
         ? (a.tamanho/1024/1024).toFixed(1)+' MB'
         : (a.tamanho/1024).toFixed(0)+' KB'
-      : '';
+      : '');
     const icone = _iconeArquivo(a.mime_type || '');
     const data  = a.criado_em ? new Date(a.criado_em).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
-    const url   = a.download_url || a.url || '#';
-    // Pode excluir: SUPER_ADMIN ou quem enviou
+    // Usa rota segura de download — não expõe URL do Supabase Storage diretamente
+    const downloadUrl = a.download_url || `/api/leads/${leadId}/arquivos/${a.id}/download`;
+    const viewUrl     = a.url || downloadUrl;
     const podeExcluir = role === 'SUPER_ADMIN' || a.enviado_por === usuarioId;
+    const isImagem    = (a.mime_type || '').startsWith('image/');
+    const previewHtml = isImagem && a.url
+      ? `<img src="${a.url}" alt="${a.nome_original}" loading="lazy"
+           style="width:100%;max-height:100px;object-fit:cover;border-radius:6px;margin-bottom:6px;cursor:pointer"
+           onclick="window.open('${a.url}','_blank')"
+           onerror="this.style.display='none'">`
+      : '';
     return `<div class="arquivo-item">
+      ${previewHtml}
       <span style="font-size:1.1rem;flex-shrink:0">${icone}</span>
       <div style="flex:1;min-width:0">
         <div style="font-size:.75rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${a.nome_original}">${a.nome_original}</div>
         <div style="font-size:.62rem;color:var(--text-muted)">${tamanho}${tamanho?' · ':''}${data}${a.enviado_por_nome?' · '+a.enviado_por_nome:''}</div>
       </div>
       <div style="display:flex;gap:4px;flex-shrink:0">
-        <a href="${url}" target="_blank" title="Visualizar" style="background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:3px 7px;font-size:.65rem;color:var(--text-primary);text-decoration:none">&#128065;</a>
-        <a href="${url}" download="${a.nome_original}" title="Baixar" style="background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:3px 7px;font-size:.65rem;color:var(--green);text-decoration:none">↓</a>
+        <a href="${viewUrl}" target="_blank" title="Visualizar" style="background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:3px 7px;font-size:.65rem;color:var(--text-primary);text-decoration:none">&#128065;</a>
+        <a href="${downloadUrl}" download="${a.nome_original}" title="Baixar" style="background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:3px 7px;font-size:.65rem;color:var(--green);text-decoration:none">↓</a>
         ${podeExcluir ? `<button onclick="window.Producao._excluirArquivo('${a.id}','${leadId}')" title="Excluir" style="background:none;border:1px solid var(--border);border-radius:5px;padding:3px 7px;font-size:.65rem;color:var(--pink);cursor:pointer">✕</button>` : ''}
       </div>
     </div>`;
@@ -198,6 +208,8 @@ async function _uploadArquivos(files, leadId) {
     label.textContent = `Enviando ${file.name}...`;
     const fd = new FormData();
     fd.append('arquivo', file);
+    // Marca como arquivo de produção — filtrado separadamente da aba Arquivos
+    fd.append('origem', 'producao');
     try {
       const token = localStorage.getItem('token') || sessionStorage.getItem('token');
       const resp  = await fetch(`/api/leads/${leadId}/arquivos`, {
@@ -205,15 +217,24 @@ async function _uploadArquivos(files, leadId) {
         headers: { Authorization: `Bearer ${token}` },
         body: fd,
       });
-      if (resp.ok) enviados++;
-      else { const j = await resp.json(); Toast.show(j.erro || `Erro ao enviar ${file.name}`, 'error'); }
-    } catch (e) { Toast.show(`Erro: ${e.message}`, 'error'); }
+      if (resp.ok) {
+        enviados++;
+        console.log('[PRODUCAO_UPLOAD_OK] lead:', leadId, '| arquivo:', file.name, '| origem: producao');
+      } else {
+        const j = await resp.json();
+        Toast.show(j.erro || `Erro ao enviar ${file.name}`, 'error');
+        console.error('[PRODUCAO_UPLOAD_ERRO]', j.erro, '| arquivo:', file.name);
+      }
+    } catch (e) {
+      Toast.show(`Erro: ${e.message}`, 'error');
+      console.error('[PRODUCAO_UPLOAD_EXCEPTION]', e.message);
+    }
   }
 
   progress.style.display = 'none';
   label.textContent = 'Clique ou arraste arquivos aqui';
   if (enviados > 0) {
-    Toast.show(`${enviados} arquivo(s) enviado(s)!`, 'success');
+    Toast.show(`${enviados} arquivo(s) enviado(s) à Produção!`, 'success');
     await _carregarArquivos(leadId);
   }
 }

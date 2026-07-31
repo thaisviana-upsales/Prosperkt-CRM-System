@@ -61,14 +61,15 @@
   async function carregar(leadId) {
     _leadId = leadId;
     const lista = document.getElementById('arq-lista');
-    const emptyMsg = document.getElementById('arq-empty-msg');
     if (!lista) return;
 
     lista.innerHTML = '<p style="font-size:.75rem;color:var(--text-muted);padding:8px 0">Carregando...</p>';
 
     let r = null;
     try {
-      r = await Auth.api('GET', `/leads/${leadId}/arquivos`);
+      // Filtra apenas arquivos da aba Arquivos (origem=lead)
+      // Arquivos da Produção ficam na aba Produção (origem=producao)
+      r = await Auth.api('GET', `/leads/${leadId}/arquivos?origem=lead`);
     } catch (e) {
       lista.innerHTML = `<p style="font-size:.75rem;color:var(--pink,#FF3B5C);padding:8px 0">Erro ao carregar arquivos: ${e.message}</p>`;
       return;
@@ -81,6 +82,7 @@
     }
 
     lista.innerHTML = arquivos.map(a => renderCard(a)).join('');
+    console.log('[LEAD_ARQUIVOS_CARREGADOS] lead:', leadId, '| total:', arquivos.length);
   }
 
   function renderCard(a) {
@@ -91,10 +93,15 @@
     const leadId  = _leadId;
 
     const isImagem = a.mime_type?.startsWith('image/');
+    // onerror: esconde imagem quebrada e mostra placeholder amigável
     const previewHtml = isImagem && a.url
       ? `<img src="${a.url}" alt="${a.nome_original}" loading="lazy"
            style="width:100%;max-height:120px;object-fit:cover;border-radius:8px;margin-bottom:8px;cursor:pointer"
-           onclick="window.open('${a.url}','_blank')">`
+           onclick="window.open('${a.url}','_blank')"
+           onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+         <div style="display:none;align-items:center;gap:6px;padding:8px;background:var(--surface-2);border-radius:8px;font-size:.7rem;color:var(--text-muted);margin-bottom:8px">
+           🖼 Não foi possível carregar a imagem.
+         </div>`
       : '';
 
     return `

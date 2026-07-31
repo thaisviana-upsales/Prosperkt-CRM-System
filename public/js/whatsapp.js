@@ -634,8 +634,27 @@ function renderMensagem(msg) {
   if (msg.tipo === 'texto' || msg.tipo === 'sistema') {
     conteudo = `<div class="wa-bubble-text">${escHtml(msg.mensagem || '')}</div>`;
   } else if (msg.tipo === 'imagem') {
-    conteudo = `<img class="wa-img" src="${msg.arquivo_url}" alt="Imagem" onclick="window.open('${msg.arquivo_url}','_blank')">
-      ${msg.mensagem ? `<div class="wa-bubble-text" style="margin-top:4px">${escHtml(msg.mensagem)}</div>` : ''}`;
+    // Preview com onerror — se URL não carregar, mostra placeholder
+    const imgSrc = msg.arquivo_url || '';
+    const imgAlt = escHtml(msg.arquivo_nome || 'Imagem');
+    if (imgSrc) {
+      conteudo = `
+        <div class="wa-img-wrap">
+          <img class="wa-img" src="${escHtml(imgSrc)}" alt="${imgAlt}"
+            loading="lazy"
+            onclick="window.open('${escHtml(imgSrc)}','_blank')"
+            onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
+          >
+          <div class="wa-img-error" style="display:none;align-items:center;gap:6px;padding:12px;background:var(--surface-2);border-radius:8px;font-size:.72rem;color:var(--text-muted)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            Não foi possível carregar esta mídia.
+            ${imgSrc ? `<a href="${escHtml(imgSrc)}" target="_blank" style="color:var(--green);text-decoration:underline;font-size:.7rem">Abrir link</a>` : ''}
+          </div>
+        </div>
+        ${msg.mensagem ? `<div class="wa-bubble-text" style="margin-top:4px">${escHtml(msg.mensagem)}</div>` : ''}`;
+    } else {
+      conteudo = `<div style="font-size:.75rem;color:var(--text-muted);padding:8px 0">Imagem não disponível.</div>`;
+    }
   } else if (msg.tipo === 'audio') {
     // URL: tenta proxy backend primeiro (esconde API key), fallback arquivo_url direto
     const audioSrc = msg.arquivo_url
@@ -679,10 +698,12 @@ function renderMensagem(msg) {
            </div>
          </div>`
       : `<span style="font-size:.78rem;color:var(--text-muted)">Vídeo</span>`;
-  } else if (msg.tipo === 'arquivo') {
+  } else if (msg.tipo === 'arquivo' || msg.tipo === 'documento') {
     const url  = msg.arquivo_url || '';
     const nome = msg.arquivo_nome || 'Arquivo';
-    const downloadUrl = `/api/whatsapp/arquivos/${msg.id}/download`;
+    // Para arquivos enviados pelo CRM: usa rota segura de download
+    // Para arquivos recebidos via webhook: usa arquivo_url diretamente (é URL da Evolution/WA)
+    const downloadUrl = url ? url : `/api/whatsapp/arquivos/${msg.id}/download`;
     const mime = msg.mime_type || '';
     const icone = mime === 'application/pdf' ? '📄'
       : mime.startsWith('image/') ? '🖼️'
@@ -699,9 +720,9 @@ function renderMensagem(msg) {
            <p style="font-size:.78rem;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0" title="${escHtml(nome)}">${escHtml(nome)}</p>
            <p style="font-size:.67rem;color:var(--text-muted);margin:2px 0 0">Documento</p>
          </div>
-         <a href="${escHtml(downloadUrl)}" download="${escHtml(nome)}" class="wa-file-dl-btn" title="Baixar">
+         ${downloadUrl ? `<a href="${escHtml(downloadUrl)}" target="_blank" download="${escHtml(nome)}" class="wa-file-dl-btn" title="Baixar">
            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 13 7 8"/><line x1="12" y1="3" x2="12" y2="13"/></svg>
-         </a>
+         </a>` : ''}
        </div>
        ${msg.mensagem && msg.mensagem !== nome ? `<div class="wa-bubble-text" style="margin-top:6px">${escHtml(msg.mensagem)}</div>` : ''}
      </div>`;
