@@ -215,6 +215,53 @@ function formatarLog(l, etapaMap = {}) {
 }
 
 // ── Rodízio de Leads entre Vendedores ─────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Produto obrigatório: lista de placeholders inválidos
+// ─────────────────────────────────────────────────────────────────────────────
+const PRODUTO_PLACEHOLDERS = new Set(['—', '-', '--', '---', 'nenhum', 'none', 'n/a', 'n.a.', 'sem produto', 'selecione', '', null, undefined]);
+
+/**
+ * Valida se o lead tem pelo menos 1 produto REAL vinculado na tabela lead_produtos.
+ * Produto válido: produto_nome não é placeholder, quantidade > 0.
+ * @param {object} sb - Supabase client
+ * @param {string} leadId
+ * @returns {Promise<{valido:boolean, motivo:string}>}
+ */
+async function _validarProdutoParaGanho(sb, leadId) {
+  try {
+    const { data: itens, error } = await sb
+      .from('lead_produtos')
+      .select('id, produto_id, produto_nome, quantidade, valor_unitario, total')
+      .eq('lead_id', leadId)
+      .is('deleted_at', null);
+
+    if (error) {
+      console.error('[PRODUTO_OBRIG] Erro ao buscar lead_produtos:', error.message);
+      // Em caso de erro de query, bloqueia por segurança
+      return { valido: false, motivo: 'Erro ao verificar produtos. Tente novamente.' };
+    }
+
+    const itensValidos = (itens || []).filter(i => {
+      const nomeLimpo = (i.produto_nome || '').trim().toLowerCase();
+      if (PRODUTO_PLACEHOLDERS.has(nomeLimpo) || PRODUTO_PLACEHOLDERS.has(i.produto_nome)) return false;
+      if (!nomeLimpo) return false;
+      if (Number(i.quantidade) <= 0) return false;
+      return true;
+    });
+
+    if (itensValidos.length === 0) {
+      return {
+        valido: false,
+        motivo: 'Para concluir a venda, selecione ao menos um produto vendido com quantidade e valor válidos.',
+      };
+    }
+    return { valido: true, motivo: null };
+  } catch (e) {
+    console.error('[PRODUTO_OBRIG] Exceção:', e.message);
+    return { valido: false, motivo: 'Erro interno ao validar produtos.' };
+  }
+}
+
 /**
  * Retorna o ID do próximo vendedor ativo em rodízio justo.
  * Algoritmo: pega o vendedor que tem o menor número de leads criados,
@@ -645,7 +692,6 @@ async function atualizar(req, res) {
           if (!(req.body.funil_id || atual.funil_id))                              faltando.push('Funil');
           if (!((req.body.valor_venda ?? atual.valor_venda) > 0))                  faltando.push('Valor da Venda');
           if (!(req.body.forma_pagamento || atual.forma_pagamento))                faltando.push('Forma de Pagamento');
-          if (!(req.body.produto_id || atual.produto_id || req.body.produto_nome || atual.produto_nome)) faltando.push('Produto Adquirido');
           // Endereço completo de entrega
           const _end = (f) => (req.body[f] ?? atual[f] ?? '').toString().trim();
           if (!_end('cep_entrega') || _end('cep_entrega').replace(/\D/g,'').length < 8) faltando.push('CEP de Entrega');
@@ -664,6 +710,19 @@ async function atualizar(req, res) {
                 : `Para registrar a venda, preencha: ${faltando.join(', ')}.`,
               campos_faltando: faltando
             });
+
+          // ── Produto obrigatório: verifica tabela lead_produtos (bloqueio real) ──
+          // Não basta ter produto_nome no lead — deve haver pelo menos 1 produto
+          // válido em lead_produtos (sem placeholder "—", quantidade > 0)
+          const { valido: prodValido, motivo: prodMotivo } = await _validarProdutoParaGanho(sb, id);
+          if (!prodValido) {
+            console.warn('[PRODUTO_OBRIG][atualizar] Bloqueio:', prodMotivo, '| lead:', id);
+            return res.status(400).json({
+              sucesso: false,
+              erro: prodMotivo || 'Para concluir a venda, selecione ao menos um produto vendido com quantidade e valor válidos.',
+              codigo: 'PRODUTO_OBRIGATORIO',
+            });
+          }
         }
       }
 
@@ -1039,39 +1098,15 @@ async function mover(req, res) {
         const fp = req.body.forma_pagamento ?? lead.forma_pagamento;
         if (!fp)                                     faltando.push('Forma de Pagamento');
 
-        // ── Verifica produto oficial ativo (validarProdutosObrigatoriosParaGanho) ────
-        // Exige: pelo menos 1 lead_produto com produto_id vinculado a produto ativo
-        let temProdutoOficial = false;
-        try {
-          // Busca itens de lead_produtos com produto_id não-nulo
-          const { data: itensProd } = await sb.from('lead_produtos')
-            .select('id, produto_id, produto_nome')
-            .eq('lead_id', id)
-            .is('deleted_at', null)
-            .not('produto_id', 'is', null);
-
-          if (itensProd && itensProd.length > 0) {
-            // Verifica se pelo menos 1 produto_id existe e está ativo no catálogo
-            const ids = itensProd.map(p => p.produto_id).filter(Boolean);
-            if (ids.length > 0) {
-              const { data: prodsAtivos } = await sb.from('produtos')
-                .select('id, ativo')
-                .in('id', ids);
-              // Filtra ativos (aceita boolean ou integer)
-              temProdutoOficial = (prodsAtivos || []).some(
-                p => p.ativo === true || p.ativo === 1 || p.ativo === '1'
-              );
-            }
-          }
-        } catch (errProd) {
-          console.warn('[validar_ganho] Erro ao checar lead_produtos:', errProd.message);
-        }
-
-        if (!temProdutoOficial) {
+        // ── Produto obrigatório: usa _validarProdutoParaGanho (bloqueio unificado) ──
+        // Verifica lead_produtos: produto_nome não placeholder, quantidade > 0
+        const { valido: prodValido, motivo: prodMotivo } = await _validarProdutoParaGanho(sb, id);
+        if (!prodValido) {
+          console.warn('[PRODUTO_OBRIG][mover] Bloqueio:', prodMotivo, '| lead:', id);
           return res.status(400).json({
             sucesso: false,
-            erro: 'Para concluir a venda, selecione pelo menos um produto válido da lista oficial. Acesse a aba Venda e adicione um produto.',
-            campos_faltando: ['Produto Oficial Ativo'],
+            erro: prodMotivo || 'Para concluir a venda, selecione ao menos um produto vendido com quantidade e valor válidos.',
+            codigo: 'PRODUTO_OBRIGATORIO',
           });
         }
 

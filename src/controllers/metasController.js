@@ -99,23 +99,28 @@ async function enriquecerMetaSupa(sb, m) {
   try {
     const mesStr = String(m.mes).padStart(2, '0');
     const anoStr = String(m.ano);
-    const de  = `${anoStr}-${mesStr}-01T00:00:00`;
+    const de  = `${anoStr}-${mesStr}-01`;
     // Calcula o último dia real do mês (evita erro para meses com < 31 dias)
     const ultimoDia = new Date(Number(m.ano), Number(m.mes), 0).getDate();
-    const ate = `${anoStr}-${mesStr}-${String(ultimoDia).padStart(2,'0')}T23:59:59`;
+    const ate = `${anoStr}-${mesStr}-${String(ultimoDia).padStart(2,'0')}`;
 
-    let qLeads = sb.from('leads').select('id,status,valor,valor_venda,responsavel_id,etapa_id,funil_id,criado_em');
+    // Tipos baseados em VENDA fechada: usar ganho_em (data de fechamento real)
+    // Tipos baseados em LEAD recebido: usar criado_em
+    const tiposVenda = ['FATURAMENTO','QUANTIDADE_VENDAS','TICKET_MEDIO','CONVERSAO'];
+    const campoData  = tiposVenda.includes(m.tipo) ? 'ganho_em' : 'criado_em';
+
+    let qLeads = sb.from('leads').select('id,status,valor,valor_venda,responsavel_id,etapa_id,funil_id,criado_em,ganho_em');
     if (m.usuario_id) qLeads = qLeads.eq('responsavel_id', m.usuario_id);
     if (m.funil_id && m.funil_tipo !== 'TODOS') qLeads = qLeads.eq('funil_id', m.funil_id);
-    qLeads = qLeads.gte('criado_em', de).lte('criado_em', ate);
+    qLeads = qLeads.gte(campoData, de).lte(campoData, ate);
     const { data: leadsRaw, error: leadsErr } = await qLeads;
     if (leadsErr) console.error('[Metas] enriquecerMetaSupa leads error:', leadsErr.message);
     const leads = leadsRaw || [];
 
-    const ganhos = leads.filter(l => {
-      const s = (l.status || '').toUpperCase();
-      return ['GANHO','VENDIDO','VENDA'].includes(s) || l.ganho_em;
-    });
+    // Para tipos de venda: considera apenas leads com status GANHO
+    const ganhos = tiposVenda.includes(m.tipo)
+      ? leads.filter(l => { const s = (l.status || '').toUpperCase(); return ['GANHO','VENDIDO','VENDA'].includes(s) || l.ganho_em; })
+      : leads; // para LEADS_RECEBIDOS, todos os leads do período contam
 
     switch (m.tipo) {
       case 'FATURAMENTO':
@@ -325,15 +330,55 @@ async function atualizar(req, res) {
   try {
     const { isSupa, sb, sqlite: db } = getProvider();
     if (isSupa) {
+      // Monta campos permitidos com conversão de tipo
       const campos = {};
       ['tipo','valor_alvo','funil_id','funil_tipo','usuario_id','mes','ano','observacoes','ativo'].forEach(k => {
-        if (req.body[k] !== undefined) campos[k] = req.body[k];
+        if (req.body[k] !== undefined) {
+          // mes e ano DEVEM ser integer no banco — converter para Number
+          campos[k] = (['mes','ano','valor_alvo'].includes(k)) ? Number(req.body[k]) : req.body[k];
+        }
       });
       if (campos.tipo && !TIPOS_VALIDOS.includes(campos.tipo)) return res.status(400).json({ sucesso:false, erro:'Tipo inválido.' });
+
+      // Carrega meta atual para preencher campos não alterados
+      const { data: metaAtual, error: errBusca } = await sb.from('metas').select('*').eq('id', req.params.id).maybeSingle();
+      if (errBusca) throw errBusca;
+      if (!metaAtual) return res.status(404).json({ sucesso:false, erro:'Meta não encontrada.' });
+
+      // Resolve valores finais (novo ou mantido)
+      const novoMes      = campos.mes       ?? metaAtual.mes;
+      const novoAno      = campos.ano       ?? metaAtual.ano;
+      const novoTipo     = campos.tipo      ?? metaAtual.tipo;
+      const novoUsuario  = campos.usuario_id !== undefined ? campos.usuario_id : metaAtual.usuario_id;
+      const novoFunil    = campos.funil_id  !== undefined ? campos.funil_id  : metaAtual.funil_id;
+
+      // Verifica duplicidade ANTES de salvar (excluindo a própria meta)
+      let qDup = sb.from('metas').select('id').eq('mes', novoMes).eq('ano', novoAno).eq('tipo', novoTipo).neq('id', req.params.id).eq('ativo', 1);
+      if (novoUsuario) qDup = qDup.eq('usuario_id', novoUsuario); else qDup = qDup.is('usuario_id', null);
+      if (novoFunil)   qDup = qDup.eq('funil_id', novoFunil);    else qDup = qDup.is('funil_id', null);
+      const { data: duplicada } = await qDup.maybeSingle();
+      if (duplicada) {
+        return res.status(409).json({
+          sucesso: false,
+          erro: 'Já existe uma meta para este vendedor, mês, ano, tipo e funil.',
+          codigo: 'META_DUPLICADA',
+        });
+      }
+
+      // Regenera título se mudou mês/ano/tipo
+      const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+      campos.titulo = `${novoTipo} — ${MESES[novoMes-1]}/${novoAno}`;
       campos.atualizado_em = new Date().toISOString();
+
       const { data, error } = await sb.from('metas').update(campos).eq('id', req.params.id)
         .select('*, usuarios!metas_usuario_id_fkey(nome), funis!metas_funil_id_fkey(nome)').single();
-      if (error) throw error;
+      if (error) {
+        // Trata unique violation de forma amigável
+        if (error.code === '23505') {
+          return res.status(409).json({ sucesso:false, erro:'Já existe uma meta para este vendedor, mês, ano, tipo e funil.', codigo:'META_DUPLICADA' });
+        }
+        throw error;
+      }
       if (!data) return res.status(404).json({ sucesso:false, erro:'Meta não encontrada.' });
       const m = { ...data, usuario_nome: data.usuarios?.nome || null, funil_nome: data.funis?.nome || null };
       req.log({ acao:'UPDATE', entidade:'metas', entidade_id: req.params.id, depois: campos });

@@ -321,10 +321,18 @@ async function listarRegras(req, res) {
   const { isSupa, sb } = getProvider();
   try {
     if (isSupa) {
-      // Usa select('*') simples — evita erro de FK não reconhecida pelo PostgREST
-      const { data, error } = await sb.from('comissao_regras')
+      // VENDEDOR: vê apenas próprias regras e regras globais (usuario_id IS NULL)
+      // SUPER_ADMIN/GESTOR: veem todas
+      let q = sb.from('comissao_regras')
         .select('*')
         .order('criado_em', { ascending: false });
+
+      if (req.usuario.role === 'VENDEDOR') {
+        // Filtra: regras vinculadas ao próprio vendedor OU regras globais
+        q = q.or(`usuario_id.eq.${req.usuario.id},usuario_id.is.null`);
+      }
+
+      const { data, error } = await q;
 
       if (error) {
         console.error('COMISSAO_REGRA_LIST_ERROR', error.message, error.code || '');
@@ -332,7 +340,7 @@ async function listarRegras(req, res) {
       }
 
       const regras = data || [];
-      console.log(`COMISSAO_REGRA_LIST_SUCCESS count=${regras.length}`);
+      console.log(`COMISSAO_REGRA_LIST_SUCCESS count=${regras.length} role=${req.usuario.role}`);
       if (!regras.length) console.log('COMISSAO_REGRA_LIST_EMPTY');
 
       // Resolve nomes de usuário e funil via queries individuais (evita join PostgREST)
@@ -355,12 +363,16 @@ async function listarRegras(req, res) {
 
     // SQLite fallback
     const db = getDb();
+    // VENDEDOR: filtro por usuario_id próprio OU regras globais
+    const filtroVendedor = req.usuario.role === 'VENDEDOR'
+      ? `AND (r.usuario_id = '${req.usuario.id}' OR r.usuario_id IS NULL)` : '';
     const rows = db.prepare(`SELECT r.*, u.nome as usuario_nome, f.nome as funil_nome
       FROM comissao_regras r
       LEFT JOIN usuarios u ON r.usuario_id=u.id
       LEFT JOIN funis f ON r.funil_id=f.id
+      WHERE 1=1 ${filtroVendedor}
       ORDER BY r.criado_em DESC`).all();
-    console.log(`COMISSAO_REGRA_LIST_SUCCESS count=${rows.length} (sqlite)`);
+    console.log(`COMISSAO_REGRA_LIST_SUCCESS count=${rows.length} (sqlite) role=${req.usuario.role}`);
     return res.json({ sucesso: true, dados: rows });
 
   } catch (e) {
