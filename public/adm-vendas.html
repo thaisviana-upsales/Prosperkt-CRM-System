@@ -167,6 +167,21 @@
         <label class="form-label">Observações</label>
         <textarea class="form-input" id="av-obs" rows="3" placeholder="Detalhes do pedido, notas operacionais..."></textarea>
       </div>
+      <!-- Campo de previsão — aparece ao selecionar etapa Concluído -->
+      <div id="av-previsao-group" style="display:none;background:rgba(108,255,78,.08);border:1px solid rgba(108,255,78,.3);border-radius:10px;padding:12px 14px;transition:all .2s">
+        <label class="form-label" style="color:#6CFF4E;font-weight:800">✅ Previsão de Próxima Compra <span style="color:#f66">*</span></label>
+        <div style="font-size:.68rem;color:var(--text-muted);margin-bottom:8px">Obrigatório para concluir. Define a etapa na Carteira Recorrente.</div>
+        <select class="form-input" id="av-previsao">
+          <option value="">— selecione a previsão —</option>
+          <option value="15-30 dias">15-30 dias</option>
+          <option value="30-60 dias">30-60 dias</option>
+          <option value="60-90 dias">60-90 dias</option>
+          <option value="3 - 6 meses">3 - 6 meses</option>
+          <option value="6 - 9 meses">6 - 9 meses</option>
+          <option value="9 - 18 meses">9 - 18 meses</option>
+          <option value="+18 meses">+18 meses</option>
+        </select>
+      </div>
       <!-- Histórico/Timeline -->
       <div>
         <div style="font-size:.7rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Histórico</div>
@@ -369,6 +384,11 @@ async function abrirVenda(id) {
   document.getElementById('av-valor').value   = v.valor_venda||'';
   document.getElementById('av-entrega').value = v.data_entrega_prevista||'';
   document.getElementById('av-obs').value     = v.observacoes||'';
+  // Previsão próxima compra
+  const prevSel = document.getElementById('av-previsao');
+  prevSel.value = v.previsao_proxima_compra || '';
+  const prevGroup = document.getElementById('av-previsao-group');
+  prevGroup.style.display = v.etapa === 'concluido' ? '' : 'none';
   // Etapa buttons
   const btns = document.getElementById('av-etapa-btns');
   btns.innerHTML = ETAPAS.map(et=>`
@@ -392,6 +412,9 @@ function selecionarEtapa(btn, etapa, cor) {
   btn.style.background=cor;
   btn.style.borderColor=cor;
   btn.style.color='#fff';
+  // Mostra campo de previsão apenas quando etapa = concluido
+  const prevGroup = document.getElementById('av-previsao-group');
+  if (prevGroup) prevGroup.style.display = etapa === 'concluido' ? '' : 'none';
 }
 
 async function carregarHistoricoModal(id) {
@@ -416,20 +439,34 @@ async function salvarVenda() {
   const etapa = document.querySelector('.av-etapa-btn.active')?.dataset?.etapa;
   const alertEl = document.getElementById('av-alert');
   alertEl.style.display='none';
+  const previsao = document.getElementById('av-previsao')?.value || '';
+
+  // Validação frontend: concluido exige previsão
+  if (etapa === 'concluido' && !previsao) {
+    alertEl.textContent = '⚠️ Para concluir a venda, selecione a previsão de próxima compra do cliente.';
+    alertEl.style.display = '';
+    document.getElementById('av-previsao-group').style.display = '';
+    document.getElementById('av-previsao').focus();
+    return;
+  }
+
   const payload = {
-    etapa:                  etapa||undefined,
-    valor_venda:            parseFloat(document.getElementById('av-valor').value)||undefined,
-    data_entrega_prevista:  document.getElementById('av-entrega').value||undefined,
-    observacoes:            document.getElementById('av-obs').value.trim()||undefined,
+    etapa:                   etapa || undefined,
+    valor_venda:             parseFloat(document.getElementById('av-valor').value) || undefined,
+    data_entrega_prevista:   document.getElementById('av-entrega').value || undefined,
+    observacoes:             document.getElementById('av-obs').value.trim() || undefined,
+    previsao_proxima_compra: previsao || undefined,
   };
+
   const r = await Auth.api('PATCH', `/adm-vendas/${id}`, payload);
   if (r?.ok) {
-    Toast.show('Salvo!','success');
+    const foiConcluido = etapa === 'concluido';
+    Toast.show(foiConcluido ? '✅ Venda concluída! Cliente enviado para Carteira Recorrente.' : 'Salvo!', 'success');
     fecharModal();
     await carregar();
   } else {
-    alertEl.textContent=r?.data?.erro||'Erro ao salvar.';
-    alertEl.style.display='';
+    alertEl.textContent = r?.data?.erro || 'Erro ao salvar.';
+    alertEl.style.display = '';
   }
 }
 

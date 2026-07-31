@@ -232,8 +232,10 @@ async function atualizar(req, res) {
       'nome','empresa','email','telefone','funil_id','valor_venda','forma_pagamento',
       'quantidade_parcelas','parcelas_json','produto_id','produto_nome','produto_cor',
       'origem','observacoes','data_venda','data_entrega_prevista',
+      'previsao_proxima_compra','data_prevista_proxima_compra',
     ];
     if (usuario.role !== 'VENDEDOR') allow.push('responsavel_id');
+
 
     const upd = { atualizado_em: now };
     allow.forEach(k => { if (req.body[k] !== undefined) upd[k] = req.body[k]; });
