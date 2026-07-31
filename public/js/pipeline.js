@@ -1203,6 +1203,8 @@ async function salvarLead() {
     const vv    = parseFloat(document.getElementById('fl-valor-venda').value)||0;
     const fp    = document.getElementById('fl-forma-pgto').value;
     const prev  = document.getElementById('fl-previsao-proxima-compra')?.value;
+    // Força flush de produtos pendentes antes de validar
+    await _flushProdutosNaoSalvos();
     // Multi-produto: valida lista de produtos
     const prodAtivos = _leadProdutos.filter(p => !p._removido);
     const faltando=[];
@@ -1540,10 +1542,14 @@ async function confirmarMotivo() {
 
 // ── Funções comerciais ───────────────────────────────────────
 function popularSelProdutos(selecionado) {
-  // Mantém o select legado (oculto) populado para compatibilidade
+  // Select legado (oculto) — mantém compatibilidade com campo fl-produto
   const sel = document.getElementById('fl-produto');
-  sel.innerHTML = '<option value="">—</option>' +
-    _produtos.map(p => `<option value="${p.id}" data-cor="${p.cor||'#aaa'}">${p.nome}</option>`).join('');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— Selecione um produto —</option>' +
+    _produtos.map(p => {
+      const nome = (p.nome || '').trim().replace(/[\u200B-\u200D\uFEFF]/g, ''); // remove zero-width chars
+      return `<option value="${p.id}" data-cor="${p.cor||'#aaa'}" data-nome="${nome}">${nome}</option>`;
+    }).join('');
   if (selecionado) sel.value = selecionado;
 }
 
@@ -1610,7 +1616,10 @@ function renderProdutosLead() {
     dl.id = 'dl-produtos-crm';
     document.body.appendChild(dl);
   }
-  dl.innerHTML = _produtos.map(p => `<option value="${p.nome}" data-id="${p.id}" data-cor="${p.cor||'#6CFF4E'}"></option>`).join('');
+  dl.innerHTML = _produtos.map(p => {
+    const nome = (p.nome || '').trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
+    return `<option value="${nome}" data-id="${p.id}" data-cor="${p.cor||'#6CFF4E'}"></option>`;
+  }).join('');
 
   const ativos = _leadProdutos.filter(p => !p._removido);
   empty.style.display  = ativos.length ? 'none' : '';
@@ -1633,7 +1642,17 @@ function renderProdutosLead() {
     const inputProd = row.querySelector('.lp-produto-input');
     inputProd.addEventListener('change', async e => {
       const pidx     = +e.target.dataset.idx;
-      const nomeDigitado = e.target.value.trim();
+      const nomeDigitado = (e.target.value || '').trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
+
+      // Rejeita placeholder vazio, "—" e strings inválidas
+      if (!nomeDigitado || nomeDigitado === '—' || nomeDigitado === '-') {
+        e.target.value = '';
+        _leadProdutos[pidx].produto_nome = '';
+        _leadProdutos[pidx].produto_id   = '';
+        _leadProdutos[pidx].produto_cor  = '#6CFF4E';
+        return;
+      }
+
       // Tenta encontrar produto EXATO no catálogo oficial
       const opt = [...dl.querySelectorAll('option')].find(
         o => o.value.trim().toLowerCase() === nomeDigitado.toLowerCase()
@@ -1649,17 +1668,19 @@ function renderProdutosLead() {
           const span = document.createElement('span');
           span.className = 'lp-aviso-nao-oficial';
           span.style.cssText = 'grid-column:1/-1;font-size:.68rem;color:#F5A623;padding:2px 2px 0';
-          span.textContent = '⚠ Produto não encontrado na lista oficial. Selecione um produto do catálogo.';
+          span.textContent = '⚠ Produto não encontrado na lista oficial. Selecione um produto do catálogo para salvar.';
           row.appendChild(span);
         }
         e.target.style.borderColor = '#F5A623';
+        // NÃO salva no banco se produto não é oficial
+        recalcularTotalVenda();
       } else {
         if (aviso) aviso.remove();
         e.target.style.borderColor = '';
+        // Produto oficial — salva no banco
+        await salvarLinhaProduto(pidx);
+        recalcularTotalVenda();
       }
-
-      await salvarLinhaProduto(pidx);
-      recalcularTotalVenda();
     });
 
     // Evento: editar quantidade
@@ -1702,21 +1723,28 @@ function renderProdutosLead() {
 async function salvarLinhaProduto(idx) {
   const p      = _leadProdutos[idx];
   const leadId = _leadIdAberto;
-  if (!leadId || !p.produto_nome) return;
+
+  // Não salva linhas sem nome, sem produto oficial, removidas ou sem leadId
+  if (!leadId || !p || p._removido) return;
+  const nomeLimpo = (p.produto_nome || '').trim();
+  if (!nomeLimpo || nomeLimpo === '—' || !p.produto_id) return; // exige produto oficial
+
+  const qty   = Number(p.quantidade) || 1;
+  const vunit = Number(p.valor_unitario) || 0;
 
   const payload = {
-    produto_id:     p.produto_id     || undefined,
-    produto_nome:   p.produto_nome,
-    produto_cor:    p.produto_cor    || undefined,
-    quantidade:     Number(p.quantidade) || 1,
-    valor_unitario: Number(p.valor_unitario) || 0,
+    produto_id:     p.produto_id,
+    produto_nome:   nomeLimpo,
+    produto_cor:    p.produto_cor || undefined,
+    quantidade:     qty,
+    valor_unitario: vunit,
   };
 
   if (p.id) {
     // Já persistido — PATCH
     const r = await Auth.api('PATCH', `/leads/${leadId}/produtos/${p.id}`, payload);
     if (r?.ok) {
-      _leadProdutos[idx] = { ...p, ...payload, valor_total: r.data.dados?.valor_total ?? (payload.quantidade * payload.valor_unitario), _salvo: true };
+      _leadProdutos[idx] = { ...p, ...payload, valor_total: r.data.dados?.valor_total ?? (qty * vunit), _salvo: true };
       recalcularTotalVenda();
     }
   } else {
@@ -1728,6 +1756,15 @@ async function salvarLinhaProduto(idx) {
     }
   }
 }
+
+// Força flush de todas as linhas não salvas com produto oficial antes de validar venda
+async function _flushProdutosNaoSalvos() {
+  const pendentes = _leadProdutos
+    .map((p, idx) => ({ p, idx }))
+    .filter(({ p }) => !p._removido && !p._salvo && p.produto_id && (p.produto_nome||'').trim());
+  await Promise.all(pendentes.map(({ idx }) => salvarLinhaProduto(idx)));
+}
+
 
 // Remove linha (soft delete no banco ou só localmente se não persistida)
 async function removerLinhaProduto(idx) {

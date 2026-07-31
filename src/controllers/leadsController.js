@@ -1973,7 +1973,13 @@ async function adicionarProdutoLead(req, res) {
   const leadId = req.params.id;
   const { produto_id, produto_nome, produto_cor, quantidade = 1, valor_unitario = 0 } = req.body;
 
-  if (!produto_nome) return res.status(400).json({ sucesso: false, erro: 'produto_nome é obrigatório.' });
+  const nomeLimpo = (produto_nome || '').trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
+  if (!nomeLimpo || nomeLimpo === '—' || nomeLimpo === '-') {
+    return res.status(400).json({ sucesso: false, erro: 'produto_nome inválido. Selecione um produto do catálogo.' });
+  }
+  if (!produto_id) {
+    return res.status(400).json({ sucesso: false, erro: 'Selecione um produto do catálogo oficial (produto_id obrigatório).' });
+  }
   if (Number(quantidade) <= 0) return res.status(400).json({ sucesso: false, erro: 'quantidade deve ser maior que zero.' });
 
   const id    = require('crypto').randomBytes(16).toString('hex');
