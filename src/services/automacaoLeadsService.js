@@ -391,7 +391,14 @@ async function enviarSlaContato1(lead) {
   const leadId = lead.id;
   const nome   = lead.nome || '';
 
-  console.log('AUTOMACAO_SLA_CONTATO_1_INICIO', { leadId, nome, telefone: lead.telefone });
+  // 0. Não envia para leads criados manualmente (sem origem externa)
+  const origemLead = (lead.origem || '').toLowerCase().trim();
+  if (!origemLead || origemLead === 'manual') {
+    console.log('AUTOMACAO_SLA_CONTATO_1_SKIP_MANUAL', { leadId, origem: lead.origem || '(vazio)' });
+    return;
+  }
+
+  console.log('AUTOMACAO_SLA_CONTATO_1_INICIO', { leadId, nome, telefone: lead.telefone, origem: origemLead });
 
   // 1. Verificar se já foi enviado (deduplicação)
   const { data: jaEnviado } = await sb.from('audit_logs')

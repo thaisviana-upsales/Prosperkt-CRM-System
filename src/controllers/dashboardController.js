@@ -62,17 +62,8 @@ function campoData(dataTipo) {
 }
 
 // ── Detecção de ganho/perda a partir de um lead + etapas ─────────────────────
-function isGanhoLead(l, etapaMap) {
-  const s = (l.status||'').toUpperCase();
-  if (['GANHO','VENDIDO','VENDA'].includes(s)) return true;
-  if (l.ganho_em) return true;
-  const et = etapaMap[l.etapa_id];
-  if (et?.is_ganho) return true;
-  if (et?.probabilidade >= 100) return true;
-  if (/venda|vendas|ganho|fechad|fechamento/i.test(et?.nome||'')) return true;
-  return false;
-}
 
+// isPerdidoLead declarada ANTES de isGanhoLead (que a referencia)
 function isPerdidoLead(l, etapaMap) {
   const s = (l.status||'').toUpperCase();
   if (s === 'PERDIDO') return true;
@@ -83,6 +74,22 @@ function isPerdidoLead(l, etapaMap) {
   if (/perdid|desqualif/i.test(et?.nome||'')) return true;
   return false;
 }
+
+function isGanhoLead(l, etapaMap) {
+  // ── REGRA CRÍTICA: lead perdido NUNCA conta como venda ──────────────────────
+  // Perdido tem prioridade absoluta — mesmo que tenha ganho_em preenchido
+  if (isPerdidoLead(l, etapaMap)) return false;
+
+  const s = (l.status||'').toUpperCase();
+  if (['GANHO','VENDIDO','VENDA'].includes(s)) return true;
+  if (l.ganho_em) return true;
+  const et = etapaMap[l.etapa_id];
+  if (et?.is_ganho) return true;
+  if (et?.probabilidade >= 100) return true;
+  if (/venda|vendas|ganho|fechad|fechamento/i.test(et?.nome||'')) return true;
+  return false;
+}
+
 
 function valorVenda(l) {
   // Fonte principal: valor_venda; fallback: valor

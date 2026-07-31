@@ -533,7 +533,7 @@ async function criar(req, res) {
       });
       // Dispara SLA Contato 1 de forma assíncrona (não bloqueia resposta)
       setImmediate(() => {
-        getAutomacaoSvc().enviarSlaContato1({ id, nome: nome.trim(), telefone: telefone || null, responsavel_id: respId })
+        getAutomacaoSvc().enviarSlaContato1({ id, nome: nome.trim(), telefone: telefone || null, responsavel_id: respId, origem: origem || 'manual' })
           .catch(e => console.error('[SLA_CONTATO_1]', e.message));
       });
       return res.status(201).json({ sucesso:true, dados: normalizeLead(data) });
@@ -578,7 +578,7 @@ async function criar(req, res) {
     });
     // Dispara SLA Contato 1 de forma assíncrona
     setImmediate(() => {
-      getAutomacaoSvc().enviarSlaContato1({ id, nome: nome.trim(), telefone: telefone || null, responsavel_id: respId })
+      getAutomacaoSvc().enviarSlaContato1({ id, nome: nome.trim(), telefone: telefone || null, responsavel_id: respId, origem: origem || 'manual' })
         .catch(e => console.error('[SLA_CONTATO_1]', e.message));
     });
     return res.status(201).json({ sucesso:true, dados: sqlite.prepare('SELECT * FROM leads WHERE id=?').get(id) });
