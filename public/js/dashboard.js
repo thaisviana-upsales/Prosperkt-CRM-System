@@ -22,11 +22,23 @@ async function init() {
     document.getElementById('kpi-pendentes-card').style.display = '';
   }
 
+  // Mostra painel SDR apenas para SDR e SUPER_ADMIN
+  if (['SUPER_ADMIN','SDR'].includes(_usuario.role)) {
+    document.getElementById('sdr-painel').style.display = '';
+    await _sdrPopularFiltros();
+    await carregarSdr();
+    _sdrBindEvents();
+  }
+
   await carregar();
   await carregarAlertasRecompra();
   bindEvents();
   // Auto-refresh a cada 60s
-  _autoTimer = setInterval(() => { carregar(); carregarAlertasRecompra(); }, 60000);
+  _autoTimer = setInterval(() => {
+    carregar();
+    carregarAlertasRecompra();
+    if (['SUPER_ADMIN','SDR'].includes(_usuario?.role)) carregarSdr();
+  }, 60000);
 }
 
 // Helper: identifica funil Carteira Recorrente por nome (case-insensitive)
@@ -598,3 +610,139 @@ function bindEvents() {
 }
 
 init();
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PAINEL SDR — Filtro SDR
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let _sdrFiltros = { funil_id: '', sdr_id: '', vendedor_id: '', data_inicio: '', data_fim: '' };
+
+async function _sdrPopularFiltros() {
+  // Funis
+  const selFunil = document.getElementById('sdr-f-funil');
+  if (selFunil && _funis.length) {
+    selFunil.innerHTML = '<option value="">Todos</option>' +
+      _funis.map(f => `<option value="${f.id}">${f.nome}</option>`).join('');
+  }
+
+  // SDRs ativos
+  const selSdr = document.getElementById('sdr-f-sdr');
+  if (selSdr) {
+    const r = await Auth.api('GET', '/usuarios?incluir_inativos=false');
+    const sdrs = (r?.data?.dados || []).filter(u => u.role === 'SDR' && (u.ativo === 1 || u.ativo === true));
+    selSdr.innerHTML = '<option value="">Todos</option>' +
+      sdrs.map(u => `<option value="${u.id}">${u.nome}</option>`).join('');
+    // SDR vê apenas a si mesmo
+    if (_usuario.role === 'SDR') {
+      selSdr.value = _usuario.id;
+      selSdr.disabled = true;
+      _sdrFiltros.sdr_id = _usuario.id;
+    }
+  }
+
+  // Vendedores ativos (destino)
+  const selVend = document.getElementById('sdr-f-vendedor');
+  if (selVend) {
+    const r = await Auth.api('GET', '/responsaveis');
+    const vends = (r?.data?.dados || []).filter(u => u.role === 'VENDEDOR');
+    selVend.innerHTML = '<option value="">Todos</option>' +
+      vends.map(u => `<option value="${u.id}">${u.nome}</option>`).join('');
+  }
+  console.log('[PERMISSION_SDR_APPLIED] painel SDR exibido para:', _usuario.role);
+}
+
+async function carregarSdr() {
+  const params = new URLSearchParams();
+  if (_sdrFiltros.funil_id)    params.set('funil_id',    _sdrFiltros.funil_id);
+  if (_sdrFiltros.sdr_id)      params.set('sdr_id',      _sdrFiltros.sdr_id);
+  if (_sdrFiltros.vendedor_id) params.set('vendedor_id', _sdrFiltros.vendedor_id);
+  if (_sdrFiltros.data_inicio) params.set('data_inicio', _sdrFiltros.data_inicio);
+  if (_sdrFiltros.data_fim)    params.set('data_fim',    _sdrFiltros.data_fim);
+
+  const r = await Auth.api('GET', `/dashboard/sdr?${params}`);
+  if (!r?.ok || !r.data?.acesso) {
+    console.warn('[PERMISSION_VENDOR_CANNOT_SEE_SDR_QUEUE] acesso negado ou erro:', r?.data?.erro);
+    return;
+  }
+  const d = r.data.dados;
+  _renderSdrEtapas(d.etapas);
+  _renderSdrConversao(d.conversao_qualificado);
+  _renderSdrSla(d.sla_atendimento, d.sla_qualificado);
+  _renderSdrOportunidades(d.oportunidades_por_vendedor);
+}
+
+function _renderSdrEtapas(etapas) {
+  const upd = (sufixo, e) => {
+    const el = document.getElementById(`sdr-num-${sufixo}`);
+    const pe = document.getElementById(`sdr-pct-${sufixo}`);
+    const be = document.getElementById(`sdr-bar-${sufixo}`);
+    if (el) el.textContent = e.quantidade;
+    if (pe) pe.textContent = sufixo === 'recebido' ? 'base (100%)' : `${e.percentual}%`;
+    if (be) be.style.width = `${Math.min(e.percentual, 100)}%`;
+  };
+  upd('recebido',   etapas.lead_recebido);
+  upd('contato',    etapas.contato_realizado);
+  upd('desqualif',  etapas.lead_desqualificado);
+  upd('qualificado',etapas.lead_qualificado_sdr);
+}
+
+function _renderSdrConversao(conv) {
+  const el = document.getElementById('sdr-conv-num');
+  const pp = document.getElementById('sdr-conv-pct');
+  const pb = document.getElementById('sdr-conv-base');
+  if (el) el.textContent = conv.quantidade;
+  if (pp) pp.textContent = `${conv.percentual}%`;
+  if (pb) pb.textContent = conv.total_base > 0 ? `de ${conv.total_base} recebidos` : 'sem base';
+}
+
+function _renderSdrSla(slaAtend, slaQual) {
+  const atEl = document.getElementById('sdr-sla-atend');
+  const alEl = document.getElementById('sdr-sla-atend-leads');
+  const quEl = document.getElementById('sdr-sla-qual');
+  const qlEl = document.getElementById('sdr-sla-qual-leads');
+  if (atEl) atEl.textContent = slaAtend.formatado || '—';
+  if (alEl) alEl.textContent = slaAtend.leads_considerados ? `${slaAtend.leads_considerados} leads considerados` : '';
+  if (quEl) quEl.textContent = slaQual.formatado || '—';
+  if (qlEl) qlEl.textContent = slaQual.leads_considerados ? `${slaQual.leads_considerados} leads considerados` : '';
+}
+
+function _renderSdrOportunidades(lista) {
+  const el = document.getElementById('sdr-oportunidades');
+  if (!el) return;
+  if (!lista || lista.length === 0) {
+    el.innerHTML = '<div class="empty">Nenhuma oportunidade qualificada no período</div>';
+    return;
+  }
+  el.innerHTML = lista.map((v, i) => `
+    <div class="sdr-oport-row">
+      <span class="sdr-oport-rank">${i + 1}</span>
+      <span class="sdr-oport-nome">${v.vendedor_nome}</span>
+      <span class="sdr-oport-qty">${v.quantidade} <small>leads</small></span>
+      <span class="sdr-oport-pct-badge">${v.percentual}%</span>
+      <div class="sdr-oport-bar-wrap">
+        <div class="sdr-oport-bar-fill" style="width:${v.percentual}%"></div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function _sdrBindEvents() {
+  document.getElementById('sdr-btn-apply')?.addEventListener('click', () => {
+    _sdrFiltros.funil_id    = document.getElementById('sdr-f-funil')?.value    || '';
+    _sdrFiltros.sdr_id      = document.getElementById('sdr-f-sdr')?.value      || '';
+    _sdrFiltros.vendedor_id = document.getElementById('sdr-f-vendedor')?.value || '';
+    _sdrFiltros.data_inicio = document.getElementById('sdr-f-inicio')?.value   || '';
+    _sdrFiltros.data_fim    = document.getElementById('sdr-f-fim')?.value      || '';
+    // SDR nunca pode mudar o filtro sdr_id para outro
+    if (_usuario.role === 'SDR') _sdrFiltros.sdr_id = _usuario.id;
+    carregarSdr();
+  });
+  document.getElementById('sdr-btn-clear')?.addEventListener('click', () => {
+    _sdrFiltros = { funil_id: '', sdr_id: _usuario.role === 'SDR' ? _usuario.id : '', vendedor_id: '', data_inicio: '', data_fim: '' };
+    ['sdr-f-funil','sdr-f-sdr','sdr-f-vendedor','sdr-f-inicio','sdr-f-fim'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el && !el.disabled) el.value = '';
+    });
+    carregarSdr();
+  });
+}

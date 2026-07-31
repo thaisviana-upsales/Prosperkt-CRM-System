@@ -1112,6 +1112,22 @@ async function mover(req, res) {
         console.log(`[SDR_QUALIFICACAO] Lead ${id} qualificado por ${req.usuario.nome} → vendedor: ${vendedorEscolhido.nome}`);
       }
 
+      // ── Registra rastreamento SDR para qualquer perfil que mova para Lead Qualificado SDR ──
+      // (colunas criadas no patch v32)
+      if (isLeadQualificadoSDR) {
+        const agQual = new Date().toISOString();
+        const sdrResponsavelId = (req.usuario.role === 'SDR') ? req.usuario.id : (lead.sdr_id || lead.responsavel_id || req.usuario.id);
+        // upd será definido mais adiante — usamos um pré-registro aqui que será mesclado
+        // via _sdrQualTracking (objeto auxiliar) e aplicado junto com o upd principal
+        req._sdrQualTracking = {
+          lead_qualificado_sdr_em:  agQual,
+          lead_qualificado_sdr_por: req.usuario.id,
+          sdr_id:                   sdrResponsavelId,
+          vendedor_destino_id:      req.body.responsavel_id || lead.responsavel_id || null,
+        };
+        console.log('[SDR_DEFAULT_FOUND] lead_qualificado_sdr_em salvo | lead:', id, '| sdr:', sdrResponsavelId, '| vendedor_destino:', req._sdrQualTracking.vendedor_destino_id);
+      }
+
       // ── VENDEDOR não pode mover lead de outro responsável (já existia) ──
       // Proteção extra: VENDEDOR não vê leads SDR até serem direcionados a ele
       if (req.usuario.role === 'VENDEDOR' && lead.responsavel_id !== req.usuario.id) {
@@ -1190,6 +1206,11 @@ async function mover(req, res) {
       }
 
       const upd = { etapa_id, atualizado_em: agora, status: novoStatus, etapa_atualizada_em: agora };
+
+      // Mescla rastreamento SDR se lead foi para Lead Qualificado SDR
+      if (req._sdrQualTracking) {
+        Object.assign(upd, req._sdrQualTracking);
+      }
 
       if (funilIdUpd) upd.funil_id = funilIdUpd;
       if (pipeline_id) upd.pipeline_id = pipeline_id;

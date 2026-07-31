@@ -837,4 +837,226 @@ async function resumo(req, res) {
   }
 }
 
-module.exports = { resumo };
+module.exports = { resumo, resumoSdr };
+
+// ── GET /api/dashboard/sdr ────────────────────────────────────────────────────
+// Métricas do painel Filtro SDR — visível apenas para SDR e SUPER_ADMIN
+async function resumoSdr(req, res) {
+  // Permissão: VENDEDOR e GESTOR sem SDR não veem
+  if (req.usuario.role === 'VENDEDOR') {
+    return res.status(403).json({ sucesso: false, acesso: false, erro: 'Acesso restrito a SDR e Super Admin.' });
+  }
+
+  const { sb, isSupa } = getProvider();
+  const { funil_id, sdr_id, vendedor_id, data_inicio, data_fim } = req.query;
+
+  console.log('[DASHBOARD_SDR_API_PARAMS]', { funil_id, sdr_id, vendedor_id, data_inicio, data_fim, role: req.usuario.role });
+
+  // SDR só vê dados dos próprios leads (onde ele era o SDR)
+  const filtroSdrId = req.usuario.role === 'SDR' ? req.usuario.id : (sdr_id || null);
+
+  if (!isSupa) {
+    return res.json({ sucesso: true, dados: _sdrMetricasVazias() });
+  }
+
+  try {
+    // ── 1. Busca nomes das etapas SDR no banco ──────────────────────────────
+    const ETAPAS_SDR = ['Lead Recebido', 'Contato Realizado', 'Lead Desqualificado', 'Lead Qualificado SDR'];
+
+    let etapasQ = sb.from('etapas').select('id, nome, pipeline_id, funil_id').in('nome', ETAPAS_SDR);
+    if (funil_id) etapasQ = etapasQ.eq('funil_id', funil_id);
+    const { data: etapasDados } = await etapasQ;
+
+    // Mapas: nome → [ids] e id → nome
+    const etapasMap = {};   // nome_normalizado → [etapa_id, ...]
+    const idToNome  = {};   // etapa_id → nome_normalizado
+
+    (etapasDados || []).forEach(e => {
+      const nomeNorm = e.nome.trim();
+      if (!etapasMap[nomeNorm]) etapasMap[nomeNorm] = [];
+      etapasMap[nomeNorm].push(e.id);
+      idToNome[e.id] = nomeNorm;
+    });
+
+    const todosEtapaIds = Object.values(etapasMap).flat();
+
+    // ── 2. Busca histórico de etapas SDR ────────────────────────────────────
+    let histQ = sb.from('lead_etapa_historico')
+      .select('lead_id, etapa_id, entrou_em, responsavel_id, funil_id')
+      .in('etapa_id', todosEtapaIds.length ? todosEtapaIds : ['__nenhum__']);
+
+    if (data_inicio) histQ = histQ.gte('entrou_em', `${data_inicio}T00:00:00`);
+    if (data_fim)    histQ = histQ.lte('entrou_em', `${data_fim}T23:59:59`);
+    if (funil_id)    histQ = histQ.eq('funil_id', funil_id);
+
+    const { data: historico } = await histQ;
+
+    // Agrupa por lead_id → Map<lead_id, { etapas visitadas com timestamps }>
+    const porLead = {};
+    (historico || []).forEach(h => {
+      if (!porLead[h.lead_id]) porLead[h.lead_id] = {};
+      const n = idToNome[h.etapa_id];
+      if (n && (!porLead[h.lead_id][n] || h.entrou_em < porLead[h.lead_id][n])) {
+        // Guarda a PRIMEIRA passagem por cada etapa
+        porLead[h.lead_id][n] = h.entrou_em;
+      }
+    });
+
+    // Filtra por SDR se necessário (via leads.sdr_id)
+    let leadIdsValidos = Object.keys(porLead);
+    if (filtroSdrId || vendedor_id) {
+      let leadsQ = sb.from('leads').select('id, sdr_id, vendedor_destino_id, criado_em, responsavel_id')
+        .in('id', leadIdsValidos.length ? leadIdsValidos : ['__nenhum__']);
+      if (filtroSdrId) leadsQ = leadsQ.eq('sdr_id', filtroSdrId);
+      if (vendedor_id) leadsQ = leadsQ.eq('vendedor_destino_id', vendedor_id);
+      const { data: leadsF } = await leadsQ;
+      leadIdsValidos = (leadsF || []).map(l => l.id);
+    }
+
+    // ── 3. Calcula contadores por etapa ────────────────────────────────────
+    const cnt = { 'Lead Recebido': 0, 'Contato Realizado': 0, 'Lead Desqualificado': 0, 'Lead Qualificado SDR': 0 };
+    leadIdsValidos.forEach(lid => {
+      const etapasDoLead = porLead[lid] || {};
+      ETAPAS_SDR.forEach(n => { if (etapasDoLead[n]) cnt[n]++; });
+    });
+
+    const totalRecebido = cnt['Lead Recebido'] || 0;
+    const pct = (n) => totalRecebido > 0 ? Math.round((n / totalRecebido) * 100) : 0;
+
+    // ── 4. Oportunidades por vendedor ───────────────────────────────────────
+    const leadsQualificadosIds = leadIdsValidos.filter(lid => porLead[lid]?.['Lead Qualificado SDR']);
+
+    let oportunidadesPorVendedor = [];
+    if (leadsQualificadosIds.length > 0) {
+      const { data: leadsQual } = await sb.from('leads')
+        .select('id, vendedor_destino_id, responsavel_id')
+        .in('id', leadsQualificadosIds)
+        .not('vendedor_destino_id', 'is', null);
+
+      const vendMap = {};
+      (leadsQual || []).forEach(l => {
+        const vid = l.vendedor_destino_id || l.responsavel_id;
+        if (!vid) return;
+        vendMap[vid] = (vendMap[vid] || 0) + 1;
+      });
+
+      if (Object.keys(vendMap).length > 0) {
+        const { data: vendedores } = await sb.from('usuarios')
+          .select('id, nome').in('id', Object.keys(vendMap));
+        const nomeMap = Object.fromEntries((vendedores || []).map(v => [v.id, v.nome]));
+        const totalQual = Object.values(vendMap).reduce((a, b) => a + b, 0);
+        oportunidadesPorVendedor = Object.entries(vendMap)
+          .map(([vid, qty]) => ({
+            vendedor_id:   vid,
+            vendedor_nome: nomeMap[vid] || 'Desconhecido',
+            quantidade:    qty,
+            percentual:    totalQual > 0 ? Math.round((qty / totalQual) * 100) : 0,
+          }))
+          .sort((a, b) => b.quantidade - a.quantidade);
+      }
+    }
+
+    // ── 5. SLAs ──────────────────────────────────────────────────────────────
+    // Busca criado_em de todos os leads válidos com passagem nas etapas SDR
+    const todosLeadsIds = leadIdsValidos.length ? leadIdsValidos : ['__nenhum__'];
+    const { data: leadsDados } = await sb.from('leads')
+      .select('id, criado_em, lead_qualificado_sdr_em')
+      .in('id', todosLeadsIds);
+    const leadsDadosMap = Object.fromEntries((leadsDados || []).map(l => [l.id, l]));
+
+    const ETAPAS_ACAO_SDR = ['Contato Realizado', 'Lead Desqualificado', 'Lead Qualificado SDR'];
+
+    let somaSlAAtendimento  = 0, cntSlaAtend  = 0;
+    let somaSlaQualificado  = 0, cntSlaQual   = 0;
+
+    leadIdsValidos.forEach(lid => {
+      const etapas = porLead[lid] || {};
+      const lead   = leadsDadosMap[lid];
+      if (!lead?.criado_em) return;
+
+      const criadoMs = new Date(lead.criado_em).getTime();
+      if (isNaN(criadoMs)) return;
+
+      // SLA Atendimento: criado_em → primeira ação SDR
+      const primeiraAcao = ETAPAS_ACAO_SDR
+        .map(n => etapas[n] ? new Date(etapas[n]).getTime() : null)
+        .filter(Boolean)
+        .sort((a, b) => a - b)[0];
+
+      if (primeiraAcao && primeiraAcao > criadoMs) {
+        somaSlAAtendimento += (primeiraAcao - criadoMs) / 60000; // minutos
+        cntSlaAtend++;
+      }
+
+      // SLA Qualificado: criado_em → Lead Qualificado SDR
+      const tsQual = etapas['Lead Qualificado SDR']
+        ? new Date(etapas['Lead Qualificado SDR']).getTime()
+        : (lead.lead_qualificado_sdr_em ? new Date(lead.lead_qualificado_sdr_em).getTime() : null);
+
+      if (tsQual && tsQual > criadoMs) {
+        somaSlaQualificado += (tsQual - criadoMs) / 60000;
+        cntSlaQual++;
+      }
+    });
+
+    const slaAtendimento = cntSlaAtend  > 0 ? Math.round(somaSlAAtendimento / cntSlaAtend)  : null;
+    const slaQualificado = cntSlaQual   > 0 ? Math.round(somaSlaQualificado / cntSlaQual)   : null;
+
+    // ── 6. Resposta ─────────────────────────────────────────────────────────
+    console.log('[DASHBOARD_SDR_RESULT]', { totalRecebido, cnt, cntSlaAtend, cntSlaQual });
+    return res.json({
+      sucesso: true,
+      acesso:  true,
+      dados: {
+        etapas: {
+          lead_recebido:       { quantidade: cnt['Lead Recebido'],       percentual: 100 },
+          contato_realizado:   { quantidade: cnt['Contato Realizado'],   percentual: pct(cnt['Contato Realizado']) },
+          lead_desqualificado: { quantidade: cnt['Lead Desqualificado'], percentual: pct(cnt['Lead Desqualificado']) },
+          lead_qualificado_sdr:{ quantidade: cnt['Lead Qualificado SDR'],percentual: pct(cnt['Lead Qualificado SDR']) },
+        },
+        conversao_qualificado: {
+          quantidade:  cnt['Lead Qualificado SDR'],
+          percentual:  pct(cnt['Lead Qualificado SDR']),
+          total_base:  totalRecebido,
+        },
+        sla_atendimento: {
+          media_minutos:      slaAtendimento,
+          leads_considerados: cntSlaAtend,
+          formatado:          _fmtSla(slaAtendimento),
+        },
+        sla_qualificado: {
+          media_minutos:      slaQualificado,
+          leads_considerados: cntSlaQual,
+          formatado:          _fmtSla(slaQualificado),
+        },
+        oportunidades_por_vendedor: oportunidadesPorVendedor,
+      },
+    });
+
+  } catch(e) {
+    console.error('[dashboard.resumoSdr]', e.message);
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}
+
+function _sdrMetricasVazias() {
+  const etapa0 = { quantidade: 0, percentual: 0 };
+  return {
+    etapas: { lead_recebido: etapa0, contato_realizado: etapa0, lead_desqualificado: etapa0, lead_qualificado_sdr: etapa0 },
+    conversao_qualificado: { quantidade: 0, percentual: 0, total_base: 0 },
+    sla_atendimento:  { media_minutos: null, leads_considerados: 0, formatado: '—' },
+    sla_qualificado:  { media_minutos: null, leads_considerados: 0, formatado: '—' },
+    oportunidades_por_vendedor: [],
+  };
+}
+
+function _fmtSla(minutos) {
+  if (minutos == null || minutos <= 0) return '—';
+  if (minutos < 60) return `${minutos}min`;
+  const h = Math.floor(minutos / 60);
+  const m = minutos % 60;
+  if (h < 24) return m > 0 ? `${h}h ${m}min` : `${h}h`;
+  const d = Math.floor(h / 24);
+  const hr = h % 24;
+  return hr > 0 ? `${d}d ${hr}h` : `${d}d`;
+}

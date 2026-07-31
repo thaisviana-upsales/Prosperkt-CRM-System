@@ -171,6 +171,131 @@
 </div>
 
 </div><!-- /.dash-wrap -->
+
+<!-- ═══ PAINEL SDR — visível apenas para SDR e SUPER_ADMIN ═══════════════════ -->
+<div id="sdr-painel" class="dash-wrap sdr-painel-wrap" style="display:none;margin-top:0;padding-top:0">
+
+  <!-- Divisor visual -->
+  <div class="sdr-divider">
+    <span class="sdr-divider-line"></span>
+    <span class="sdr-divider-label">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+      FILTRO SDR
+    </span>
+    <span class="sdr-divider-line"></span>
+  </div>
+
+  <!-- Filtros do painel SDR -->
+  <div class="dash-filters sdr-filters">
+    <div class="fg">
+      <span class="fl">Funil</span>
+      <select id="sdr-f-funil" class="fs"><option value="">Todos</option></select>
+    </div>
+    <div class="fg">
+      <span class="fl">SDR</span>
+      <select id="sdr-f-sdr" class="fs"><option value="">Todos</option></select>
+    </div>
+    <div class="fg">
+      <span class="fl">Vendedor Destino</span>
+      <select id="sdr-f-vendedor" class="fs"><option value="">Todos</option></select>
+    </div>
+    <div class="fg">
+      <span class="fl">De</span>
+      <input type="date" id="sdr-f-inicio" class="di" title="Data de início">
+    </div>
+    <div class="fg">
+      <span class="fl">Até</span>
+      <input type="date" id="sdr-f-fim" class="di" title="Data de fim">
+    </div>
+    <button class="btn-apply" id="sdr-btn-apply">Aplicar</button>
+    <button class="btn-clear" id="sdr-btn-clear">Limpar</button>
+  </div>
+
+  <!-- KPI Etapas SDR -->
+  <div class="sdr-etapas-grid" id="sdr-etapas-grid">
+    <div class="sdr-etapa-card" id="sdr-card-recebido">
+      <div class="sdr-etapa-icone">📥</div>
+      <div class="sdr-etapa-nome">Lead Recebido</div>
+      <div class="sdr-etapa-num" id="sdr-num-recebido">—</div>
+      <div class="sdr-etapa-pct" id="sdr-pct-recebido">base (100%)</div>
+      <div class="sdr-etapa-bar"><div class="sdr-bar-fill sdr-bar-recebido" id="sdr-bar-recebido" style="width:100%"></div></div>
+    </div>
+    <div class="sdr-etapa-card" id="sdr-card-contato">
+      <div class="sdr-etapa-icone">📞</div>
+      <div class="sdr-etapa-nome">Contato Realizado</div>
+      <div class="sdr-etapa-num" id="sdr-num-contato">—</div>
+      <div class="sdr-etapa-pct" id="sdr-pct-contato">—%</div>
+      <div class="sdr-etapa-bar"><div class="sdr-bar-fill sdr-bar-contato" id="sdr-bar-contato" style="width:0%"></div></div>
+    </div>
+    <div class="sdr-etapa-card" id="sdr-card-desqualif">
+      <div class="sdr-etapa-icone">❌</div>
+      <div class="sdr-etapa-nome">Lead Desqualificado</div>
+      <div class="sdr-etapa-num" id="sdr-num-desqualif">—</div>
+      <div class="sdr-etapa-pct" id="sdr-pct-desqualif">—%</div>
+      <div class="sdr-etapa-bar"><div class="sdr-bar-fill sdr-bar-desqualif" id="sdr-bar-desqualif" style="width:0%"></div></div>
+    </div>
+    <div class="sdr-etapa-card sdr-etapa-destaque" id="sdr-card-qualificado">
+      <div class="sdr-etapa-icone">🎯</div>
+      <div class="sdr-etapa-nome">Lead Qualificado SDR</div>
+      <div class="sdr-etapa-num" id="sdr-num-qualificado">—</div>
+      <div class="sdr-etapa-pct" id="sdr-pct-qualificado">—%</div>
+      <div class="sdr-etapa-bar"><div class="sdr-bar-fill sdr-bar-qualificado" id="sdr-bar-qualificado" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <!-- Row: Conversão + SLA Atendimento + SLA Qualificado -->
+  <div class="three-col">
+    <div class="panel sdr-conv-panel">
+      <div class="panel-title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        Conversão de Lead Qualificado
+      </div>
+      <div style="text-align:center;padding:16px 0 8px">
+        <div class="sdr-conv-num" id="sdr-conv-num">—</div>
+        <div class="sdr-conv-label">leads qualificados</div>
+        <div class="sdr-conv-pct-wrap">
+          <span class="sdr-conv-pct" id="sdr-conv-pct">—%</span>
+          <span class="sdr-conv-base" id="sdr-conv-base">conversão</span>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        SLA de Atendimento
+      </div>
+      <div class="resp-stat">
+        <div class="sdr-sla-num" id="sdr-sla-atend">—</div>
+        <div class="resp-label">até 1ª ação da SDR</div>
+        <div style="font-size:.72rem;color:var(--text-muted);margin-top:6px" id="sdr-sla-atend-leads"></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        SLA de Lead Qualificado
+      </div>
+      <div class="resp-stat">
+        <div class="sdr-sla-num" id="sdr-sla-qual">—</div>
+        <div class="resp-label">até qualificação</div>
+        <div style="font-size:.72rem;color:var(--text-muted);margin-top:6px" id="sdr-sla-qual-leads"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Oportunidades por Vendedor -->
+  <div class="panel" style="margin-top:16px">
+    <div class="panel-title">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Oportunidades por Vendedor
+    </div>
+    <div id="sdr-oportunidades" class="sdr-oport-lista">
+      <div class="empty">Nenhum dado</div>
+    </div>
+  </div>
+
+</div><!-- /#sdr-painel -->
+
 </main>
 </div>
 

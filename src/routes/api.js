@@ -89,6 +89,9 @@ router.get('/dashboard', autenticar, (req, res, next) => {
   next();
 }, dashboardCtrl.resumo);
 
+// Painel SDR — métricas de qualificação (SDR e SUPER_ADMIN apenas)
+router.get('/dashboard/sdr', autenticar, dashboardCtrl.resumoSdr);
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FUNIS
