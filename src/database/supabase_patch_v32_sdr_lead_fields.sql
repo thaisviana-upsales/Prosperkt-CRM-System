@@ -28,8 +28,8 @@ WHERE  l.sdr_id IS NULL
 -- 4. Backfill: para leads já em "Lead Qualificado SDR" sem timestamp,
 --    usa etapa_atualizada_em ou atualizado_em como data estimada
 UPDATE public.leads l
-SET    lead_qualificado_sdr_em = COALESCE(l.etapa_atualizada_em, l.atualizado_em),
-       lead_qualificado_sdr_por = COALESCE(l.sdr_qualificador, l.responsavel_id)
+SET    lead_qualificado_sdr_em  = COALESCE(l.etapa_atualizada_em, l.atualizado_em),
+       lead_qualificado_sdr_por = l.responsavel_id
 WHERE  l.lead_qualificado_sdr_em IS NULL
   AND  EXISTS (
     SELECT 1 FROM public.etapas e
