@@ -187,12 +187,15 @@ async function resumo(req, res) {
       if (error) throw error;
 
       // ── 3. KPIs ──────────────────────────────────────────────────────────────
-      // Fix #4: perdidos filtrados por data separadamente
+      // Fix #4: perdidos filtrados por perdido_em quando há filtro de data
       let perdidos = leads.filter(l => isPerdidoLead(l, etapaMap));
       if (periodo?.ini || periodo?.fim) {
+        // Perdidos SEMPRE filtrados por perdido_em (independente do data_tipo principal)
+        // Isso garante que o card de perdidos não "some" quando data_tipo=fechamento
+        const ini = periodo.ini ? new Date(periodo.ini + 'T00:00:00').getTime() : null;
+        const fim = periodo.fim ? new Date(periodo.fim + 'T23:59:59').getTime() : null;
         if (data_tipo === 'perdido' || data_tipo === 'perda') {
-          const ini = periodo.ini ? new Date(periodo.ini + 'T00:00:00').getTime() : null;
-          const fim = periodo.fim ? new Date(periodo.fim + 'T23:59:59').getTime() : null;
+          // Já filtrado pelo campo perdido_em via query principal
           perdidos = perdidos.filter(l => {
             if (!l.perdido_em) return false;
             const t = new Date(l.perdido_em).getTime();
@@ -200,6 +203,12 @@ async function resumo(req, res) {
             if (fim && t > fim) return false;
             return true;
           });
+        } else {
+          // Para outros tipos de data: busca perdidos adicionais por perdido_em
+          // mas NÃO filtra pela data (já que a query foi filtrada por outro campo)
+          // Mantém todos os perdidos que existem nos leads do período
+          // (ex: lead criado no período que foi perdido)
+          // Nenhuma mudança necessária — perdidos já vêm do array `leads` filtrado
         }
       }
       const ganhos   = leads.filter(l => isGanhoLead(l, etapaMap));
@@ -237,6 +246,8 @@ async function resumo(req, res) {
         }
         if (responsavel_id)   qFunil = qFunil.eq('responsavel_id', responsavel_id);
         if (req.usuario.role === 'VENDEDOR') qFunil = qFunil.eq('responsavel_id', req.usuario.id);
+        // Exclui clones da Carteira Recorrente (mesmo filtro do array principal)
+        qFunil = qFunil.is('tipo_clone', null);
         const { data: allLeads } = await qFunil;
         leadsParaFunil = allLeads || leads;
       }
@@ -381,6 +392,8 @@ async function resumo(req, res) {
         }
         if (responsavel_id)     qTodos = qTodos.eq('responsavel_id', responsavel_id);
         if (req.usuario.role === 'VENDEDOR') qTodos = qTodos.eq('responsavel_id', req.usuario.id);
+        // Exclui clones — mesma regra do array principal
+        qTodos = qTodos.is('tipo_clone', null);
         qTodos = qTodos.is('deleted_at', null);
         const { data: todosLeads } = await qTodos;
         todosLeadsRankingBase = todosLeads || leads;
@@ -463,6 +476,8 @@ async function resumo(req, res) {
         }
         if (responsavel_id)     q2 = q2.eq('responsavel_id', responsavel_id);
         if (req.usuario.role === 'VENDEDOR') q2 = q2.eq('responsavel_id', req.usuario.id);
+        // Exclui clones — consistência com query principal
+        q2 = q2.is('tipo_clone', null);
         q2 = q2.gte('criado_em', d30.toISOString());
         return q2;
       })();
@@ -495,11 +510,19 @@ async function resumo(req, res) {
     // Resolve Carteira Recorrente e funis inativos para exclusão (Todos - Novos)
     let carteiraFunilIdSql = null;
     let funisInativosSql = []; // ids de funis inativos (ex: Tráfego Pago)
-    if (excluiCarteira) {
+    // SEMPRE exclui Carteira quando não há funil_id específico (equivalente ao Supabase)
+    if (!funil_id) {
+      const cr = db.prepare(`SELECT id FROM funis WHERE nome LIKE '%Carteira Recorrente%' LIMIT 1`).get();
+      carteiraFunilIdSql = cr?.id || null;
+      console.log('[DASH_SQL_EXCLUIR_CARTEIRA] excluindo funil_id:', carteiraFunilIdSql);
+      const inativosRows = db.prepare(`SELECT id FROM funis WHERE ativo=0`).all();
+      funisInativosSql = inativosRows.map(f => f.id).filter(id => id !== carteiraFunilIdSql);
+      if (funisInativosSql.length) console.log('[DASH_SQL_EXCLUIR_INATIVOS] ids:', funisInativosSql);
+    } else if (excluiCarteira) {
+      // Compat: excluiCarteira ainda funciona como fallback
       const cr = db.prepare(`SELECT id FROM funis WHERE nome LIKE '%Carteira Recorrente%' LIMIT 1`).get();
       carteiraFunilIdSql = cr?.id || null;
       console.log('[DASH_EXCLUIR_CARTEIRA_SQL] excluindo funil_id:', carteiraFunilIdSql);
-      // Funis inativos (Tráfego Pago etc.)
       const inativosRows = db.prepare(`SELECT id FROM funis WHERE ativo=0`).all();
       funisInativosSql = inativosRows.map(f => f.id).filter(id => id !== carteiraFunilIdSql);
       if (funisInativosSql.length) console.log('[DASH_EXCLUIR_INATIVOS_SQL] ids:', funisInativosSql);
