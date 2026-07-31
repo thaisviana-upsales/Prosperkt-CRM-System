@@ -717,9 +717,30 @@ async function enviarMensagem(req, res) {
     const nomeRemetente  = req.usuario.nome || 'CRM';
     const cabecalho      = `${nomeRemetente} | PROSPEKT`;
     const jaTemCabecalho = tipo === 'texto' && (mensagem || '').trimStart().includes('| PROSPEKT');
-    const textoParaCliente = tipo === 'texto'
+    const textoBase      = tipo === 'texto'
       ? (jaTemCabecalho ? mensagem : `${cabecalho}\n\n${mensagem}`)
       : (mensagem || '');
+
+    // ── Sanitiza texto para Evolution: remove caracteres de controle inválidos ──
+    // Scripts da Biblioteca podem conter chars Unicode multi-byte (emojis, símbolos)
+    // que são válidos no WhatsApp mas devem estar corretamente encodados.
+    // Remove apenas caracteres de controle C0/C1 (0x00-0x08, 0x0B-0x0C, 0x0E-0x1F, 0x7F)
+    // preservando: \n (0x0A), \r (0x0D), \t (0x09) e todos os emojis/unicode válidos.
+    const textoParaCliente = typeof textoBase === 'string'
+      ? textoBase.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').trim()
+      : String(textoBase || '').trim();
+
+    // Valida texto final antes de enviar
+    const textoOrigemLog = req.body.script_id ? `script:${req.body.script_id}` : 'manual';
+    console.log('SCRIPT_SEND_START', { conversaId: id, origem: textoOrigemLog, telefone: telNormalizado });
+
+    if (!textoParaCliente) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'Não foi possível enviar. A mensagem ficou vazia após processamento.',
+        codigo: 'MENSAGEM_VAZIA',
+      });
+    }
 
     // ── 4. ENVIA PELA EVOLUTION PRIMEIRO (antes de salvar) ────────────────────
     let evoOk  = false;
@@ -750,7 +771,7 @@ async function enviarMensagem(req, res) {
       console.log('WHATSAPP_SEND_TO_PHONE_NORMALIZED', telNormalizado);
       console.log('WHATSAPP_SEND_ENDPOINT', `${process.env.EVOLUTION_API_URL || ''}${endpoint}`);
       console.log('WHATSAPP_SEND_API_KEY_PRESENT', process.env.EVOLUTION_API_KEY ? '✅ sim' : '❌ AUSENTE');
-      console.log('WHATSAPP_SEND_PAYLOAD_SAFE', JSON.stringify({ number: telNormalizado, textPreview: textoParaCliente?.slice(0, 80) }));
+      console.log('WHATSAPP_SEND_PAYLOAD_SAFE', JSON.stringify({ number: telNormalizado, textPreview: textoParaCliente?.slice(0, 80), origem: textoOrigemLog }));
       // Compat: log antigo preservado
       console.log('CRM_SEND_WHATSAPP_START', {
         conversaId: id,
@@ -759,7 +780,9 @@ async function enviarMensagem(req, res) {
         telefoneNormalizado: telNormalizado,
         textoDigitado: mensagem?.slice(0, 80),
         textoFinal: textoParaCliente?.slice(0, 80),
+        origem: textoOrigemLog,
       });
+      console.log('SCRIPT_SEND_USING_MANUAL_FLOW', { conversaId: id, origem: textoOrigemLog });
 
       evoRes = await evoSvc.enviarTexto(telNormalizado, textoParaCliente);
 

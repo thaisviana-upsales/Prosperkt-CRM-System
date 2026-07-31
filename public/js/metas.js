@@ -101,41 +101,56 @@ async function carregarFunis() {
 
 // ─── Carrega usuários do servidor ─────────────────────────────────────────────
 async function carregarUsuarios() {
+  console.log('METAS_VENDEDORES_LOAD_START', { role: _usuario?.role });
   try {
-    const r = await Auth.api('GET', '/usuarios');
-    const raw = r?.data?.dados || [];
-    console.log('[Metas] carregarUsuarios | raw:', raw.length, '| ok:', r?.ok);
+    // Usa /usuarios/responsaveis como fonte primária — retorna apenas VENDEDOR+SUPER_ADMIN ativos
+    // (sem SDR, sem inativo, sem teste)
+    const r = await Auth.api('GET', '/usuarios/responsaveis');
+    let raw = r?.data?.dados || [];
 
-    // Filtra ativos (aceita boolean true, integer 1 ou string '1') e roles comerciais
+    // Fallback: se a rota falhar, tenta /usuarios com filtro manual
+    if (!r?.ok || raw.length === 0) {
+      console.warn('METAS_VENDEDORES_FALLBACK /usuarios');
+      const r2 = await Auth.api('GET', '/usuarios');
+      raw = r2?.data?.dados || [];
+    }
+
+    console.log('METAS_VENDEDORES_LOAD_SUCCESS', { rawTotal: raw.length, role: _usuario?.role });
+
+    // Filtra: somente ativos e roles comerciais (exclui SDR da lista de metas)
+    const ROLES_METAS = ['SUPER_ADMIN', 'GESTOR', 'VENDEDOR'];
     const todos = raw.filter(u => {
       const estaAtivo = u.ativo === true || u.ativo === 1 || u.ativo === '1';
-      const roleComercial = ['SUPER_ADMIN', 'GESTOR', 'VENDEDOR'].includes(u.role);
-      return estaAtivo && roleComercial;
+      const roleOk    = ROLES_METAS.includes(u.role);
+      return estaAtivo && roleOk;
     }).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
 
     _usuarios = todos;
-    console.log('[Metas] vendedores comerciais ativos:', todos.length, '|', todos.map(u => u.nome).join(', '));
+    console.log('METAS_VENDEDORES_ATIVOS', { total: todos.length, nomes: todos.map(u => u.nome).join(', ') });
 
     if (todos.length === 0) {
-      console.warn('[Metas] Nenhum vendedor ativo encontrado — verifique a API /usuarios e o campo ativo no banco.');
+      console.warn('[Metas] Nenhum vendedor ativo encontrado — verifique a API /usuarios/responsaveis e o campo ativo no banco.');
     }
 
-    // Se é vendedor, injeta só ele mesmo nas opções
+    // Se é vendedor, injeta só ele mesmo nas opções do modal
     if (_usuario.role === 'VENDEDOR') {
-      const me = todos.find(u => u.id === _usuario.id);
-      const opt = me ? `<option value="${me.id}" selected>${escHtml(me.nome)}</option>` : '';
-      document.getElementById('m-vendedor').innerHTML = opt || `<option value="${_usuario.id}">${escHtml(_usuario.nome || 'Você')}</option>`;
+      const me = todos.find(u => u.id === _usuario.id) || _usuario;
+      const opt = `<option value="${me.id}" selected>${escHtml(me.nome || 'Você')}</option>`;
+      const mv = document.getElementById('m-vendedor');
+      if (mv) mv.innerHTML = opt;
       return;
     }
 
-    // Admin/Gestor: lista completa no filtro e no modal
+    // Admin/Gestor/SDR: lista completa no filtro e no modal
     const opts = todos.map(u => `<option value="${u.id}">${escHtml(u.nome)}</option>`).join('');
-    // Filtro da página
+
+    // Filtro da página (f-vendedor)
     const fv = document.getElementById('f-vendedor');
     if (fv) fv.innerHTML = '<option value="">Todos</option>' + opts;
-    // Modal de criação/edição
+
+    // Modal de criação/edição (m-vendedor)
     const mv = document.getElementById('m-vendedor');
-    if (mv) mv.innerHTML = '<option value="">— selecione —</option>' + opts;
+    if (mv) mv.innerHTML = '<option value="">— selecione o vendedor —</option>' + opts;
 
   } catch (e) {
     console.warn('[Metas] carregarUsuarios error:', e);
