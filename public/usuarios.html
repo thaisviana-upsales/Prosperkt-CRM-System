@@ -161,8 +161,8 @@
       <div class="form-row">
         <div class="input-group">
           <label class="input-label" for="form-role">Perfil</label>
-          <select id="form-role" class="input">
-            <option value="VENDEDOR">Vendedor</option>
+          <select id="form-role" class="input" onchange="onRoleChange()">            <option value="VENDEDOR">Vendedor</option>
+            <option value="SDR">SDR</option>
             <option value="GESTOR">Gestor</option>
             <option value="SUPER_ADMIN">Super Admin</option>
           </select>
@@ -175,6 +175,20 @@
           </select>
         </div>
       </div>
+
+      <!-- Campos SDR (visíveis apenas quando perfil = SDR) -->
+      <div id="sdr-campos" style="display:none;background:var(--surface-2,#161616);border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:2px">
+        <div style="font-size:.7rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">⚙️ Configurações SDR</div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.82rem;margin-bottom:8px">
+          <input type="checkbox" id="form-recebe-leads" style="accent-color:var(--green,#6CFF4E);width:15px;height:15px">
+          <span>Recebe leads automáticos</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.82rem">
+          <input type="checkbox" id="form-sdr-padrao" style="accent-color:#7dbfff;width:15px;height:15px">
+          <span>SDR padrão <small style="color:var(--text-muted)">(somente um pode ser padrão)</small></span>
+        </label>
+      </div>
+
       <!-- Avatar upload (só em modo editar) -->
       <div class="input-group" id="avatar-group" style="display:none">
         <label class="input-label">Foto de Perfil</label>
@@ -219,7 +233,7 @@
 <script src="/js/sidebar.js"></script>
 
 <script>
-const ROLE_LABELS = { SUPER_ADMIN:'Super Admin', GESTOR:'Gestor', VENDEDOR:'Vendedor' };
+const ROLE_LABELS = { SUPER_ADMIN:'Super Admin', GESTOR:'Gestor', VENDEDOR:'Vendedor', SDR:'SDR' };
 let _usuarios = [];
 let _currentUser = null;
 let _deleteId = null;
@@ -297,7 +311,12 @@ function renderTabela(lista) {
 }
 
 function roleBadgeClass(role) {
-  return { SUPER_ADMIN:'badge badge-pink', GESTOR:'badge badge-warning', VENDEDOR:'badge badge-green' }[role] || 'badge badge-muted';
+  return {
+    SUPER_ADMIN: 'badge badge-pink',
+    GESTOR:      'badge badge-warning',
+    VENDEDOR:    'badge badge-green',
+    SDR:         'badge badge-purple',
+  }[role] || 'badge badge-muted';
 }
 
 // ── Event delegation para botões da tabela ───────────────────
@@ -335,6 +354,13 @@ function abrirModal(modo = 'criar', usuario = null) {
   document.getElementById('senha-opcional').style.display = modo === 'editar' ? '' : 'none';
   document.getElementById('modal-alert').style.display = 'none';
   document.getElementById('form-email').disabled = modo === 'editar';
+
+  // Campos SDR
+  const recebeEl  = document.getElementById('form-recebe-leads');
+  const padraoEl  = document.getElementById('form-sdr-padrao');
+  if (recebeEl) recebeEl.checked  = usuario?.recebe_leads_automaticos === true || usuario?.recebe_leads_automaticos === 1;
+  if (padraoEl) padraoEl.checked  = usuario?.sdr_padrao === true || usuario?.sdr_padrao === 1;
+  onRoleChange(); // mostra/oculta seção SDR
 
   // Avatar (só no modo editar)
   const avatarGroup = document.getElementById('avatar-group');
@@ -409,11 +435,21 @@ async function salvarUsuario(e) {
     let res;
     if (!id) {
       // Criar
-      res = await Auth.api('POST', '/usuarios', { nome, email, senha, role });
+      const payload = { nome, email, senha, role };
+      if (role === 'SDR') {
+        payload.recebe_leads_automaticos = document.getElementById('form-recebe-leads')?.checked || false;
+        payload.sdr_padrao               = document.getElementById('form-sdr-padrao')?.checked  || false;
+      }
+      console.log('[USER_CREATE_PROFILE_RECEIVED]', role);
+      res = await Auth.api('POST', '/usuarios', payload);
     } else {
       // Editar
       const payload = { nome, role, ativo };
       if (senha) payload.senha = senha;
+      if (role === 'SDR') {
+        payload.recebe_leads_automaticos = document.getElementById('form-recebe-leads')?.checked || false;
+        payload.sdr_padrao               = document.getElementById('form-sdr-padrao')?.checked  || false;
+      }
       res = await Auth.api('PATCH', `/usuarios/${id}`, payload);
     }
 
@@ -504,6 +540,14 @@ function bindEvents() {
   });
 }
 
+
+
+// ── SDR: mostrar/ocultar campos ao mudar perfil ──────────────
+function onRoleChange() {
+  const role = document.getElementById('form-role')?.value;
+  const sdrEl = document.getElementById('sdr-campos');
+  if (sdrEl) sdrEl.style.display = role === 'SDR' ? '' : 'none';
+}
 
 init();
 </script>

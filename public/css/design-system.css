@@ -278,11 +278,13 @@ textarea.input { resize: vertical; min-height: 80px; }
 .badge-error   { background: rgba(255,59,92,0.10);          color: var(--error); }
 .badge-info    { background: rgba(59,139,255,0.10);         color: var(--info); }
 .badge-muted   { background: var(--surface-2);              color: var(--text-secondary); }
+.badge-purple  { background: rgba(167,139,250,0.15);        color: #a78bfa; }
 
 /* ── Role badges ─────────────────────────────────────────────── */
 .role-SUPER_ADMIN { background: linear-gradient(135deg,var(--green-dim),var(--pink-dim)); color: var(--text-primary); }
 .role-GESTOR      { background: var(--pink-dim);  color: var(--pink); }
 .role-VENDEDOR    { background: var(--green-dim); color: var(--green); }
+.role-SDR         { background: rgba(167,139,250,0.15); color: #a78bfa; }
 
 /* ── Sidebar ─────────────────────────────────────────────────── */
 .sidebar {

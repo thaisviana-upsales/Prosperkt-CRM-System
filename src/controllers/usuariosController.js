@@ -9,7 +9,7 @@ const crypto = require('crypto');
 const { getProvider } = require('../database/dbProvider');
 const { registrarLog } = require('../services/auditService');
 
-const CAMPOS_PUBLICOS_SUPA = 'id, nome, email, role, ativo, avatar_url, criado_em, atualizado_em';
+const CAMPOS_PUBLICOS_SUPA = 'id, nome, email, role, ativo, avatar_url, criado_em, atualizado_em, sdr_padrao, recebe_leads_automaticos';
 
 
 // GET /api/usuarios
@@ -203,10 +203,16 @@ async function criar(req, res) {
       const { data: dup } = await sb.from('usuarios').select('id').eq('email', emailNorm).limit(1);
       if (dup?.length) return res.status(409).json({ sucesso: false, erro: 'Email já está em uso.' });
 
-      const { data, error } = await sb.from('usuarios').insert({
+      const insertData = {
         id, nome: nome.trim(), email: emailNorm, senha_hash: hash, role, ativo: 1,
         criado_em: new Date().toISOString(), atualizado_em: new Date().toISOString(),
-      }).select(CAMPOS_PUBLICOS_SUPA).single();
+      };
+      if (role === 'SDR') {
+        insertData.recebe_leads_automaticos = req.body.recebe_leads_automaticos === true || req.body.recebe_leads_automaticos === 1 || true; // SDR recebe por padrão
+        insertData.sdr_padrao = req.body.sdr_padrao === true || req.body.sdr_padrao === 1;
+        console.log('[USER_CREATE_SDR_ACCEPTED] nome:', nome.trim(), '| sdr_padrao:', insertData.sdr_padrao);
+      }
+      const { data, error } = await sb.from('usuarios').insert(insertData).select(CAMPOS_PUBLICOS_SUPA).single();
       if (error) throw error;
       req.log({ acao: 'CREATE', entidade: 'usuarios', entidade_id: id, depois: { nome, email: emailNorm, role } });
       return res.status(201).json({ sucesso: true, dados: data });
@@ -259,6 +265,14 @@ async function atualizar(req, res) {
       // sdr_padrao: somente SUPER_ADMIN pode marcar/desmarcar
       if (req.body.sdr_padrao !== undefined && roleAtual === 'SUPER_ADMIN') {
         upd.sdr_padrao = req.body.sdr_padrao === true || req.body.sdr_padrao === 1;
+      }
+      // recebe_leads_automaticos: SUPER_ADMIN e GESTOR podem configurar
+      if (req.body.recebe_leads_automaticos !== undefined && (roleAtual === 'SUPER_ADMIN' || roleAtual === 'GESTOR')) {
+        upd.recebe_leads_automaticos = req.body.recebe_leads_automaticos === true || req.body.recebe_leads_automaticos === 1;
+      }
+      // Log específico para SDR
+      if (upd.role === 'SDR' || atual.role === 'SDR') {
+        console.log('[USER_UPDATE_SDR_ACCEPTED] id:', id, '| sdr_padrao:', upd.sdr_padrao, '| recebe_leads:', upd.recebe_leads_automaticos);
       }
 
       if (Object.keys(upd).length === 1) {
