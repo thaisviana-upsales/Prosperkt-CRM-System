@@ -111,24 +111,33 @@ async function carregarFunis() {
 }
 
 async function carregarUsuarios() {
-  console.log('[FILTRO_VENDEDOR_LOAD_START] pipeline | carregando lista de vendedores...');
+  console.log('[FILTRO_VENDEDOR_LOAD_START] pipeline | carregando usu\u00e1rios comerciais...');
 
-  // Helper: aplica filtro ativo + role VENDEDOR/SUPER_ADMIN
+  // Usa m\u00f3dulo global centralizado — inclui VENDEDOR, SDR, GESTOR, CLOSER, COMERCIAL, SALES, SELLER, SUPER_ADMIN
+  if (typeof UsuariosComerciais !== 'undefined') {
+    await UsuariosComerciais.carregar();
+    _usuarios = UsuariosComerciais.lista();
+    console.log('[FILTRO_VENDEDOR_USUARIOS_RENDERIZADOS] pipeline |', _usuarios.length, 'usu\u00e1rios comerciais prontos (via UsuariosComerciais)');
+    return;
+  }
+
+  // Fallback manual (caso o script global n\u00e3o esteja carregado)
+  const ROLES_COMERCIAIS = new Set(['vendedor','sdr','gestor','closer','comercial','sales','seller','super_admin']);
+
   function filtrarVendedoresValidos(lista, origem) {
-    const ROLES_OK = ['VENDEDOR', 'SUPER_ADMIN', 'vendedor', 'super_admin'];
     const validos = [];
     const descartados = [];
     (lista || []).forEach(u => {
       const isAtivo = u.ativo === true || u.ativo === 1 || u.ativo === '1' || u.ativo === 'true';
-      const roleOk  = ROLES_OK.includes(u.role);
+      const roleOk  = ROLES_COMERCIAIS.has((u.role || '').toLowerCase());
       if (isAtivo && roleOk) validos.push(u);
-      else descartados.push({ nome: u.nome, role: u.role, ativo: u.ativo, motivo: !isAtivo ? 'inativo' : 'role inválida' });
+      else descartados.push({ nome: u.nome, role: u.role, ativo: u.ativo, motivo: !isAtivo ? 'inativo' : 'role_nao_comercial' });
     });
     console.log('[FILTRO_VENDEDOR_USUARIOS_TOTAL_API]', origem, '| recebidos:', (lista||[]).length);
-    console.log('[FILTRO_VENDEDOR_USUARIOS_ATIVOS_TOTAL]', validos.length, 'válidos após filtro');
+    console.log('[FILTRO_VENDEDOR_USUARIOS_ATIVOS_TOTAL]', validos.length, 'v\u00e1lidos ap\u00f3s filtro');
     if (descartados.length > 0)
       console.log('[FILTRO_VENDEDOR_USUARIO_DESCARTADO_INATIVO]', JSON.stringify(descartados));
-    return validos;
+    return validos.sort((a,b) => (a.nome||'').localeCompare(b.nome||'','pt-BR'));
   }
 
   const r = await Auth.api('GET','/usuarios');
@@ -136,13 +145,13 @@ async function carregarUsuarios() {
   _usuarios = filtrarVendedoresValidos(raw1, '/usuarios');
 
   if (_usuarios.length === 0) {
-    console.warn('[FILTRO_VENDEDOR_LOAD_START] pipeline | /usuarios sem resultado — tentando /usuarios/responsaveis...');
+    console.warn('[FILTRO_VENDEDOR_LOAD_START] pipeline | /usuarios sem resultado \u2014 tentando /usuarios/responsaveis...');
     const r2 = await Auth.api('GET', '/usuarios/responsaveis');
     const raw2 = r2?.data?.dados || [];
     _usuarios = filtrarVendedoresValidos(raw2, '/usuarios/responsaveis');
   }
 
-  console.log('[FILTRO_VENDEDOR_USUARIOS_RENDERIZADOS] pipeline |', _usuarios.length, 'vendedores prontos para o select');
+  console.log('[FILTRO_VENDEDOR_USUARIOS_RENDERIZADOS] pipeline |', _usuarios.length, 'usu\u00e1rios prontos para o select');
 }
 
 async function carregarMotivos() {

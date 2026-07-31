@@ -208,6 +208,7 @@
 <script src="/js/toast.js"></script>
 <script src="/js/avatar.js"></script>
 <script src="/js/sidebar.js"></script>
+<script src="/js/usuarios-comerciais.js"></script>
 <script>
 const ETAPAS = [
   { key:'acompanhamento', label:'Acompanhamento do Pedido',    cor:'#3B8BFF', icon:'📋' },
@@ -231,22 +232,32 @@ async function init() {
 }
 
 async function carregarUsuarios() {
-  console.log('[FILTRO_VENDEDOR_LOAD_START] adm-vendas | carregando lista de vendedores...');
+  console.log('[FILTRO_VENDEDOR_LOAD_START] adm-vendas | carregando usuários comerciais...');
+
+  // Usa módulo global centralizado — inclui VENDEDOR, SDR, GESTOR, CLOSER, COMERCIAL, etc.
+  if (typeof UsuariosComerciais !== 'undefined') {
+    await UsuariosComerciais.carregar();
+    _usuarios = UsuariosComerciais.lista();
+    console.log('[FILTRO_VENDEDOR_USUARIOS_RENDERIZADOS] adm-vendas | via UsuariosComerciais:', _usuarios.length);
+    return;
+  }
+
+  // Fallback manual
+  const ROLES_COMERCIAIS = new Set(['vendedor','sdr','gestor','closer','comercial','sales','seller','super_admin']);
 
   function filtrarVendedoresValidos(lista, origem) {
-    const ROLES_OK = ['VENDEDOR', 'SUPER_ADMIN', 'vendedor', 'super_admin'];
     const validos = [], descartados = [];
     (lista || []).forEach(u => {
       const isAtivo = u.ativo === true || u.ativo === 1 || u.ativo === '1' || u.ativo === 'true';
-      const roleOk  = ROLES_OK.includes(u.role);
+      const roleOk  = ROLES_COMERCIAIS.has((u.role || '').toLowerCase());
       if (isAtivo && roleOk) validos.push(u);
-      else descartados.push({ nome: u.nome, role: u.role, ativo: u.ativo, motivo: !isAtivo ? 'inativo' : 'role inválida' });
+      else descartados.push({ nome: u.nome, role: u.role, ativo: u.ativo, motivo: !isAtivo ? 'inativo' : 'role_nao_comercial' });
     });
     console.log('[FILTRO_VENDEDOR_USUARIOS_TOTAL_API]', origem, '| recebidos:', (lista||[]).length);
     console.log('[FILTRO_VENDEDOR_USUARIOS_ATIVOS_TOTAL]', validos.length, 'válidos após filtro');
     if (descartados.length > 0)
       console.log('[FILTRO_VENDEDOR_USUARIO_DESCARTADO_INATIVO]', JSON.stringify(descartados));
-    return validos;
+    return validos.sort((a,b) => (a.nome||'').localeCompare(b.nome||'','pt-BR'));
   }
 
   const r = await Auth.api('GET','/usuarios');

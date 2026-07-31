@@ -103,33 +103,35 @@ async function carregarFunis() {
 async function carregarUsuarios() {
   console.log('METAS_VENDEDORES_LOAD_START', { role: _usuario?.role });
   try {
-    // Usa /usuarios/responsaveis como fonte primária — retorna apenas VENDEDOR+SUPER_ADMIN ativos
-    // (sem SDR, sem inativo, sem teste)
-    const r = await Auth.api('GET', '/usuarios/responsaveis');
-    let raw = r?.data?.dados || [];
+    let todos = [];
 
-    // Fallback: se a rota falhar, tenta /usuarios com filtro manual
-    if (!r?.ok || raw.length === 0) {
-      console.warn('METAS_VENDEDORES_FALLBACK /usuarios');
-      const r2 = await Auth.api('GET', '/usuarios');
-      raw = r2?.data?.dados || [];
+    // Usa módulo global centralizado quando disponível
+    if (typeof UsuariosComerciais !== 'undefined') {
+      await UsuariosComerciais.carregar();
+      todos = UsuariosComerciais.lista();
+      console.log('METAS_VENDEDORES_VIA_MODULO_GLOBAL', { total: todos.length });
+    } else {
+      // Fallback manual — inclui SDR, GESTOR, VENDEDOR, SUPER_ADMIN
+      const ROLES_METAS = new Set(['super_admin', 'gestor', 'vendedor', 'sdr', 'closer', 'comercial']);
+      const r = await Auth.api('GET', '/usuarios/responsaveis');
+      let raw = r?.data?.dados || [];
+      if (!r?.ok || raw.length === 0) {
+        console.warn('METAS_VENDEDORES_FALLBACK /usuarios');
+        const r2 = await Auth.api('GET', '/usuarios');
+        raw = r2?.data?.dados || [];
+      }
+      todos = raw.filter(u => {
+        const estaAtivo = u.ativo === true || u.ativo === 1 || u.ativo === '1';
+        const roleOk    = ROLES_METAS.has((u.role || '').toLowerCase());
+        return estaAtivo && roleOk;
+      }).sort((a, b) => (a.nome||'').localeCompare(b.nome||'', 'pt-BR'));
     }
-
-    console.log('METAS_VENDEDORES_LOAD_SUCCESS', { rawTotal: raw.length, role: _usuario?.role });
-
-    // Filtra: somente ativos e roles comerciais (exclui SDR da lista de metas)
-    const ROLES_METAS = ['SUPER_ADMIN', 'GESTOR', 'VENDEDOR'];
-    const todos = raw.filter(u => {
-      const estaAtivo = u.ativo === true || u.ativo === 1 || u.ativo === '1';
-      const roleOk    = ROLES_METAS.includes(u.role);
-      return estaAtivo && roleOk;
-    }).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
 
     _usuarios = todos;
     console.log('METAS_VENDEDORES_ATIVOS', { total: todos.length, nomes: todos.map(u => u.nome).join(', ') });
 
     if (todos.length === 0) {
-      console.warn('[Metas] Nenhum vendedor ativo encontrado — verifique a API /usuarios/responsaveis e o campo ativo no banco.');
+      console.warn('[Metas] Nenhum usuário comercial ativo encontrado — verifique a API /usuarios/responsaveis.');
     }
 
     // Se é vendedor, injeta só ele mesmo nas opções do modal

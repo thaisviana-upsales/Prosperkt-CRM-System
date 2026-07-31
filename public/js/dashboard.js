@@ -62,40 +62,49 @@ async function carregarFunis() {
 
 async function carregarUsuarios() {
   if (_usuario.role === 'VENDEDOR') {
-    document.getElementById('f-resp').closest('.fg').style.display = 'none';
+    const fRespEl = document.getElementById('f-resp');
+    if (fRespEl?.closest('.fg')) fRespEl.closest('.fg').style.display = 'none';
     return;
   }
 
-  console.log('[FILTRO_VENDEDOR_LOAD_START] dashboard | carregando lista de vendedores...');
+  console.log('[FILTRO_VENDEDOR_LOAD_START] dashboard | carregando usuários comerciais...');
 
-  // Helper: aplica filtro ativo + role VENDEDOR/SUPER_ADMIN com logs de descarte
+  // Usa módulo global centralizado — inclui VENDEDOR, SDR, GESTOR, CLOSER, COMERCIAL, etc.
+  if (typeof UsuariosComerciais !== 'undefined') {
+    await UsuariosComerciais.carregar();
+    const sel = document.getElementById('f-resp');
+    if (sel) UsuariosComerciais.popular(sel, { primeiraNome: 'Todos', primeiroValor: '' });
+    console.log('[FILTRO_VENDEDOR_USUARIOS_RENDERIZADOS] dashboard | via UsuariosComerciais:', UsuariosComerciais.lista().length);
+    sel?.addEventListener('change', e => {
+      console.log('[FILTRO_VENDEDOR_SELECT_CHANGE] valor:', e.target.value, '| nome:', sel.selectedOptions[0]?.text);
+    });
+    return;
+  }
+
+  // Fallback manual
+  const ROLES_COMERCIAIS = new Set(['vendedor','sdr','gestor','closer','comercial','sales','seller','super_admin']);
+
   function filtrarVendedoresValidos(lista, origem) {
-    const ROLES_OK = ['VENDEDOR', 'SUPER_ADMIN', 'vendedor', 'super_admin'];
     const validos = [];
     const descartados = [];
     (lista || []).forEach(u => {
       const isAtivo = u.ativo === true || u.ativo === 1 || u.ativo === '1' || u.ativo === 'true';
-      const roleOk  = ROLES_OK.includes(u.role);
-      if (isAtivo && roleOk) {
-        validos.push(u);
-      } else {
-        descartados.push({ nome: u.nome, role: u.role, ativo: u.ativo, motivo: !isAtivo ? 'inativo' : 'role inválida' });
-      }
+      const roleOk  = ROLES_COMERCIAIS.has((u.role || '').toLowerCase());
+      if (isAtivo && roleOk) validos.push(u);
+      else descartados.push({ nome: u.nome, role: u.role, ativo: u.ativo, motivo: !isAtivo ? 'inativo' : 'role_nao_comercial' });
     });
     console.log('[FILTRO_VENDEDOR_USUARIOS_TOTAL_API]', origem, '| recebidos:', (lista||[]).length);
     console.log('[FILTRO_VENDEDOR_USUARIOS_ATIVOS_TOTAL]', validos.length, 'válidos após filtro');
     if (descartados.length > 0)
       console.log('[FILTRO_VENDEDOR_USUARIO_DESCARTADO_INATIVO]', JSON.stringify(descartados));
-    return validos;
+    return validos.sort((a,b) => (a.nome||'').localeCompare(b.nome||'','pt-BR'));
   }
 
-  // Tentativa 1: /usuarios (backend filtra ativos)
   let users = [];
   const r = await Auth.api('GET', '/usuarios');
   const raw1 = r?.data?.dados || [];
   users = filtrarVendedoresValidos(raw1, '/usuarios');
 
-  // Tentativa 2: /usuarios/responsaveis (backend retorna VENDEDOR+SUPER_ADMIN ativos)
   if (users.length === 0) {
     console.warn('[FILTRO_VENDEDOR_LOAD_START] dashboard | /usuarios sem resultado — tentando /usuarios/responsaveis...');
     const r2 = await Auth.api('GET', '/usuarios/responsaveis');
@@ -104,13 +113,14 @@ async function carregarUsuarios() {
   }
 
   const sel = document.getElementById('f-resp');
-  sel.innerHTML = '<option value="">Todos</option>' +
-    users.map(u => `<option value="${u.id}">${u.nome}</option>`).join('');
-  console.log('[FILTRO_VENDEDOR_USUARIOS_RENDERIZADOS]', sel.options.length - 1, 'vendedores + opção Todos');
-
-  sel.addEventListener('change', e => {
-    console.log('[FILTRO_VENDEDOR_SELECT_CHANGE] valor:', e.target.value, '| nome:', sel.selectedOptions[0]?.text);
-  });
+  if (sel) {
+    sel.innerHTML = '<option value="">Todos</option>' +
+      users.map(u => `<option value="${u.id}">${u.nome}</option>`).join('');
+    console.log('[FILTRO_VENDEDOR_USUARIOS_RENDERIZADOS]', sel.options.length - 1, 'usuários + opção Todos');
+    sel.addEventListener('change', e => {
+      console.log('[FILTRO_VENDEDOR_SELECT_CHANGE] valor:', e.target.value, '| nome:', sel.selectedOptions[0]?.text);
+    });
+  }
 }
 
 function buildQuery() {

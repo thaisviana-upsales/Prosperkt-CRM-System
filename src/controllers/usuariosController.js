@@ -69,15 +69,17 @@ async function listar(req, res) {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/usuarios/responsaveis
 // Retorna usuários ativos que podem ser responsáveis por leads.
-// VENDEDOR: vê apenas VENDEDOR e SUPER_ADMIN (não vê SDR)
-// GESTOR/SUPER_ADMIN/SDR: vê VENDEDOR, SUPER_ADMIN e SDR
+// VENDEDOR: vê apenas VENDEDOR, SDR e SUPER_ADMIN
+// GESTOR/SUPER_ADMIN: vê VENDEDOR, SDR, GESTOR, CLOSER e SUPER_ADMIN
 // ───────────────────────────────────────────────────────────────────────────────
 async function listarResponsaveis(req, res) {
   const { sb, isSupa, sqlite } = getProvider();
-  // VENDEDOR só vê vendedores/admins na lista de responsáveis (não vê SDR)
+
+  // Todos os papéis comerciais que podem ser responsáveis por leads
   const ROLES_VALIDAS = req.usuario?.role === 'VENDEDOR'
-    ? ['VENDEDOR', 'SUPER_ADMIN']
-    : ['VENDEDOR', 'SUPER_ADMIN', 'SDR'];
+    ? ['VENDEDOR', 'SDR', 'SUPER_ADMIN']
+    : ['VENDEDOR', 'SDR', 'GESTOR', 'CLOSER', 'COMERCIAL', 'SUPER_ADMIN'];
+
   console.log('[FILTRO_VENDEDOR_LOAD_START] listarResponsaveis | role solicitante:', req.usuario?.role, '| roles vistas:', ROLES_VALIDAS);
 
   try {
