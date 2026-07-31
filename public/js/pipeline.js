@@ -525,6 +525,20 @@ async function moverLead(etapaId) {
   const etapaDest   = _etapas.find(e=>e.id===etapaId);
   const etapaOrigem = _etapas.find(e=>e.id===_dragEtapaOrigem);
 
+  // ── SDR: verificação de funil restrito ──────────────────────────────────────
+  // SDR só pode mover leads em funis comerciais — bloqueado em Adm./Carteira
+  if (_usuario?.role === 'SDR') {
+    const funilIdLead = lead?.funil_id || _filtros.funil;
+    const funilObj = _funis.find(f => f.id === funilIdLead);
+    const nomeFunilLead = (funilObj?.nome || '').toLowerCase();
+    const ehRestrito = /adm\.?\s*de\s*vendas|adm\s*vendas|carteira\s*recorrente/i.test(nomeFunilLead);
+    if (ehRestrito) {
+      _dragLeadId = null; _dragEtapaOrigem = null;
+      Toast.show(`🚫 SDR não pode mover leads no funil "${funilObj?.nome}".\nApenas funis comerciais são permitidos.`, 'error');
+      return;
+    }
+  }
+
   // ── Bloqueio de retrocesso: impede mover para etapa de ordem menor ─────────
   // Exceção: SUPER_ADMIN pode corrigir erros (não bloqueia)
   if (etapaDest && etapaOrigem && etapaDest.ordem < etapaOrigem.ordem) {

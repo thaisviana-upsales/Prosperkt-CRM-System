@@ -964,6 +964,21 @@ async function mover(req, res) {
       const isGanho   = etapa.is_ganho   || etapa.nome?.toLowerCase().includes('venda') || etapa.probabilidade >= 100;
       const isPerdido = etapa.is_perdido  || etapa.nome?.toLowerCase().includes('perdid') || etapa.nome?.toLowerCase().includes('desqualif');
 
+      // ── Restrição SDR: só pode mover leads em funis comerciais ──────────────
+      // SDR NÃO pode mover leads em Adm. de Vendas nem Carteira Recorrente
+      if (req.usuario.role === 'SDR' && lead.funil_id) {
+        const { data: funilLead } = await sb.from('funis').select('nome').eq('id', lead.funil_id).maybeSingle();
+        const nomeFunil = (funilLead?.nome || '').toLowerCase();
+        const ehFunilRestrito = /adm\.?\s*de\s*vendas|adm\s*vendas|carteira\s*recorrente/i.test(nomeFunil);
+        if (ehFunilRestrito) {
+          return res.status(403).json({
+            sucesso: false,
+            erro: `SDR não pode mover leads no funil "${funilLead?.nome}". Apenas funis comerciais são permitidos.`,
+            codigo: 'SDR_FUNIL_RESTRITO',
+          });
+        }
+      }
+
       // ── Validação SDR: ao mover para Lead Qualificado SDR, vendedor é obrigatório ──
       const isLeadQualificadoSDR = /lead qualificado sdr/i.test(etapa.nome || '');
       if (isLeadQualificadoSDR && req.usuario.role === 'SDR') {
