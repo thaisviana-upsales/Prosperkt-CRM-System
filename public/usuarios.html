@@ -78,6 +78,20 @@
     .user-avatar { width:36px; height:36px; border-radius:50%; object-fit:cover; flex-shrink:0; }
     .user-avatar-fallback { width:36px; height:36px; border-radius:50%; background:var(--grad-brand); display:flex; align-items:center; justify-content:center; font-size:.75rem; font-weight:700; color:#0D0D0D; flex-shrink:0; }
 
+    /* ── Filtro de status (Ativos / Inativos / Todos) ── */
+    .btn-group-filter { display:flex; align-items:center; gap:4px; }
+    .filter-btn {
+      font-size:.72rem; padding:5px 12px; border-radius:8px;
+      background:var(--surface-2); color:var(--text-secondary);
+      border:1px solid var(--border); cursor:pointer; transition:.15s;
+      white-space:nowrap;
+    }
+    .filter-btn:hover { background:var(--surface-3); color:var(--text-primary); }
+    .filter-btn-active {
+      background:var(--green-dim); color:var(--green);
+      border-color:rgba(91,222,62,.3);
+    }
+
   </style>
 </head>
 <body>
@@ -94,6 +108,12 @@
       </div>
       <div class="page-actions">
         <input type="text" class="search-input" id="search-input" placeholder="Buscar usuário...">
+        <!-- Filtro de status: visível apenas para SUPER_ADMIN -->
+        <div id="status-filter" style="display:none;gap:4px" class="btn-group-filter">
+          <button class="btn btn-sm filter-btn filter-btn-active" id="filt-ativos"   data-filt="ativos"   onclick="aplicarFiltroStatus('ativos')">Ativos</button>
+          <button class="btn btn-sm filter-btn" id="filt-inativos" data-filt="inativos" onclick="aplicarFiltroStatus('inativos')">Inativos</button>
+          <button class="btn btn-sm filter-btn" id="filt-todos"    data-filt="todos"    onclick="aplicarFiltroStatus('todos')">Todos</button>
+        </div>
         <button class="btn btn-primary" id="btn-novo" style="display:none">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           Novo Usuário
@@ -238,6 +258,7 @@ let _usuarios = [];
 let _currentUser = null;
 let _deleteId = null;
 let _isSuperAdmin = false;
+let _filtroStatus = 'ativos'; // padrão: apenas ativos
 
 // ── Init ──────────────────────────────────────────────────────
 async function init() {
@@ -250,6 +271,9 @@ async function init() {
   if (_isSuperAdmin) {
     document.getElementById('btn-novo').style.display = '';
     document.getElementById('th-acoes').style.display = '';
+    // Mostrar filtro de status apenas para SUPER_ADMIN
+    const sf = document.getElementById('status-filter');
+    if (sf) { sf.style.display = 'flex'; }
   }
 
   await carregarUsuarios();
@@ -258,13 +282,51 @@ async function init() {
 
 // ── Load ──────────────────────────────────────────────────────
 async function carregarUsuarios() {
-  // SUPER_ADMIN vê todos (ativos e inativos) para poder gerenciar
-  // Outros perfis recebem apenas os ativos (filtrado no backend)
+  // Sempre busca todos os usuários (SUPER_ADMIN com ?incluir_inativos=true)
+  // O filtro de exibição é aplicado no frontend via _filtroStatus
   const endpoint = _isSuperAdmin ? '/usuarios?incluir_inativos=true' : '/usuarios';
   const res = await Auth.api('GET', endpoint);
   if (!res?.ok) { Toast.show('Erro ao carregar usuários.', 'error'); return; }
-  _usuarios = res.data.dados;
-  renderTabela(_usuarios);
+  _usuarios = res.data.dados || [];
+  console.log('[USUARIOS_CARREGADOS] total:', _usuarios.length, '| filtro:', _filtroStatus);
+  _aplicarFiltroErender();
+}
+
+// Aplica filtro de status + busca e renderiza
+function _aplicarFiltroErender(busca) {
+  const q = (busca ?? document.getElementById('search-input')?.value ?? '').toLowerCase();
+  let lista = _usuarios;
+
+  // Filtro de status (padrão: apenas ativos)
+  if (_filtroStatus === 'ativos') {
+    lista = lista.filter(u => u.ativo === true || u.ativo === 1 || u.ativo === '1');
+  } else if (_filtroStatus === 'inativos') {
+    lista = lista.filter(u => u.ativo === false || u.ativo === 0 || u.ativo === '0' || u.ativo === null);
+  }
+  // 'todos': sem filtro de ativo
+
+  // Filtro de busca textual
+  if (q) {
+    lista = lista.filter(u =>
+      u.nome.toLowerCase().includes(q) ||
+      u.email.toLowerCase().includes(q) ||
+      (ROLE_LABELS[u.role]||'').toLowerCase().includes(q)
+    );
+  }
+
+  renderTabela(lista);
+}
+
+// Botão de filtro de status (Ativos / Inativos / Todos)
+function aplicarFiltroStatus(filt) {
+  _filtroStatus = filt;
+  // Atualiza visual dos botões
+  ['ativos','inativos','todos'].forEach(f => {
+    const btn = document.getElementById(`filt-${f}`);
+    if (btn) btn.classList.toggle('filter-btn-active', f === filt);
+  });
+  console.log('[USUARIOS_FILTRO_STATUS] filtro alterado para:', filt);
+  _aplicarFiltroErender();
 }
 
 function renderTabela(lista) {
@@ -333,12 +395,7 @@ function bindTabelaEvents() {
 // ── Search ────────────────────────────────────────────────────
 function bindSearch() {
   document.getElementById('search-input').addEventListener('input', e => {
-    const q = e.target.value.toLowerCase();
-    renderTabela(_usuarios.filter(u =>
-      u.nome.toLowerCase().includes(q) ||
-      u.email.toLowerCase().includes(q) ||
-      (ROLE_LABELS[u.role]||'').toLowerCase().includes(q)
-    ));
+    _aplicarFiltroErender(e.target.value);
   });
 }
 
