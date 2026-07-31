@@ -237,7 +237,6 @@ async function _validarProdutoParaGanho(sb, leadId) {
 
     if (error) {
       console.error('[PRODUTO_OBRIG] Erro ao buscar lead_produtos:', error.message);
-      // Em caso de erro de query, bloqueia por segurança
       return { valido: false, motivo: 'Erro ao verificar produtos. Tente novamente.' };
     }
 
@@ -261,6 +260,64 @@ async function _validarProdutoParaGanho(sb, leadId) {
     return { valido: false, motivo: 'Erro interno ao validar produtos.' };
   }
 }
+
+/**
+ * Validação centralizada de todos os campos obrigatórios para registrar venda/ganho.
+ * Usada em todos os caminhos: mover(), atualizar(), drag-and-drop via etapa_id.
+ *
+ * @param {object} sb     — Supabase client
+ * @param {string} leadId — ID do lead
+ * @param {object} lead   — Dados atuais do lead (do banco)
+ * @param {object} body   — Dados da requisição (req.body) — podem sobrescrever o lead
+ * @returns {Promise<{valido:boolean, erro:string|null, campos_faltando:string[]}>}
+ */
+async function _validarDadosGanho(sb, leadId, lead, body) {
+  const faltando = [];
+
+  // 1. Campos básicos
+  if (!lead.nome)                           faltando.push('Nome');
+  if (!(body.email || lead.email))          faltando.push('E-mail');
+  if (!(body.funil_id || lead.funil_id))    faltando.push('Funil');
+
+  // 2. Valor da venda > 0
+  const vv = parseFloat(body.valor_venda ?? lead.valor_venda ?? 0);
+  if (!vv || vv <= 0)                       faltando.push('Valor da Venda');
+
+  // 3. Forma de pagamento
+  const fp = body.forma_pagamento || lead.forma_pagamento;
+  if (!fp)                                  faltando.push('Forma de Pagamento');
+
+  // 4. Endereço de entrega — complemento e referência são OPCIONAIS
+  const _e = (f) => (body[f] ?? lead[f] ?? '').toString().trim();
+  const cep = _e('cep_entrega').replace(/\D/g, '');
+  if (!cep || cep.length < 8)              faltando.push('CEP de Entrega');
+  if (!_e('endereco_entrega'))             faltando.push('Logradouro/Rua');
+  if (!_e('numero_entrega'))               faltando.push('Número');
+  if (!_e('bairro_entrega'))               faltando.push('Bairro');
+  if (!_e('cidade_entrega'))               faltando.push('Cidade');
+  if (!_e('uf_entrega'))                   faltando.push('UF');
+  // complemento_entrega e referencia_entrega são opcionais — NÃO bloqueiam
+
+  // 5. Produto válido (tabela lead_produtos)
+  const { valido: prodValido, motivo: prodMotivo } = await _validarProdutoParaGanho(sb, leadId);
+  if (!prodValido) faltando.push(prodMotivo || 'Produto válido');
+
+  if (faltando.length === 0) return { valido: true, erro: null, campos_faltando: [] };
+
+  // Monta mensagem amigável
+  const CAMPOS_ENDERECO = ['CEP de Entrega','Logradouro/Rua','Número','Bairro','Cidade','UF'];
+  const temEndFaltando = faltando.some(f => CAMPOS_ENDERECO.includes(f));
+  let erro;
+  if (temEndFaltando && faltando.length <= CAMPOS_ENDERECO.length + 1) {
+    erro = 'Para concluir a venda, preencha todos os dados do Endereço de Entrega.';
+  } else {
+    erro = `Para concluir a venda, preencha os dados obrigatórios: ${faltando.filter(f => !CAMPOS_ENDERECO.includes(f)).join(', ') || faltando.join(', ')}.`;
+  }
+
+  console.warn('[GANHO_VALIDACAO_BLOQUEIO] campos faltando:', faltando, '| lead:', leadId);
+  return { valido: false, erro, campos_faltando: faltando };
+}
+
 
 /**
  * Retorna o ID do próximo vendedor ativo em rodízio justo.
@@ -715,46 +772,21 @@ async function atualizar(req, res) {
       allow.forEach(k => { if (req.body[k] !== undefined) upd[k] = req.body[k]; });
       if (req.body.responsavel_id && req.usuario.role !== 'VENDEDOR') upd.responsavel_id = req.body.responsavel_id;
 
-      // Bloqueia se etapa destino é de ganho e campos obrigatórios faltam
+      // ── Bloqueia se etapa destino é de ganho e campos obrigatórios faltam ──
+      // Cobre: campo Etapa em Dados, drag-and-drop via PATCH, automações
       if (req.body.etapa_id && req.body.etapa_id !== atual.etapa_id) {
         const { data: etDest } = await sb.from('etapas').select('*').eq('id', req.body.etapa_id).maybeSingle();
         const etIsGanho = etDest?.is_ganho || etDest?.probabilidade >= 100 ||
           /venda|vendas|ganho|fechad|fechamento/i.test(etDest?.nome || '');
         if (etIsGanho) {
-          const faltando = [];
-          if (!(req.body.email || atual.email))                                    faltando.push('E-mail');
-          if (!(req.body.funil_id || atual.funil_id))                              faltando.push('Funil');
-          if (!((req.body.valor_venda ?? atual.valor_venda) > 0))                  faltando.push('Valor da Venda');
-          if (!(req.body.forma_pagamento || atual.forma_pagamento))                faltando.push('Forma de Pagamento');
-          // Endereço completo de entrega
-          const _end = (f) => (req.body[f] ?? atual[f] ?? '').toString().trim();
-          if (!_end('cep_entrega') || _end('cep_entrega').replace(/\D/g,'').length < 8) faltando.push('CEP de Entrega');
-          if (!_end('endereco_entrega'))    faltando.push('Logradouro/Rua');
-          if (!_end('numero_entrega'))      faltando.push('Número');
-          if (!_end('complemento_entrega')) faltando.push('Complemento');
-          if (!_end('referencia_entrega'))  faltando.push('Referência');
-          if (!_end('bairro_entrega'))      faltando.push('Bairro');
-          if (!_end('cidade_entrega'))      faltando.push('Cidade');
-          if (!_end('uf_entrega'))          faltando.push('UF');
-          if (faltando.length)
+          const validacao = await _validarDadosGanho(sb, id, atual, req.body);
+          if (!validacao.valido) {
+            console.warn('[GANHO_VALIDACAO_BLOQUEIO][atualizar]', validacao.campos_faltando, '| lead:', id);
             return res.status(400).json({
               sucesso: false,
-              erro: faltando.some(f => ['CEP de Entrega','Logradouro/Rua','Número','Complemento','Referência','Bairro','Cidade','UF'].includes(f))
-                ? 'Para concluir a venda, preencha todos os dados do Endereço de Entrega.'
-                : `Para registrar a venda, preencha: ${faltando.join(', ')}.`,
-              campos_faltando: faltando
-            });
-
-          // ── Produto obrigatório: verifica tabela lead_produtos (bloqueio real) ──
-          // Não basta ter produto_nome no lead — deve haver pelo menos 1 produto
-          // válido em lead_produtos (sem placeholder "—", quantidade > 0)
-          const { valido: prodValido, motivo: prodMotivo } = await _validarProdutoParaGanho(sb, id);
-          if (!prodValido) {
-            console.warn('[PRODUTO_OBRIG][atualizar] Bloqueio:', prodMotivo, '| lead:', id);
-            return res.status(400).json({
-              sucesso: false,
-              erro: prodMotivo || 'Para concluir a venda, selecione ao menos um produto vendido com quantidade e valor válidos.',
-              codigo: 'PRODUTO_OBRIGATORIO',
+              erro: validacao.erro,
+              campos_faltando: validacao.campos_faltando,
+              codigo: 'GANHO_DADOS_INCOMPLETOS',
             });
           }
         }
@@ -1137,45 +1169,18 @@ async function mover(req, res) {
       if (isPerdido && !motivo_perda && !lead.perdido_motivo && !lead.motivo_perda)
         return res.status(400).json({ sucesso:false, erro:'motivo_perda é obrigatório ao mover para etapa perdida.' });
 
-      // Validação obrigatória para etapa de ganho
+      // ── Validação centralizada para etapa de ganho ────────────────────────
+      // Cobre todos os caminhos: drag-and-drop, campo Etapa em Dados, botão ganho
       if (isGanho) {
-        const faltando = [];
-        if (!lead.nome)                              faltando.push('Nome');
-        if (!lead.email)                             faltando.push('Email');
-        if (!(lead.funil_id || req.body.funil_id))   faltando.push('Funil');
-        const vv = req.body.valor_venda ?? lead.valor_venda;
-        if (!vv || Number(vv) <= 0)                  faltando.push('Valor da Venda');
-        const fp = req.body.forma_pagamento ?? lead.forma_pagamento;
-        if (!fp)                                     faltando.push('Forma de Pagamento');
-
-        // ── Produto obrigatório: usa _validarProdutoParaGanho (bloqueio unificado) ──
-        // Verifica lead_produtos: produto_nome não placeholder, quantidade > 0
-        const { valido: prodValido, motivo: prodMotivo } = await _validarProdutoParaGanho(sb, id);
-        if (!prodValido) {
-          console.warn('[PRODUTO_OBRIG][mover] Bloqueio:', prodMotivo, '| lead:', id);
+        const validacao = await _validarDadosGanho(sb, id, lead, req.body);
+        if (!validacao.valido) {
           return res.status(400).json({
             sucesso: false,
-            erro: prodMotivo || 'Para concluir a venda, selecione ao menos um produto vendido com quantidade e valor válidos.',
-            codigo: 'PRODUTO_OBRIGATORIO',
+            erro: validacao.erro,
+            campos_faltando: validacao.campos_faltando,
+            codigo: 'GANHO_DADOS_INCOMPLETOS',
           });
         }
-
-        // Previsão de próxima compra — opcional (não bloqueia ganho)
-        // Endereço de entrega — campos essenciais; complemento e referência são opcionais
-        const _e = (f) => (req.body[f] ?? lead[f] ?? '').toString().trim();
-        if (!_e('cep_entrega') || _e('cep_entrega').replace(/\D/g,'').length < 8) faltando.push('CEP de Entrega');
-        if (!_e('endereco_entrega'))    faltando.push('Logradouro/Rua');
-        if (!_e('numero_entrega'))      faltando.push('Número');
-        // complemento_entrega e referencia_entrega são opcionais — não bloqueiam
-        if (!_e('bairro_entrega'))      faltando.push('Bairro');
-        if (!_e('cidade_entrega'))      faltando.push('Cidade');
-        if (!_e('uf_entrega'))          faltando.push('UF');
-        if (faltando.length > 0)
-          return res.status(400).json({
-            sucesso: false,
-            erro: `Para registrar a venda, preencha: ${faltando.join(', ')}.`,
-            campos_faltando: faltando,
-          });
       }
 
 
@@ -2338,5 +2343,5 @@ async function marcarAlertaVisto(req, res) {
   }
 }
 
-module.exports = { listar, buscarPorId, criar, atualizar, mover, transferir, deletar, clonar, adicionarMensagem, historico, adicionarTag, removerTag, getDistribuicao, setDistribuicao, listarProdutosLead, adicionarProdutoLead, atualizarProdutoLead, removerProdutoLead, alertasRecompra, marcarAlertaVisto, _clonarParaCarteiraRecorrente };
+module.exports = { listar, buscarPorId, criar, atualizar, mover, transferir, deletar, clonar, adicionarMensagem, historico, adicionarTag, removerTag, getDistribuicao, setDistribuicao, listarProdutosLead, adicionarProdutoLead, atualizarProdutoLead, removerProdutoLead, alertasRecompra, marcarAlertaVisto, _clonarParaCarteiraRecorrente, _validarDadosGanho };
 
