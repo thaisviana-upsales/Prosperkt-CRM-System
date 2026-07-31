@@ -121,6 +121,105 @@ function phoneVariants(tel) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// _classificarRespostaBoasVindas — detecta padrão na resposta do cliente
+// e salva tag + observação no lead (execução em background, não bloqueia)
+// ─────────────────────────────────────────────────────────────────────────────
+async function _classificarRespostaBoasVindas(sb, leadId, texto) {
+  if (!sb || !leadId || !texto) return;
+  try {
+    const t = String(texto).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+
+    // Só processa se o lead recebeu a mensagem SLA_CONTATO_1
+    const { data: slaLog } = await sb.from('audit_logs')
+      .select('id').eq('entidade_id', leadId).eq('acao', 'SLA_CONTATO_1').maybeSingle();
+    if (!slaLog) return; // lead não está aguardando classificação
+
+    // Não reclassifica se já foi classificado
+    const { data: jaClass } = await sb.from('audit_logs')
+      .select('id').eq('entidade_id', leadId).eq('acao', 'CLASSIFICACAO_RESPOSTA_BOAS_VINDAS').maybeSingle();
+    if (jaClass) return;
+
+    // ── Tabela de padrões de classificação ──────────────────────────────────
+    const PADROES = [
+      {
+        tag: 'brinde_produto',
+        obs: 'Cliente informou: busca brinde/produto.',
+        match: /\b(1|brinde|brindes|produto|produtos|brindar|brindes personalizados|item|items)\b/,
+      },
+      {
+        tag: 'projeto',
+        obs: 'Cliente informou: busca desenvolvimento de projeto.',
+        match: /\b(2|projeto|projetos|desenvolvimento|dev|criar|criacao|criação|desenvolvimento de projeto)\b/,
+      },
+      {
+        tag: 'agencia',
+        obs: 'Cliente informou: compra para agência.',
+        match: /\b(agencia|agências|agencias|agência)\b/,
+      },
+      {
+        tag: 'marca_direta',
+        obs: 'Cliente informou: compra para marca direta.',
+        match: /\b(marca|direta|marca direta|empresa|empresas)\b/,
+      },
+    ];
+
+    // Detecta o primeiro padrão que bate
+    const detectado = PADROES.find(p => p.match.test(t));
+    if (!detectado) {
+      console.log('CLASSIFICACAO_RESPOSTA_BOAS_VINDAS_SEM_PADRAO', { leadId, textoSlice: t.slice(0, 60) });
+      return;
+    }
+
+    console.log('CLASSIFICACAO_RESPOSTA_BOAS_VINDAS_DETECTADA', { leadId, tag: detectado.tag, texto: t.slice(0, 60) });
+
+    // Busca dados atuais do lead (tags e observacoes)
+    const { data: lead } = await sb.from('leads').select('tags, observacoes').eq('id', leadId).maybeSingle();
+    if (!lead) return;
+
+    // Monta novas tags (array JSON ou string separada por vírgula)
+    let tagsAtuais = [];
+    try {
+      if (Array.isArray(lead.tags)) tagsAtuais = lead.tags;
+      else if (typeof lead.tags === 'string' && lead.tags.startsWith('[')) tagsAtuais = JSON.parse(lead.tags);
+      else if (typeof lead.tags === 'string' && lead.tags.trim()) tagsAtuais = lead.tags.split(',').map(s => s.trim()).filter(Boolean);
+    } catch { tagsAtuais = []; }
+
+    if (!tagsAtuais.includes(detectado.tag)) {
+      tagsAtuais.push(detectado.tag);
+    }
+
+    // Monta nova observação (appenda sem apagar o que já tinha)
+    const agora = new Date().toISOString();
+    const obsAtual = lead.observacoes || '';
+    const linhaObs = `[${agora.slice(0, 10)}] ${detectado.obs}`;
+    const novaObs  = obsAtual ? `${obsAtual}\n${linhaObs}` : linhaObs;
+
+    // Atualiza lead
+    await sb.from('leads').update({
+      tags:       JSON.stringify(tagsAtuais),
+      observacoes: novaObs,
+      atualizado_em: agora,
+    }).eq('id', leadId);
+
+    // Registra no audit_log para deduplicação futura
+    await sb.from('audit_logs').insert({
+      id:          require('crypto').randomBytes(16).toString('hex'),
+      usuario_id:  null,
+      acao:        'CLASSIFICACAO_RESPOSTA_BOAS_VINDAS',
+      entidade:    'leads',
+      entidade_id: leadId,
+      descricao:   `Resposta classificada automaticamente: "${detectado.tag}". Texto: "${t.slice(0, 120)}"`,
+      criado_em:   agora,
+    }).catch(() => {});
+
+    console.log('CLASSIFICACAO_RESPOSTA_BOAS_VINDAS_OK', { leadId, tag: detectado.tag });
+  } catch (e) {
+    console.warn('CLASSIFICACAO_RESPOSTA_BOAS_VINDAS_WARN (não crítico):', e.message);
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // registrarAlias — salva mapeamento remoteJid/LID → conversa na tabela de aliases
 // Chamado após localizar ou criar conversa para garantir deduplicação futura.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2244,6 +2343,13 @@ async function webhookReceberMensagem(req, res) {
           lidNumero: lidNumero || null,
           nome:      !fromMe ? nome : null,
         }).catch(e => console.warn('WHATSAPP_ALIAS_REGISTER_RECV_WARN:', e.message));
+      }
+
+      // ── Classificação automática de resposta à mensagem de boas-vindas ────
+      // Detecta padrão (brinde/produto/projeto/agência) e salva tag + observação
+      if (!fromMe && direcao === 'recebida' && leadId && isSupa && conteudo) {
+        _classificarRespostaBoasVindas(sb, leadId, conteudo)
+          .catch(e => console.warn('CLASSIFICACAO_BOAS_VINDAS_HOOK_WARN:', e.message));
       }
 
       // ── 9. Se há mídia recebida: registra metadados em lead_arquivos ───────

@@ -352,7 +352,7 @@ Recebi seu contato aqui na PROSPEKT e já vou te ajudar.
 
 Pra eu te direcionar da melhor forma e ganhar tempo no seu atendimento, me responde rapidinho:
 
-1️⃣ Qual brinde ou produto você está buscando?
+1️⃣ Você busca brinde/produto ou desenvolvimento de projeto?
 
 2️⃣ Você já tem uma quantidade aproximada?
 
@@ -360,6 +360,7 @@ Pra eu te direcionar da melhor forma e ganhar tempo no seu atendimento, me respo
 
 Com essas respostas, consigo te encaminhar o melhor consultor e agilizar seu orçamento. 🚀`;
 };
+
 
 /**
  * Normaliza telefone para formato WhatsApp: 55 + DDD + número (10-11 dígitos)
@@ -414,7 +415,25 @@ async function enviarSlaContato1(lead) {
 
   console.log('AUTOMACAO_SLA_CONTATO_1_TELEFONE_NORMALIZADO', { leadId, telefoneNormalizado: telNorm });
 
-  // 3. Verificar se a Evolution API está configurada
+  // 3. Verificar se já está em atendimento humano (vendedor atribuído na conversa ativa)
+  // Neste caso, não enviar automação — humano já está cuidando
+  try {
+    const { data: convHumana } = await sb.from('conversas_whatsapp')
+      .select('id, vendedor_id')
+      .eq('lead_id', leadId)
+      .eq('status', 'ABERTA')
+      .not('vendedor_id', 'is', null)
+      .maybeSingle();
+    if (convHumana) {
+      console.log('AUTOMACAO_SLA_CONTATO_1_SKIP_ATENDIMENTO_HUMANO', { leadId, conversaId: convHumana.id, vendedor_id: convHumana.vendedor_id });
+      return;
+    }
+  } catch (eHum) {
+    console.warn('AUTOMACAO_SLA_CONTATO_1_CHECK_HUMANO_WARN:', eHum.message);
+    // Continua mesmo se a checagem falhar
+  }
+
+  // 4. Verificar se a Evolution API está configurada
   if (!evoSvc.isConfigured()) {
     console.warn('AUTOMACAO_SLA_CONTATO_1_NAO_ENVIADA', { leadId, motivo: 'Evolution API não configurada' });
     return;
