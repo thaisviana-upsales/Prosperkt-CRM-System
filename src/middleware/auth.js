@@ -11,12 +11,26 @@ const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hierarquia de permissões
+// SDR tem nível 2 (igual ao GESTOR): vê tudo, mas não é tratado como vendedor
 // ─────────────────────────────────────────────────────────────────────────────
 const ROLE_HIERARCHY = {
   SUPER_ADMIN: 3,
   GESTOR:      2,
+  SDR:         2,  // Vê todos os painéis; não é vendedor; não faz rodízio
   VENDEDOR:    1,
 };
+
+// Roles aceitas no sistema
+const ROLES_VALIDAS = ['SUPER_ADMIN', 'GESTOR', 'SDR', 'VENDEDOR'];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers de role
+// ─────────────────────────────────────────────────────────────────────────────
+function isSuperAdmin(req)  { return req.usuario?.role === 'SUPER_ADMIN'; }
+function isGestor(req)      { return req.usuario?.role === 'GESTOR'; }
+function isSdr(req)         { return req.usuario?.role === 'SDR'; }
+function isVendedor(req)    { return req.usuario?.role === 'VENDEDOR'; }
+function isStaff(req)       { return ['SUPER_ADMIN','GESTOR','SDR'].includes(req.usuario?.role); }
 
 /**
  * Middleware: autentica o token JWT do header Authorization
@@ -45,22 +59,15 @@ async function autenticar(req, res, next) {
 
 /**
  * Factory: exige role mínima para acessar a rota
- * Uso: router.get('/rota', autenticar, exigirRole('GESTOR'), handler)
- * Um SUPER_ADMIN pode tudo; GESTOR pode o que VENDEDOR pode, etc.
+ * Um SUPER_ADMIN pode tudo; GESTOR e SDR podem o que VENDEDOR pode, etc.
  */
 function exigirRole(...rolesPermitidas) {
   return (req, res, next) => {
     if (!req.usuario) {
-      return res.status(401).json({
-        sucesso: false,
-        erro: 'Não autenticado.',
-        codigo: 'NOT_AUTHENTICATED',
-      });
+      return res.status(401).json({ sucesso: false, erro: 'Não autenticado.', codigo: 'NOT_AUTHENTICATED' });
     }
-
     const nivelUsuario = ROLE_HIERARCHY[req.usuario.role] || 0;
     const nivelMinimo  = Math.min(...rolesPermitidas.map(r => ROLE_HIERARCHY[r] || 99));
-
     if (nivelUsuario < nivelMinimo) {
       return res.status(403).json({
         sucesso: false,
@@ -70,7 +77,6 @@ function exigirRole(...rolesPermitidas) {
         roles_necessarias: rolesPermitidas,
       });
     }
-
     next();
   };
 }
@@ -80,38 +86,23 @@ function exigirRole(...rolesPermitidas) {
  */
 function exigirSuperAdmin(req, res, next) {
   if (!req.usuario || req.usuario.role !== 'SUPER_ADMIN') {
-    return res.status(403).json({
-      sucesso: false,
-      erro: 'Acesso restrito a Super Administradores.',
-      codigo: 'SUPER_ADMIN_REQUIRED',
-    });
+    return res.status(403).json({ sucesso: false, erro: 'Acesso restrito a Super Administradores.', codigo: 'SUPER_ADMIN_REQUIRED' });
   }
   next();
 }
 
 /**
  * Verifica se o usuário é dono do recurso ou tem role superior
- * Uso: exigirDonoOuRole(req.params.id, 'GESTOR')
  */
 function exigirDonoOuRole(campoId, roleMinima = 'GESTOR') {
   return (req, res, next) => {
-    if (!req.usuario) {
-      return res.status(401).json({ sucesso: false, erro: 'Não autenticado.' });
-    }
-
+    if (!req.usuario) return res.status(401).json({ sucesso: false, erro: 'Não autenticado.' });
     const nivelUsuario = ROLE_HIERARCHY[req.usuario.role] || 0;
     const nivelMinimo  = ROLE_HIERARCHY[roleMinima] || 99;
-    const ehDono       = req.params[campoId] === req.usuario.id
-                      || req.body[campoId] === req.usuario.id;
-
+    const ehDono       = req.params[campoId] === req.usuario.id || req.body[campoId] === req.usuario.id;
     if (!ehDono && nivelUsuario < nivelMinimo) {
-      return res.status(403).json({
-        sucesso: false,
-        erro: 'Acesso negado. Você só pode acessar seus próprios recursos.',
-        codigo: 'NOT_OWNER',
-      });
+      return res.status(403).json({ sucesso: false, erro: 'Acesso negado. Você só pode acessar seus próprios recursos.', codigo: 'NOT_OWNER' });
     }
-
     next();
   };
 }
@@ -122,4 +113,10 @@ module.exports = {
   exigirSuperAdmin,
   exigirDonoOuRole,
   ROLE_HIERARCHY,
+  ROLES_VALIDAS,
+  isSuperAdmin,
+  isGestor,
+  isSdr,
+  isVendedor,
+  isStaff,
 };

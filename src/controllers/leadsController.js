@@ -429,19 +429,38 @@ async function criar(req, res) {
           responsavel_id, origem, tags, dados_extras, observacoes, funil_id } = req.body;
   if (!nome) return res.status(400).json({ sucesso:false, erro:'Nome é obrigatório.' });
 
-  // Rodízio automático:
-  // - VENDEDOR: sempre recebe seus próprios leads
-  // - GESTOR/ADMIN criando com responsavel_id explícito: respeita a escolha
-  // - GESTOR/ADMIN sem responsavel_id: ativa rodízio entre vendedores ativos
+  // ── Roteamento de responsável ──────────────────────────────────────────────
+  // VENDEDOR: sempre fica com o próprio lead (criação manual)
+  // SDR: lead fica com o SDR que criou (até ele direcionar para vendedor)
+  // SUPER_ADMIN/GESTOR com responsavel_id explícito: respeita a escolha
+  // SUPER_ADMIN/GESTOR sem responsavel_id + lead manual: usa SDR ativo como padrão
+  // Lead automático (origem != 'manual'): sempre vai para SDR ativo
+  // Rodízio entre vendedores: DESATIVADO (leads automáticos agora vão para SDR)
+  const { resolverSdrAtivo } = require('../services/sdrService');
+  const origemLead = (origem || '').toLowerCase().trim();
+  const ehLeadAutomatico = origemLead && origemLead !== 'manual';
+
   let respId;
   if (req.usuario.role === 'VENDEDOR') {
+    // Vendedor criando lead manual → fica com ele mesmo
     respId = req.usuario.id;
+  } else if (req.usuario.role === 'SDR') {
+    // SDR criando lead → fica com a SDR até direcionar para vendedor
+    respId = req.usuario.id;
+  } else if (ehLeadAutomatico && !responsavel_id) {
+    // Lead automático (webhook, integração, etc.) → SDR ativo
+    const sdrId = await resolverSdrAtivo();
+    respId = sdrId || req.usuario.id; // fallback: quem criou
+    if (!sdrId) console.warn('[leads.criar] SDR não configurado — lead automático sem SDR:', nome);
   } else if (responsavel_id) {
+    // Responsável explícito escolhido → respeita
     respId = responsavel_id;
   } else {
-    // Rodízio automático via Supabase (não funciona em SQLite — fallback para admin)
-    respId = (await _proximoVendedorRodizio(sb)) || req.usuario.id;
+    // SUPER_ADMIN/GESTOR sem responsável explícito → tenta SDR ativo, fallback: quem criou
+    const sdrId = await resolverSdrAtivo();
+    respId = sdrId || req.usuario.id;
   }
+
   const id = crypto.randomBytes(16).toString('hex');
 
   try {
@@ -944,6 +963,52 @@ async function mover(req, res) {
 
       const isGanho   = etapa.is_ganho   || etapa.nome?.toLowerCase().includes('venda') || etapa.probabilidade >= 100;
       const isPerdido = etapa.is_perdido  || etapa.nome?.toLowerCase().includes('perdid') || etapa.nome?.toLowerCase().includes('desqualif');
+
+      // ── Validação SDR: ao mover para Lead Qualificado SDR, vendedor é obrigatório ──
+      const isLeadQualificadoSDR = /lead qualificado sdr/i.test(etapa.nome || '');
+      if (isLeadQualificadoSDR && req.usuario.role === 'SDR') {
+        const novoResponsavel = req.body.responsavel_id;
+        if (!novoResponsavel) {
+          return res.status(400).json({
+            sucesso: false,
+            erro: 'Para qualificar o lead, selecione o vendedor responsável.',
+            codigo: 'SDR_VENDEDOR_OBRIGATORIO',
+          });
+        }
+        // Verifica se o responsável escolhido é um VENDEDOR ativo
+        const { data: vendedorEscolhido } = await sb.from('usuarios')
+          .select('id, nome, role').eq('id', novoResponsavel).maybeSingle();
+        if (!vendedorEscolhido || vendedorEscolhido.role !== 'VENDEDOR') {
+          return res.status(400).json({
+            sucesso: false,
+            erro: 'O responsável selecionado deve ser um vendedor ativo.',
+            codigo: 'SDR_RESPONSAVEL_INVALIDO',
+          });
+        }
+        // Atualiza responsável para o vendedor selecionado + registra qualificação
+        const agora = new Date().toISOString();
+        await sb.from('leads').update({
+          responsavel_id:   novoResponsavel,
+          sdr_qualificador: req.usuario.id,
+          atualizado_em:    agora,
+        }).eq('id', id);
+        // Registra na timeline
+        await sb.from('timeline').insert({
+          id:          require('crypto').randomBytes(16).toString('hex'),
+          lead_id:     id,
+          tipo:        'sdr_qualificacao',
+          descricao:   `Lead qualificado pela SDR ${req.usuario.nome || 'SDR'} e direcionado para o vendedor ${vendedorEscolhido.nome}.`,
+          usuario_id:  req.usuario.id,
+          criado_em:   agora,
+        }).catch(() => {});
+        console.log(`[SDR_QUALIFICACAO] Lead ${id} qualificado por ${req.usuario.nome} → vendedor: ${vendedorEscolhido.nome}`);
+      }
+
+      // ── VENDEDOR não pode mover lead de outro responsável (já existia) ──
+      // Proteção extra: VENDEDOR não vê leads SDR até serem direcionados a ele
+      if (req.usuario.role === 'VENDEDOR' && lead.responsavel_id !== req.usuario.id) {
+        return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
+      }
 
       if (isPerdido && !motivo_perda && !lead.perdido_motivo && !lead.motivo_perda)
         return res.status(400).json({ sucesso:false, erro:'motivo_perda é obrigatório ao mover para etapa perdida.' });

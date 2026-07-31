@@ -420,7 +420,16 @@ function renderKanban() {
     } else {
       leads = _leads.filter(l => l.etapa_id === etapa.id);
     }
-    // Leads sem etapa_id válida: não quebrar a tela
+
+    // ── Visibilidade SDR: VENDEDOR não vê leads ainda sob responsabilidade SDR ──
+    // Identifica se o responsável do lead é SDR usando lista de SDRs (se disponível)
+    // Heurística: se o responsável não está em _usuarios (que só tem VENDEDOR e SUPER_ADMIN),
+    // e o usuário atual é VENDEDOR, o lead está na fila SDR e deve ser ocultado
+    if (_usuario?.role === 'VENDEDOR') {
+      const vendedorIds = new Set((_usuarios || []).map(u => u.id));
+      vendedorIds.add(_usuario.id); // inclui a si mesmo
+      leads = leads.filter(l => !l.responsavel_id || vendedorIds.has(l.responsavel_id));
+    }
     const col = document.createElement('div');
     col.className = 'kanban-col';
 
@@ -589,6 +598,70 @@ async function moverLead(etapaId) {
   }
 
 
+  // ── SDR: ao mover para Lead Qualificado SDR, vendedor é obrigatório ────────
+  const isLeadQualificadoSDR = /lead qualificado sdr/i.test(etapaDest?.nome || '');
+  if (isLeadQualificadoSDR && _usuario?.role === 'SDR') {
+    const leadIdLocal = _dragLeadId;
+    const pidLocal = pid;
+    _dragLeadId = null; _dragEtapaOrigem = null;
+    if (!leadIdLocal) return;
+
+    // Carrega vendedores ativos para mostrar no modal
+    const rVend = await Auth.api('GET', '/usuarios/responsaveis');
+    const vendedores = (rVend?.data?.dados || []).filter(u => u.role === 'VENDEDOR');
+
+    if (!vendedores.length) {
+      Toast.show('Nenhum vendedor ativo disponível para receber o lead.', 'error');
+      return;
+    }
+
+    // Cria e exibe modal de seleção de vendedor
+    const modalId = 'modal-sdr-vendedor';
+    let modalEl = document.getElementById(modalId);
+    if (!modalEl) {
+      modalEl = document.createElement('div');
+      modalEl.id = modalId;
+      modalEl.style.cssText = 'display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center';
+      document.body.appendChild(modalEl);
+    }
+
+    const opcoesHtml = vendedores.map(v =>
+      `<option value="${v.id}">${v.nome}</option>`
+    ).join('');
+
+    modalEl.innerHTML = `
+      <div style="background:var(--bg-card,#1a1a2e);border-radius:12px;padding:28px;min-width:340px;max-width:420px;box-shadow:0 8px 32px rgba(0,0,0,.4)">
+        <h3 style="margin:0 0 8px;font-size:1.1rem;color:var(--text-primary,#fff)">Qualificar Lead para Vendedor</h3>
+        <p style="color:var(--text-muted,#999);font-size:.85rem;margin:0 0 18px">Selecione o vendedor que receberá este lead qualificado.</p>
+        <select id="sdr-vendedor-select" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border,#333);background:var(--bg-input,#111);color:var(--text-primary,#fff);font-size:.95rem;margin-bottom:18px">
+          <option value="">— Selecione o vendedor —</option>
+          ${opcoesHtml}
+        </select>
+        <div style="display:flex;gap:10px;justify-content:flex-end">
+          <button id="sdr-vendedor-cancel" style="padding:9px 18px;border-radius:8px;border:1px solid var(--border,#333);background:transparent;color:var(--text-muted,#999);cursor:pointer;font-size:.9rem">Cancelar</button>
+          <button id="sdr-vendedor-confirm" style="padding:9px 18px;border-radius:8px;border:none;background:var(--purple,#7B61FF);color:#fff;cursor:pointer;font-size:.9rem;font-weight:600">Confirmar Qualificação</button>
+        </div>
+      </div>`;
+    modalEl.style.display = 'flex';
+
+    document.getElementById('sdr-vendedor-cancel').onclick = () => {
+      modalEl.style.display = 'none';
+      Toast.show('Movimentação cancelada. Selecione o vendedor para qualificar.', 'info');
+    };
+
+    document.getElementById('sdr-vendedor-confirm').onclick = async () => {
+      const vendedorSelecionado = document.getElementById('sdr-vendedor-select').value;
+      if (!vendedorSelecionado) {
+        Toast.show('Para qualificar o lead, selecione o vendedor responsável.', 'error');
+        return;
+      }
+      modalEl.style.display = 'none';
+      // Executa mover com responsavel_id do vendedor
+      await _executarMoverSDR(leadIdLocal, etapaId, pidLocal, etapaDest, vendedorSelecionado);
+    };
+    return;
+  }
+
   if (isPerdido) {
     // Captura o ID e pid em variáveis locais ANTES de zerá-los,
     // pois o callback é executado de forma assíncrona (após confirmação no modal)
@@ -612,6 +685,35 @@ async function moverLead(etapaId) {
   await _executarMover(_dragLeadId, etapaId, pid, etapaDest, null);
   _dragLeadId=null; _dragEtapaOrigem=null;
 }
+
+// Mover lead qualificado SDR — inclui responsavel_id do vendedor escolhido
+async function _executarMoverSDR(leadId, etapaId, pid, etapaDest, vendedorId) {
+  const t0 = performance.now();
+  console.log('[SDR_MOVE] lead:', leadId, '→ etapa:', etapaId, '| vendedor:', vendedorId);
+
+  const leadIdx = _leads.findIndex(l => l.id === leadId);
+  const leadOriginal = leadIdx >= 0 ? { ..._leads[leadIdx] } : null;
+  if (leadIdx >= 0) {
+    _leads[leadIdx] = { ..._leads[leadIdx], etapa_id: etapaId, responsavel_id: vendedorId, pipeline_id: pid || _leads[leadIdx].pipeline_id };
+    renderKanban();
+  }
+
+  const payload = { etapa_id: etapaId, pipeline_id: pid, responsavel_id: vendedorId };
+  const r = await Auth.api('PATCH', `/leads/${leadId}/mover`, payload);
+  console.log('[SDR_MOVE_API] ok:', r?.ok, 'ms:', Math.round(performance.now()-t0));
+
+  if (r?.ok) {
+    Toast.show('✅ Lead qualificado e direcionado ao vendedor!', 'success');
+    carregarLeads().catch(() => {});
+  } else {
+    Toast.show(r?.data?.erro || 'Erro ao qualificar lead.', 'error');
+    if (leadIdx >= 0 && leadOriginal) {
+      _leads[leadIdx] = leadOriginal;
+      renderKanban();
+    }
+  }
+}
+
 
 async function _executarMover(leadId, etapaId, pid, etapaDest, motivo) {
   const t0 = performance.now();

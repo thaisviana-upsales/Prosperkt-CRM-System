@@ -11,8 +11,9 @@ const ETAPAS_PADRAO = [
   { nome:'Lead Recebido',       ordem:1,  cor:'#6CFF4E', probabilidade:10,  is_ganho:0, is_perdido:0 },
   { nome:'Contato Realizado',   ordem:2,  cor:'#3B8BFF', probabilidade:25,  is_ganho:0, is_perdido:0 },
   { nome:'Lead Desqualificado', ordem:3,  cor:'#FF3B5C', probabilidade:5,   is_ganho:0, is_perdido:1 },
-  // ── Em Tratativa: posicionada APÓS Lead Desqualificado em todos os funis comerciais ──
-  { nome:'Em Tratativa',        ordem:4,  cor:'#7B61FF', probabilidade:30,  is_ganho:0, is_perdido:0 },
+  // ── Lead Qualificado SDR: etapa de qualificação pela SDR antes de passar ao vendedor ──
+  // (Anteriormente: 'Em Tratativa' — renomeada via patch v26 no banco)
+  { nome:'Lead Qualificado SDR', ordem:4,  cor:'#7B61FF', probabilidade:30,  is_ganho:0, is_perdido:0 },
   { nome:'Orçamento Enviado',   ordem:5,  cor:'#6C47FF', probabilidade:55,  is_ganho:0, is_perdido:0 },
   { nome:'Orçamento Aprovado',  ordem:6,  cor:'#5BE89E', probabilidade:70,  is_ganho:0, is_perdido:0 },
   { nome:'Layout Virtual',      ordem:7,  cor:'#9B59B6', probabilidade:75,  is_ganho:0, is_perdido:0 },
@@ -275,7 +276,7 @@ function _seedEtapasPadrao_SQLite(db) {
   console.log('[Seed] Etapas padrão verificadas em todos os funis comerciais (SQLite).');
 }
 
-// Garante as etapas padrão (incl. Em Tratativa) em todos os funis comerciais — sem duplicar (Supabase)
+// Garante as etapas padrão (incl. Lead Qualificado SDR) em todos os funis comerciais — sem duplicar (Supabase)
 async function _seedEtapasPadrao_Supa(sb) {
   const { data: funisComerciais } = await sb.from('funis')
     .select('id,nome').eq('ativo', 1);
@@ -287,6 +288,20 @@ async function _seedEtapasPadrao_Supa(sb) {
     const pipeId = pipes[0].id;
     const { data: etapasExist } = await sb.from('etapas').select('id,nome,ordem,cor,ativo,oculta').eq('pipeline_id', pipeId);
     const nomesExist = new Set((etapasExist||[]).map(e => e.nome));
+
+    // Compat: se existir 'Em Tratativa', renomear para 'Lead Qualificado SDR' antes do seed
+    const tratativaExist = (etapasExist||[]).find(et =>
+      ['Em Tratativa','Tratativa em andamento','Tratativa em Andamento','Tratativa','Contato em Tratativa'].includes(et.nome)
+    );
+    if (tratativaExist && !nomesExist.has('Lead Qualificado SDR')) {
+      await sb.from('etapas')
+        .update({ nome: 'Lead Qualificado SDR', oculta: false, ativo: 1, atualizado_em: agora })
+        .eq('id', tratativaExist.id);
+      nomesExist.delete(tratativaExist.nome);
+      nomesExist.add('Lead Qualificado SDR');
+      console.log(`[Seed Supa] Etapa "${tratativaExist.nome}" renomeada para "Lead Qualificado SDR" no pipeline ${pipeId}`);
+    }
+
     for (const e of ETAPAS_PADRAO) {
       if (!nomesExist.has(e.nome)) {
         // Etapa não existe — cria

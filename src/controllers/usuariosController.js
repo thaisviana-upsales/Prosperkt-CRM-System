@@ -68,14 +68,17 @@ async function listar(req, res) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/usuarios/responsaveis
-// Retorna usuários ativos com role VENDEDOR ou SUPER_ADMIN.
-// Estratégia: tenta filtrar direto; se vier vazio por problema de boolean/ativo,
-// busca SEM filtro de ativo e filtra no Node, garantindo robustez.
-// ─────────────────────────────────────────────────────────────────────────────
+// Retorna usuários ativos que podem ser responsáveis por leads.
+// VENDEDOR: vê apenas VENDEDOR e SUPER_ADMIN (não vê SDR)
+// GESTOR/SUPER_ADMIN/SDR: vê VENDEDOR, SUPER_ADMIN e SDR
+// ───────────────────────────────────────────────────────────────────────────────
 async function listarResponsaveis(req, res) {
   const { sb, isSupa, sqlite } = getProvider();
-  const ROLES_VALIDAS = ['VENDEDOR', 'SUPER_ADMIN'];
-  console.log('[FILTRO_VENDEDOR_LOAD_START] listarResponsaveis | role solicitante:', req.usuario?.role);
+  // VENDEDOR só vê vendedores/admins na lista de responsáveis (não vê SDR)
+  const ROLES_VALIDAS = req.usuario?.role === 'VENDEDOR'
+    ? ['VENDEDOR', 'SUPER_ADMIN']
+    : ['VENDEDOR', 'SUPER_ADMIN', 'SDR'];
+  console.log('[FILTRO_VENDEDOR_LOAD_START] listarResponsaveis | role solicitante:', req.usuario?.role, '| roles vistas:', ROLES_VALIDAS);
 
   try {
     if (isSupa) {
@@ -185,7 +188,7 @@ async function criar(req, res) {
   if (req.usuario.role === 'GESTOR' && role === 'SUPER_ADMIN') {
     return res.status(403).json({ sucesso: false, erro: 'GESTOR não pode criar SUPER_ADMIN.' });
   }
-  const roles = ['SUPER_ADMIN', 'GESTOR', 'VENDEDOR'];
+  const roles = ['SUPER_ADMIN', 'GESTOR', 'VENDEDOR', 'SDR'];
   if (!roles.includes(role)) {
     return res.status(400).json({ sucesso: false, erro: `Role inválida. Use: ${roles.join(', ')}` });
   }
@@ -253,6 +256,10 @@ async function atualizar(req, res) {
         upd.ativo = ativoVal ? 1 : 0;
       }
       if (req.body.senha) upd.senha_hash = await bcrypt.hash(req.body.senha, 12);
+      // sdr_padrao: somente SUPER_ADMIN pode marcar/desmarcar
+      if (req.body.sdr_padrao !== undefined && roleAtual === 'SUPER_ADMIN') {
+        upd.sdr_padrao = req.body.sdr_padrao === true || req.body.sdr_padrao === 1;
+      }
 
       if (Object.keys(upd).length === 1) {
         return res.status(400).json({ sucesso: false, erro: 'Nenhum campo para atualizar.' });
