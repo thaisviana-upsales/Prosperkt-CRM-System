@@ -120,34 +120,49 @@ async function resumo(req, res) {
   try {
     if (isSupa) {
       // ── 0. Resolve ids de funis a excluir em modo "Todos - Novos" ──────────────
-      // SEMPRE resolve carteiraFunilId no modo todos-novos (mesmo sem excluir_carteira=true)
-      // para garantir que a Carteira não entre na estrutura do funil de conversão.
-      let carteiraFunilId = null;
-      let funisInativosIds = []; // ids de funis inativos (ex: Tráfego Pago) a excluir
+      // Exclui: Carteira Recorrente + Adm. de Vendas + funis inativos
+      // SEMPRE resolve no modo todos-novos para garantir consistência em todos os indicadores.
+      let carteiraFunilId  = null;
+      let admFunilId       = null;              // ← NOVO: Adm. de Vendas também excluído
+      let funisExcluirIds  = [];               // ids combinados (carteira + adm + inativos)
+      let funisInativosIds = [];
 
       if (!funil_id) {
-        // Modo todos-novos: SEMPRE busca Carteira Recorrente para excluir
-        const { data: cr } = await sb.from('funis').select('id').ilike('nome','%Carteira Recorrente%').limit(1);
-        carteiraFunilId = cr?.[0]?.id || null;
-        console.log('[DASHBOARD_FILTER_FUNIL_SELECTED] todos-novos | excluindo Carteira Recorrente id:', carteiraFunilId);
+        // Modo todos-novos: busca Carteira Recorrente e Adm. de Vendas para excluir
+        const [{ data: cr }, { data: adm }, { data: inativos }] = await Promise.all([
+          sb.from('funis').select('id,nome').ilike('nome','%Carteira%').limit(5),
+          sb.from('funis').select('id,nome').or('nome.ilike.%Adm%,nome.ilike.%Administra%').limit(5),
+          sb.from('funis').select('id,nome').in('ativo', [0, false]),
+        ]);
 
-        // Funis inativos (ex: Tráfego Pago) — não devem aparecer em "Todos - Novos"
-        // FIX: usa .in('ativo',[0]) ao invés de eq('ativo',false) pois campo é INTEGER
-        const { data: inativos } = await sb.from('funis').select('id,nome').in('ativo', [0, false]);
+        // Carteira Recorrente — qualquer funil com "Carteira" no nome (inclui variações)
+        carteiraFunilId = (cr || []).find(f => /carteira/i.test(f.nome))?.id || null;
+        console.log('[DASH_TODOS_NOVOS] Carteira Recorrente id:', carteiraFunilId, '| nome:', (cr||[]).find(f=>/carteira/i.test(f.nome))?.nome);
+
+        // Adm. de Vendas — qualquer funil com "Adm" ou "Administra"
+        admFunilId = (adm || []).find(f => /adm|administra/i.test(f.nome))?.id || null;
+        console.log('[DASH_TODOS_NOVOS] Adm. de Vendas id:', admFunilId, '| nome:', (adm||[]).find(f=>/adm|administra/i.test(f.nome))?.nome);
+
+        // Funis inativos (ex: Tráfego Pago) — campo INTEGER, usar in([0,false])
         funisInativosIds = (inativos || []).map(f => f.id);
         if (funisInativosIds.length) {
-          console.log('[DASHBOARD_EXCLUIR_INATIVOS] funis inativos excluidos:', (inativos||[]).map(f=>f.nome));
+          console.log('[DASH_TODOS_NOVOS] funis inativos excluidos:', (inativos||[]).map(f=>f.nome));
         }
+
+        // Lista unificada de ids a excluir
+        funisExcluirIds = [...new Set([carteiraFunilId, admFunilId, ...funisInativosIds].filter(Boolean))];
+        console.log('[DASH_TODOS_NOVOS] total funis excluidos:', funisExcluirIds.length);
+
       } else if (excluiCarteira) {
         // Compat: excluiCarteira ainda funciona como fallback
-        const { data: cr } = await sb.from('funis').select('id').ilike('nome','%Carteira Recorrente%').limit(1);
-        carteiraFunilId = cr?.[0]?.id || null;
-        console.log('[DASHBOARD_FILTER_FUNIL_SELECTED] excluindo Carteira Recorrente id:', carteiraFunilId);
-        const { data: inativos } = await sb.from('funis').select('id,nome').in('ativo', [0, false]);
+        const [{ data: cr }, { data: inativos }] = await Promise.all([
+          sb.from('funis').select('id,nome').ilike('nome','%Carteira%').limit(5),
+          sb.from('funis').select('id,nome').in('ativo', [0, false]),
+        ]);
+        carteiraFunilId = (cr || []).find(f => /carteira/i.test(f.nome))?.id || null;
         funisInativosIds = (inativos || []).map(f => f.id);
-        if (funisInativosIds.length) {
-          console.log('[DASHBOARD_EXCLUIR_INATIVOS] funis inativos excluidos:', (inativos||[]).map(f=>f.nome));
-        }
+        funisExcluirIds  = [...new Set([carteiraFunilId, ...funisInativosIds].filter(Boolean))];
+        console.log('[DASH_EXCLUIR_CARTEIRA] excluindo Carteira id:', carteiraFunilId);
       } else if (funil_id) {
         console.log('[DASHBOARD_FILTER_FUNIL_SELECTED] funil_id:', funil_id);
       }
@@ -163,12 +178,13 @@ async function resumo(req, res) {
         'id,nome,status,valor,valor_venda,etapa_id,pipeline_id,funil_id,responsavel_id,' +
         'criado_em,atualizado_em,ganho_em,perdido_em,produto_id,produto_nome,forma_pagamento'
       );
-      if (funil_id)           q = q.eq('funil_id', funil_id);
-      if (carteiraFunilId)    q = q.neq('funil_id', carteiraFunilId);
-      // Exclui leads de funis inativos (Tráfego Pago etc.) no modo "Todos - Novos"
-      if (funisInativosIds.length) {
-        const idsParaExcluir = funisInativosIds.filter(id => id !== carteiraFunilId);
-        if (idsParaExcluir.length) q = q.not('funil_id', 'in', `(${idsParaExcluir.join(',')})`);
+      if (funil_id)    q = q.eq('funil_id', funil_id);
+      // Exclui funis operacionais (Carteira + Adm) e inativos em "Todos - Novos"
+      if (funisExcluirIds?.length) {
+        q = q.not('funil_id', 'in', `(${funisExcluirIds.join(',')})`);
+      } else if (carteiraFunilId) {
+        // Fallback compat
+        q = q.neq('funil_id', carteiraFunilId);
       }
       // Fix #3: exclui clones de Carteira Recorrente da contagem de leads recebidos
       q = q.is('tipo_clone', null);
@@ -287,10 +303,12 @@ async function resumo(req, res) {
       } else {
         let { data: funisAtivos } = await sb.from('funis').select('id,nome').in('ativo', [1, true]);
         funisAtivos = (funisAtivos || []).filter(f => {
-          if (carteiraFunilId && f.id === carteiraFunilId) return false; 
-          if (funisInativosIds.includes(f.id)) return false; 
-          if (/carteira\s*recorrente/i.test(f.nome || '')) return false;
-          if (/adm\.?\s*de\s*vendas|BASE.?Antiga|teste/i.test(f.nome || '')) return false;
+          // Exclui a lista unificada de funis operacionais/inativos (Carteira + Adm + inativos)
+          if (funisExcluirIds?.length && funisExcluirIds.includes(f.id)) return false;
+          // Guards de nome como segunda camada de defesa
+          if (/carteira/i.test(f.nome || '')) return false;
+          if (/adm\.?\s*(de\s*)?vendas|administra/i.test(f.nome || '')) return false;
+          if (/BASE.?Antiga|teste/i.test(f.nome || '')) return false;
           return true;
         });
 
@@ -370,11 +388,14 @@ async function resumo(req, res) {
         funil_visual.map(e => `${e.nome}:${e.quantidade}(${e.taxa_entrada ?? '—'}%)`).join(' → '));
 
       // ── 5. Ranking vendedores ─────────────────────────────────────────────────
-      // FIX: usa .in('ativo',[1,true]) pois campo é INTEGER no Supabase
-      const { data: usuariosAtivos } = await sb.from('usuarios')
-        .select('id,nome,role')
-        .in('ativo', [1, true]);
-      const usuariosAtivosMap = Object.fromEntries((usuariosAtivos||[]).map(u => [u.id, u]));
+      // Fix: busca TODOS os usuários sem filtro de ativo (campo INTEGER bugado com .in())
+      // Filtra no Node-side para garantir consistência (mesmo padrão do resto do sistema)
+      const { data: todosUsuarios } = await sb.from('usuarios').select('id,nome,role,ativo');
+      const usuariosAtivosMap = Object.fromEntries(
+        (todosUsuarios || []).filter(u =>
+          u.ativo === true || u.ativo === 1 || u.ativo === '1'
+        ).map(u => [u.id, u])
+      );
       const idsAtivos = new Set(Object.keys(usuariosAtivosMap));
 
       // Precisamos do total de leads por vendedor para calcular taxa de conversão real
@@ -383,12 +404,12 @@ async function resumo(req, res) {
       if (temFiltroData && data_tipo === 'fechamento') {
         // Busca todos os leads (sem filtro de data) para contar o total por vendedor
         let qTodos = sb.from('leads').select('id,responsavel_id,status,etapa_id,ganho_em,perdido_em');
-        if (funil_id)           qTodos = qTodos.eq('funil_id', funil_id);
-        if (carteiraFunilId)    qTodos = qTodos.neq('funil_id', carteiraFunilId);
-        // Exclui funis inativos (Tráfego Pago etc.) no ranking também
-        if (funisInativosIds.length) {
-          const idsExcl = funisInativosIds.filter(id => id !== carteiraFunilId);
-          if (idsExcl.length) qTodos = qTodos.not('funil_id', 'in', `(${idsExcl.join(',')})`);
+        if (funil_id)    qTodos = qTodos.eq('funil_id', funil_id);
+        // Aplica mesma exclusão de funis operacionais/inativos
+        if (funisExcluirIds?.length) {
+          qTodos = qTodos.not('funil_id', 'in', `(${funisExcluirIds.join(',')})`);
+        } else if (carteiraFunilId) {
+          qTodos = qTodos.neq('funil_id', carteiraFunilId);
         }
         if (responsavel_id)     qTodos = qTodos.eq('responsavel_id', responsavel_id);
         if (req.usuario.role === 'VENDEDOR') qTodos = qTodos.eq('responsavel_id', req.usuario.id);
@@ -444,6 +465,8 @@ async function resumo(req, res) {
       leads.forEach(l => {
         const fid = l.funil_id;
         if (!fid) return;
+        // Exclui funis operacionais (Carteira + Adm) do gráfico por funil em Todos-Novos
+        if (funisExcluirIds?.length && funisExcluirIds.includes(fid)) return;
         if (!porFunilMap[fid]) porFunilMap[fid] = { id:fid, leads:0, ganhos:0, faturamento:0 };
         porFunilMap[fid].leads++;
         if (isGanhoLead(l, etapaMap)) {
@@ -463,16 +486,16 @@ async function resumo(req, res) {
         })).sort((a,b) => b.faturamento - a.faturamento);
       }
 
-      // ── 7. Leads por dia (últimos 30 dias) — respeitando exclusão de inativos e Carteira ──
+      // ── 7. Leads por dia (últimos 30 dias) — respeitando exclusão de inativos e Carteira/Adm ──
       const { data: leadsAll30 } = await (() => {
         const d30 = new Date(); d30.setDate(d30.getDate()-30);
         let q2 = sb.from('leads').select('criado_em,ganho_em,status,etapa_id,valor,valor_venda');
-        if (funil_id)           q2 = q2.eq('funil_id', funil_id);
-        if (carteiraFunilId)    q2 = q2.neq('funil_id', carteiraFunilId);
-        // Exclui funis inativos (Tráfego Pago etc.) no gráfico de leads por dia
-        if (funisInativosIds.length) {
-          const idsExcl = funisInativosIds.filter(id => id !== carteiraFunilId);
-          if (idsExcl.length) q2 = q2.not('funil_id', 'in', `(${idsExcl.join(',')})`);
+        if (funil_id)    q2 = q2.eq('funil_id', funil_id);
+        // Aplica mesma exclusão de funis operacionais/inativos
+        if (funisExcluirIds?.length) {
+          q2 = q2.not('funil_id', 'in', `(${funisExcluirIds.join(',')})`);
+        } else if (carteiraFunilId) {
+          q2 = q2.neq('funil_id', carteiraFunilId);
         }
         if (responsavel_id)     q2 = q2.eq('responsavel_id', responsavel_id);
         if (req.usuario.role === 'VENDEDOR') q2 = q2.eq('responsavel_id', req.usuario.id);
@@ -507,37 +530,44 @@ async function resumo(req, res) {
     const { getDb } = require('../database/db');
     const db = getDb();
 
-    // Resolve Carteira Recorrente e funis inativos para exclusão (Todos - Novos)
+    // Resolve Carteira Recorrente, Adm. de Vendas e funis inativos para exclusão (Todos - Novos)
     let carteiraFunilIdSql = null;
-    let funisInativosSql = []; // ids de funis inativos (ex: Tráfego Pago)
-    // SEMPRE exclui Carteira quando não há funil_id específico (equivalente ao Supabase)
+    let admFunilIdSql      = null;
+    let funisInativosSql   = [];
+    let funisExcluirSql    = [];
+    // SEMPRE exclui Carteira e Adm quando não há funil_id específico (equivalente ao Supabase)
     if (!funil_id) {
-      const cr = db.prepare(`SELECT id FROM funis WHERE nome LIKE '%Carteira Recorrente%' LIMIT 1`).get();
-      carteiraFunilIdSql = cr?.id || null;
-      console.log('[DASH_SQL_EXCLUIR_CARTEIRA] excluindo funil_id:', carteiraFunilIdSql);
+      const cr  = db.prepare(`SELECT id FROM funis WHERE nome LIKE '%Carteira%' LIMIT 1`).get();
+      const adm = db.prepare(`SELECT id FROM funis WHERE nome LIKE '%Adm%' OR nome LIKE '%Administra%' LIMIT 1`).get();
+      carteiraFunilIdSql = cr?.id  || null;
+      admFunilIdSql      = adm?.id || null;
       const inativosRows = db.prepare(`SELECT id FROM funis WHERE ativo=0`).all();
-      funisInativosSql = inativosRows.map(f => f.id).filter(id => id !== carteiraFunilIdSql);
-      if (funisInativosSql.length) console.log('[DASH_SQL_EXCLUIR_INATIVOS] ids:', funisInativosSql);
+      funisInativosSql   = inativosRows.map(f => f.id);
+      funisExcluirSql    = [...new Set([carteiraFunilIdSql, admFunilIdSql, ...funisInativosSql].filter(Boolean))];
+      console.log('[DASH_SQL_EXCLUIR] Carteira:', carteiraFunilIdSql, '| Adm:', admFunilIdSql, '| total:', funisExcluirSql.length);
     } else if (excluiCarteira) {
       // Compat: excluiCarteira ainda funciona como fallback
-      const cr = db.prepare(`SELECT id FROM funis WHERE nome LIKE '%Carteira Recorrente%' LIMIT 1`).get();
+      const cr = db.prepare(`SELECT id FROM funis WHERE nome LIKE '%Carteira%' LIMIT 1`).get();
       carteiraFunilIdSql = cr?.id || null;
-      console.log('[DASH_EXCLUIR_CARTEIRA_SQL] excluindo funil_id:', carteiraFunilIdSql);
       const inativosRows = db.prepare(`SELECT id FROM funis WHERE ativo=0`).all();
-      funisInativosSql = inativosRows.map(f => f.id).filter(id => id !== carteiraFunilIdSql);
-      if (funisInativosSql.length) console.log('[DASH_EXCLUIR_INATIVOS_SQL] ids:', funisInativosSql);
+      funisInativosSql   = inativosRows.map(f => f.id);
+      funisExcluirSql    = [...new Set([carteiraFunilIdSql, ...funisInativosSql].filter(Boolean))];
+      console.log('[DASH_EXCLUIR_CARTEIRA_SQL] excluindo funil_id:', carteiraFunilIdSql);
     }
 
     const base = `FROM leads l LEFT JOIN pipelines p ON l.pipeline_id=p.id LEFT JOIN funis f ON p.funil_id=f.id LEFT JOIN usuarios u ON l.responsavel_id=u.id WHERE 1=1`;
     const baseParams = [];
     let baseFilter = '';
-    if (funil_id)          { baseFilter += ' AND p.funil_id=?';         baseParams.push(funil_id); }
-    if (carteiraFunilIdSql){ baseFilter += ' AND (p.funil_id IS NULL OR p.funil_id<>?)'; baseParams.push(carteiraFunilIdSql); }
-    // Exclui funis inativos (ex: Tráfego Pago) no modo "Todos - Novos"
-    if (funisInativosSql.length) {
-      const ph = funisInativosSql.map(() => '?').join(',');
+    if (funil_id) { baseFilter += ' AND p.funil_id=?'; baseParams.push(funil_id); }
+    // Exclui funis operacionais (Carteira + Adm) e inativos em "Todos - Novos"
+    if (funisExcluirSql.length) {
+      const ph = funisExcluirSql.map(() => '?').join(',');
       baseFilter += ` AND (p.funil_id IS NULL OR p.funil_id NOT IN (${ph}))`;
-      baseParams.push(...funisInativosSql);
+      baseParams.push(...funisExcluirSql);
+    } else if (carteiraFunilIdSql) {
+      // Fallback compat
+      baseFilter += ' AND (p.funil_id IS NULL OR p.funil_id<>?)';
+      baseParams.push(carteiraFunilIdSql);
     }
     if (responsavel_id)    { baseFilter += ' AND l.responsavel_id=?';   baseParams.push(responsavel_id); }
     if (req.usuario.role === 'VENDEDOR') { baseFilter += ' AND l.responsavel_id=?'; baseParams.push(req.usuario.id); }

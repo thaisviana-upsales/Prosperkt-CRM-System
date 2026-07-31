@@ -122,9 +122,9 @@
     }
 
     .login-logo .brand {
-      display: inline-flex;
+      display: flex;
       align-items: center;
-      gap: var(--space-3);
+      justify-content: center;
       margin-bottom: var(--space-3);
     }
 
@@ -135,10 +135,15 @@
     }
 
     .logo-mark img {
-      height: 60px;
+      height: 96px;
       width: auto;
-      max-width: 280px;
+      max-width: 320px;
       object-fit: contain;
+      display: block;
+      margin: 0 auto;
+      /* Nitidez: desabilita suavização que causa blur em logos PNG */
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: crisp-edges;
     }
 
     .brand-name {

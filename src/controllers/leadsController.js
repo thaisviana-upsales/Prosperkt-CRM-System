@@ -354,13 +354,18 @@ async function listar(req, res) {
 
       // Resolve id da Carteira Recorrente e funis inativos se necessário
       let carteiraFunilId = null;
-      let funisInativosIds = [];
+      let admFunilId      = null;
+      let funisExcluirIds = [];
       if (excluiCarteira) {
-        const { data: cr } = await sb.from('funis').select('id').ilike('nome','%Carteira Recorrente%').limit(1);
-        carteiraFunilId = cr?.[0]?.id || null;
-        // Funis inativos (ex: Tráfego Pago) não aparecem em "Todos - Novos"
-        const { data: inativos } = await sb.from('funis').select('id').eq('ativo', false);
-        funisInativosIds = (inativos || []).map(f => f.id).filter(id => id !== carteiraFunilId);
+        const [{ data: cr }, { data: adm }, { data: inativos }] = await Promise.all([
+          sb.from('funis').select('id').ilike('nome','%Carteira%').limit(3),
+          sb.from('funis').select('id').or('nome.ilike.%Adm%,nome.ilike.%Administra%').limit(3),
+          sb.from('funis').select('id').in('ativo', [0, false]),
+        ]);
+        carteiraFunilId = (cr || []).find(f => f)?.id || null;
+        admFunilId      = (adm || []).find(f => f)?.id || null;
+        const inatIds   = (inativos || []).map(f => f.id);
+        funisExcluirIds = [...new Set([carteiraFunilId, admFunilId, ...inatIds].filter(Boolean))];
       }
 
       let q = sb.from('leads').select(`
@@ -372,13 +377,40 @@ async function listar(req, res) {
 
       if (etapa_id)       q = q.eq('etapa_id', etapa_id);
       if (responsavel_id) q = q.eq('responsavel_id', responsavel_id);
-      if (funil_id)       q = q.eq('funil_id', funil_id);
-      if (carteiraFunilId) q = q.neq('funil_id', carteiraFunilId);
-      // Exclui leads de funis inativos (Tráfego Pago etc.) em "Todos - Novos"
-      if (funisInativosIds.length) q = q.not('funil_id', 'in', `(${funisInativosIds.join(',')})`);
+
+      // ── Filtro funil + busca ────────────────────────────────────────────────
+      // Quando há funil_id + busca: busca nos leads daquele funil (por funil_id direto
+      // OU por pipeline_id pertencente ao funil — para leads com funil_id null mas
+      // que estão no pipeline correto)
+      if (funil_id && busca) {
+        // Busca os pipeline_ids do funil para cobrir leads com funil_id = null
+        const { data: pipes } = await sb.from('pipelines').select('id').eq('funil_id', funil_id);
+        const pipeIds = (pipes || []).map(p => p.id);
+
+        const buscaFilter = `nome.ilike.%${busca}%,email.ilike.%${busca}%,telefone.ilike.%${busca}%,empresa.ilike.%${busca}%`;
+
+        if (pipeIds.length) {
+          // Lead pertence ao funil se: funil_id = X OU pipeline_id in (pipes do funil)
+          // E (nome LIKE % OR email LIKE % OR ...)
+          // PostgREST: and(or(funil_id.eq.X,pipeline_id.in.(ids)),or(busca...))
+          const funilFilter = `funil_id.eq.${funil_id},pipeline_id.in.(${pipeIds.join(',')})`;
+          q = q.or(`and(or(${funilFilter}),or(${buscaFilter}))`);
+        } else {
+          // Sem pipelines: filtra só por funil_id + busca
+          q = q.eq('funil_id', funil_id).or(buscaFilter);
+        }
+        console.log('[LEADS_BUSCA_FUNIL] funil_id:', funil_id, '| pipes:', pipeIds.length, '| busca:', busca);
+      } else if (funil_id) {
+        q = q.eq('funil_id', funil_id);
+      } else if (busca) {
+        q = q.or(`nome.ilike.%${busca}%,email.ilike.%${busca}%,telefone.ilike.%${busca}%,empresa.ilike.%${busca}%`);
+      }
+
+      // Exclui funis operacionais (Carteira + Adm + inativos) em "Todos - Novos"
+      if (funisExcluirIds.length) q = q.not('funil_id', 'in', `(${funisExcluirIds.join(',')})`);
+
       if (status)         q = q.eq('status', toSupaStatus(status));
       if (req.usuario.role === 'VENDEDOR') q = q.eq('responsavel_id', req.usuario.id);
-      if (busca) q = q.or(`nome.ilike.%${busca}%,email.ilike.%${busca}%,telefone.ilike.%${busca}%,empresa.ilike.%${busca}%`);
       q = q.is('deleted_at', null);
       q = q.order('criado_em', { ascending: false });
 
@@ -669,6 +701,8 @@ async function atualizar(req, res) {
         'observacoes','motivo_perda','dados_extras','valor_venda','forma_pagamento',
         'quantidade_parcelas','parcelas_json','produto_id','produto_nome','produto_cor',
         'previsao_proxima_compra',
+        // campos de layout virtual (aprovação e entrada)
+        'layout_virtual_aprovado_em','layout_virtual_entrada_em',
         // endereço de entrega (campos separados)
         'endereco_entrega','cep_entrega','numero_entrega','complemento_entrega',
         'referencia_entrega','bairro_entrega','cidade_entrega','uf_entrega',
