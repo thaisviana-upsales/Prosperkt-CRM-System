@@ -5,6 +5,7 @@
  */
 const crypto = require('crypto');
 const { getProvider } = require('../database/dbProvider');
+const { registrarTimeline } = require('../services/auditService');
 
 // Status válidos (inclui em_andamento)
 const STATUS_VALIDOS = ['pendente','em_andamento','concluida','adiada','atrasada'];
@@ -90,6 +91,17 @@ async function criar(req, res) {
         conteudo: `Atividade criada: ${tipo}${data_limite ? ` (prazo: ${data_limite})` : ''}.`,
       });
 
+      // Registra na lead_timeline
+      await registrarTimeline({
+        leadId,
+        usuarioId:   req.usuario.id,
+        usuarioNome: req.usuario.nome || 'Sistema',
+        tipoAcao:    'ATIVIDADE_CRIADA',
+        descricao:   `Atividade criada: ${tipo}${data_limite ? ` (prazo: ${data_limite})` : ''}${observacao ? ` — ${String(observacao).slice(0,80)}` : ''}.`,
+        dadosNovos:  { tipo, status, data_limite: data_limite || null, responsavel_id: responsavel_id || req.usuario.id },
+        origem:      'crm',
+      }).catch(e => console.warn('[Timeline] atividade_criada warn:', e.message));
+
       return res.status(201).json({ sucesso: true, dados: normAt(data) });
     }
     return res.status(201).json({ sucesso: true, dados: { id, lead_id: leadId, tipo, status } });
@@ -152,6 +164,22 @@ async function atualizar(req, res) {
           depois: { status: req.body.status },
           conteudo: `Atividade "${atual.tipo}" marcada como ${labelStatus[req.body.status] || req.body.status}.`,
         });
+
+        // Evento rico na lead_timeline
+        const tipoAcao = req.body.status === 'concluida' ? 'ATIVIDADE_CONCLUIDA'
+          : req.body.status === 'em_andamento' ? 'ATIVIDADE_INICIADA'
+          : req.body.status === 'adiada' ? 'ATIVIDADE_ADIADA'
+          : 'UPDATE_ATIVIDADE';
+        await registrarTimeline({
+          leadId:      atual.lead_id,
+          usuarioId:   req.usuario.id,
+          usuarioNome: req.usuario.nome || 'Sistema',
+          tipoAcao,
+          descricao:   `Atividade "${atual.tipo}" marcada como ${labelStatus[req.body.status] || req.body.status}.`,
+          dadosAnteriores: { status: atual.status },
+          dadosNovos:      { status: req.body.status, concluida_em: upd.concluida_em || null },
+          origem:      'crm',
+        }).catch(e => console.warn('[Timeline] atividade_status warn:', e.message));
       }
 
       return res.json({ sucesso: true, dados: normAt(data) });

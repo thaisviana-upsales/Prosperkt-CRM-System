@@ -1630,20 +1630,48 @@ async function deletar(req, res) {
 // ── POST /api/leads/:id/mensagens ─────────────────────────────────────────────
 async function adicionarMensagem(req, res) {
   const { sb, isSupa, sqlite } = getProvider();
+  const leadId = req.params.id;
   const { conteudo, tipo='NOTA' } = req.body;
   if (!conteudo) return res.status(400).json({ sucesso:false, erro:'Conteúdo é obrigatório.' });
   const id = crypto.randomBytes(16).toString('hex');
   try {
     if (isSupa) {
-      const { data, error } = await sb.from('mensagens').insert({ id, lead_id:req.params.id, usuario_id:req.usuario.id, texto:conteudo, tipo:tipo.toLowerCase() }).select('*, autor:usuarios!usuario_id(nome)').single();
+      const { data, error } = await sb.from('mensagens').insert({
+        id, lead_id: leadId,
+        usuario_id: req.usuario.id,
+        texto: conteudo,
+        tipo: tipo.toLowerCase(),
+      }).select('*, autor:usuarios!usuario_id(nome)').single();
       if (error) throw error;
+
+      // Registra na tabela de logs (auditoria)
+      req.log?.({
+        acao:        'ADD_NOTA',
+        entidade:    'leads',
+        entidade_id: leadId,
+        depois:      { conteudo: String(conteudo).slice(0, 500) },
+      });
+
+      // Registra na lead_timeline (timeline visual)
+      await registrarTimeline({
+        leadId,
+        usuarioId:   req.usuario.id,
+        usuarioNome: req.usuario.nome || 'Sistema',
+        tipoAcao:    'NOTA',
+        descricao:   String(conteudo).slice(0, 500),
+        dadosNovos:  { conteudo: String(conteudo).slice(0, 500), tipo },
+        origem:      'crm',
+      }).catch(e => console.warn('[Timeline] nota insert warn:', e.message));
+
       return res.status(201).json({ sucesso:true, dados:{ ...data, autor_nome: data.autor?.nome||'Sistema' } });
     }
-    sqlite.prepare(`INSERT INTO mensagens (id,lead_id,usuario_id,tipo,conteudo) VALUES (?,?,?,?,?)`).run(id, req.params.id, req.usuario.id, tipo, conteudo);
+    sqlite.prepare(`INSERT INTO mensagens (id,lead_id,usuario_id,tipo,conteudo) VALUES (?,?,?,?,?)`).run(id, leadId, req.usuario.id, tipo, conteudo);
     const msg = sqlite.prepare(`SELECT m.*, u.nome as autor_nome FROM mensagens m LEFT JOIN usuarios u ON m.usuario_id=u.id WHERE m.id=?`).get(id);
+    req.log?.({ acao:'ADD_NOTA', entidade:'leads', entidade_id:leadId, depois:{ conteudo: String(conteudo).slice(0,500) } });
     return res.status(201).json({ sucesso:true, dados:msg });
   } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
 }
+
 
 // ── Distribuição ──────────────────────────────────────────────────────────────
 async function getDistribuicao(req, res) {
@@ -1703,28 +1731,31 @@ async function historico(req, res) {
   const { buscarTimeline } = require('../services/auditService');
   const leadId = req.params.id;
   try {
-    let notas = [];
-    let logs  = [];
+    let notas    = [];
+    let logs     = [];
     let timeline = [];
 
     if (isSupa) {
       const { data: lead } = await sb.from('leads').select('criado_em,nome').eq('id', leadId).maybeSingle();
 
-      // 1. Notas
-      const { data: msgs } = await sb.from('mensagens').select('*, autor:usuarios!usuario_id(nome)').eq('lead_id', leadId).order('criado_em');
+      // ── 1. Notas (mensagens do lead) ──────────────────────────────────────
+      const { data: msgs } = await sb.from('mensagens')
+        .select('*, autor:usuarios!usuario_id(nome)')
+        .eq('lead_id', leadId)
+        .order('criado_em');
       notas = (msgs||[]).map(m => ({
         id: m.id, tipo: 'NOTA', acao: 'NOTA',
         icone: '📝', titulo: 'Nota adicionada',
         conteudo: m.texto || m.conteudo || '',
         autor_nome: m.autor?.nome || 'Sistema',
-        criado_em: m.criado_em,
+        criado_em: m.criado_em || m.enviado_em,
       }));
 
-      // 2. Logs de auditoria (apenas entidade='leads')
+      // ── 2. Logs de auditoria (leads + atividades para este lead) ──────────
+      // Usa .or() para pegar logs de 'leads' e 'atividades' juntos
       const { data: lgData } = await sb.from('logs')
         .select('*, usuario:usuarios!usuario_id(nome)')
-        .eq('entidade', 'leads')
-        .eq('entidade_id', leadId)
+        .or(`and(entidade.eq.leads,entidade_id.eq.${leadId}),and(entidade.eq.atividades,entidade_id.eq.${leadId}),and(entidade.eq.lead_produtos,entidade_id.eq.${leadId})`)
         .order('criado_em');
 
       const etapaIds = [...new Set((lgData||[])
@@ -1739,22 +1770,21 @@ async function historico(req, res) {
       logs = (lgData||[]).map(l => {
         const norm = {
           ...l,
-          // Supabase usa dados_antes/dados_depois
           antes:  l.dados_antes,
           depois: l.dados_depois,
-          autor_nome: l.usuario_nome || l.usuario?.nome || 'Sistema',
+          autor_nome:   l.usuario_nome || l.usuario?.nome || 'Sistema',
           usuario_nome: l.usuario_nome || l.usuario?.nome || 'Sistema',
         };
         return formatarLog(norm, etapaMap);
       });
 
-      // 3. Timeline rica (lead_timeline)
+      // ── 3. Timeline rica (lead_timeline) ──────────────────────────────────
       const tlRaw = await buscarTimeline(leadId);
       timeline = tlRaw.map(t => ({
-        id:   t.id,
-        tipo: 'TIMELINE',
-        acao: t.tipo_acao,
-        icone: _tipoAcaoIcone(t.tipo_acao),
+        id:    t.id,
+        tipo:  'TIMELINE',
+        acao:  t.tipo_acao,
+        icone:  _tipoAcaoIcone(t.tipo_acao),
         titulo: _tipoAcaoTitulo(t.tipo_acao),
         conteudo: t.descricao || '',
         dados_anteriores: t.dados_anteriores,
@@ -1764,7 +1794,7 @@ async function historico(req, res) {
         origem:     t.origem,
       }));
 
-      // Evento retroativo: Lead criado (se não houver log de criação)
+      // ── 4. Evento retroativo: Lead criado ─────────────────────────────────
       const temCreate = logs.some(l => l.acao === 'CREATE') || timeline.some(t => t.acao === 'CRIACAO_LEAD');
       if (!temCreate && lead) {
         logs.unshift({
@@ -1777,25 +1807,41 @@ async function historico(req, res) {
         });
       }
 
-      console.log('TIMELINE_LEAD_FETCH', { leadId, logs: logs.length, timeline: timeline.length, notas: notas.length });
+      console.log('[TIMELINE_FETCH]', { leadId, logs: logs.length, timeline: timeline.length, notas: notas.length });
 
     } else {
-      notas = sqlite.prepare(`SELECT m.*, u.nome as autor_nome FROM mensagens m LEFT JOIN usuarios u ON m.usuario_id=u.id WHERE m.lead_id=? ORDER BY m.enviado_em`).all(leadId)
-        .map(m => ({ ...m, tipo:'NOTA', acao:'NOTA', icone:'📝', titulo:'Nota adicionada' }));
-      const lgRaw = sqlite.prepare(`SELECT l.*, u.nome as autor_nome FROM logs l LEFT JOIN usuarios u ON l.usuario_id=u.id WHERE l.entidade='leads' AND l.entidade_id=? ORDER BY l.criado_em`).all(leadId);
+      // ── SQLite ──────────────────────────────────────────────────────────────
+      notas = sqlite.prepare(`
+        SELECT m.*, u.nome as autor_nome
+        FROM mensagens m
+        LEFT JOIN usuarios u ON m.usuario_id = u.id
+        WHERE m.lead_id = ?
+        ORDER BY COALESCE(m.criado_em, m.enviado_em)
+      `).all(leadId)
+        .map(m => ({ ...m, tipo:'NOTA', acao:'NOTA', icone:'📝', titulo:'Nota adicionada',
+          conteudo: m.texto || m.conteudo || '', criado_em: m.criado_em || m.enviado_em }));
+
+      const lgRaw = sqlite.prepare(`
+        SELECT l.*, u.nome as autor_nome
+        FROM logs l
+        LEFT JOIN usuarios u ON l.usuario_id = u.id
+        WHERE (l.entidade = 'leads' AND l.entidade_id = ?)
+           OR (l.entidade = 'atividades' AND l.entidade_id = ?)
+        ORDER BY l.criado_em
+      `).all(leadId, leadId);
+
       const eIds = [...new Set(lgRaw.flatMap(l => [_parseSafe(l.dados_depois).etapa_id, _parseSafe(l.dados_antes).etapa_id]).filter(Boolean))];
       let etapaMap = {};
       if (eIds.length) {
-        const rows = sqlite.prepare(`SELECT id, nome FROM etapas WHERE id IN (${eIds.map(()=>'?').join(',')}) `).all(...eIds);
+        const rows = sqlite.prepare(`SELECT id, nome FROM etapas WHERE id IN (${eIds.map(()=>'?').join(',')})`).all(...eIds);
         etapaMap = Object.fromEntries(rows.map(e => [e.id, e.nome]));
       }
       logs = lgRaw.map(l => formatarLog(l, etapaMap));
 
-      // Timeline para SQLite (usa tabela logs com tipo_acao)
       const tlRaw = await buscarTimeline(leadId);
       timeline = tlRaw.map(t => ({
         id: t.id, tipo: 'TIMELINE', acao: t.tipo_acao,
-        icone: _tipoAcaoIcone(t.tipo_acao),
+        icone:  _tipoAcaoIcone(t.tipo_acao),
         titulo: _tipoAcaoTitulo(t.tipo_acao),
         conteudo: t.descricao || '',
         dados_anteriores: t.dados_anteriores,
@@ -1805,14 +1851,30 @@ async function historico(req, res) {
       }));
     }
 
-    // Mescla e desduplicar por id
+    // ── Mescla, deduplicação e ordenação ────────────────────────────────────
+    // Remove duplicatas: NOTA da tabela mensagens e NOTA da lead_timeline pelo mesmo conteúdo/timestamp
     const seen = new Set();
+    // Agrupa NOTA de timeline: fingerprint por conteúdo + hora
+    const tlNotaFingerprints = new Set(
+      timeline
+        .filter(t => t.acao === 'NOTA')
+        .map(t => `${(t.conteudo||'').slice(0,60)}_${(t.criado_em||'').slice(0,16)}`)
+    );
+
     const todos = [...notas, ...logs, ...timeline]
       .filter(m => {
-        if (!m.id || seen.has(m.id)) return false;
+        if (!m.id) return false;
+        if (seen.has(m.id)) return false;
         seen.add(m.id);
+        // Elimina notas duplicadas: se já existe NOTA na lead_timeline com mesmo conteúdo e timestamp,
+        // remove a nota da tabela mensagens (lead_timeline é mais rica com autor etc.)
+        if (m.tipo === 'NOTA' && m.acao === 'NOTA') {
+          const fp = `${(m.conteudo||'').slice(0,60)}_${(m.criado_em||'').slice(0,16)}`;
+          if (tlNotaFingerprints.has(fp)) return false; // duplicata, mantém a da lead_timeline
+        }
         return true;
       })
+      .filter(m => m.criado_em || m.enviado_em)
       .sort((a,b) => new Date(a.criado_em||a.enviado_em) - new Date(b.criado_em||b.enviado_em));
 
     return res.json({ sucesso:true, dados:todos });
@@ -2125,6 +2187,15 @@ async function adicionarTag(req, res) {
       const { error } = await sb.from('leads').update({ tags, atualizado_em: new Date().toISOString() }).eq('id', id);
       if (error) throw error;
       req.log({ acao:'TAG_ADD', entidade:'leads', entidade_id:id, depois:{ tag } });
+      await registrarTimeline({
+        leadId: id,
+        usuarioId:   req.usuario.id,
+        usuarioNome: req.usuario.nome || 'Sistema',
+        tipoAcao:    'TAG_ADD',
+        descricao:   `Tag "${tag}" adicionada.`,
+        dadosNovos:  { tag },
+        origem:      'crm',
+      }).catch(()=>{});
       return res.json({ sucesso:true, dados:{ tags } });
     }
     const lead = sqlite.prepare('SELECT * FROM leads WHERE id=?').get(id);
@@ -2155,6 +2226,15 @@ async function removerTag(req, res) {
       const { error } = await sb.from('leads').update({ tags: novasTags, atualizado_em: new Date().toISOString() }).eq('id', id);
       if (error) throw error;
       req.log({ acao:'TAG_REMOVE', entidade:'leads', entidade_id:id, depois:{ tag } });
+      await registrarTimeline({
+        leadId: id,
+        usuarioId:   req.usuario.id,
+        usuarioNome: req.usuario.nome || 'Sistema',
+        tipoAcao:    'TAG_REMOVE',
+        descricao:   `Tag "${tag}" removida.`,
+        dadosAnteriores: { tag },
+        origem:      'crm',
+      }).catch(()=>{});
       return res.json({ sucesso:true, dados:{ tags: novasTags } });
     }
     const lead = sqlite.prepare('SELECT * FROM leads WHERE id=?').get(id);

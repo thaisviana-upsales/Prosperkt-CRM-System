@@ -896,30 +896,58 @@ async function abrirLead(id) {
 
 async function carregarHistorico(leadId) {
   const hist = document.getElementById('hist-list');
+  if (!hist) return;
   hist.innerHTML = '<p style="color:var(--text-muted);font-size:.8rem">Carregando...</p>';
   const r = await Auth.api('GET', `/leads/${leadId}/historico`);
   const itens = r?.data?.dados || [];
-  const notas = itens.filter(m => m.tipo === 'NOTA');
+
+  // Lista de notas (aba Informações)
+  const notas = itens.filter(m => m.tipo === 'NOTA' || m.acao === 'NOTA' || m.acao === 'ADD_NOTA');
   if (!notas.length) {
     hist.innerHTML = '<p style="color:var(--text-muted);font-size:.8rem">Sem notas ainda.</p>';
   } else {
     hist.innerHTML = notas.map(m => {
       const data = new Date(m.criado_em || m.enviado_em).toLocaleString('pt-BR');
-      return `<div class="hist-item"><div>${m.icone||'📝'} ${m.conteudo||''}</div><div class="hist-meta">${m.autor_nome||'Sistema'} · ${data}</div></div>`;
+      const txt  = m.conteudo || m.dados_novos?.conteudo || '';
+      return `<div class="hist-item"><div>${m.icone||'📝'} ${txt}</div><div class="hist-meta">${m.autor_nome||'Sistema'} · ${data}</div></div>`;
     }).join('');
   }
+
   _renderTimeline(itens, leadId);
 }
 
 function _renderTimeline(itens, leadId) {
   const tl = document.getElementById('lead-timeline');
   if (!tl) return;
+
+  // Cores de borda por tipo de evento
+  const BORDER_COLOR = {
+    CREATE:              '#6CFF4E', CRIACAO_LEAD:  '#6CFF4E',
+    MOVER:               '#7dbfff', MUDANCA_ETAPA: '#7dbfff', UPDATE_ETAPA: '#7dbfff',
+    MOVER_FUNIL:         '#a78bfa',
+    UPDATE_RESPONSAVEL:  '#fb923c', RESPONSAVEL_ALTERADO: '#fb923c',
+    TAG_ADD:             '#34d399', TAG_REMOVE: '#f87171',
+    NOTA:                '#60a5fa', ADD_NOTA: '#60a5fa',
+    ATIVIDADE_CRIADA:    '#fbbf24', ATIVIDADE_CONCLUIDA: '#4ade80',
+    ATIVIDADE_INICIADA:  '#7dbfff', ATIVIDADE_ADIADA: '#94a3b8',
+    LEAD_GANHO:          '#FFD700', VENDA_GANHA: '#FFD700', VENDA_REGISTRADA: '#FFD700',
+    LEAD_PERDIDO:        '#E10098', PERDIDO: '#E10098',
+    ARQUIVO_ANEXADO:     '#c084fc',
+    LAYOUT_VIRTUAL_APROVADO: '#4ade80',
+    CLONE_CARTEIRA:      '#38bdf8', CLONE: '#38bdf8',
+    AUTOMACAO:           '#6C47FF', AUTOMACAO_SEM_RESPOSTA: '#6C47FF',
+    ADM_VENDAS_CRIADO:   '#94a3b8',
+    EMAIL_ENVIADO:       '#38bdf8',
+  };
+
   const sorted = [...itens].filter(m => m.criado_em || m.enviado_em)
     .sort((a,b) => new Date(a.criado_em||a.enviado_em) - new Date(b.criado_em||b.enviado_em));
+
   if (!sorted.length) {
     tl.innerHTML = '<p style="font-size:.72rem;color:var(--text-muted)">Nenhuma movimentação registrada ainda.</p>';
     return;
   }
+
   tl.innerHTML = sorted.map((m, i) => {
     const data    = new Date(m.criado_em || m.enviado_em);
     const dataStr = data.toLocaleDateString('pt-BR') + ' às ' + data.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
@@ -929,30 +957,44 @@ function _renderTimeline(itens, leadId) {
 
     const icone   = m.icone  || (m.tipo === 'NOTA' ? '📝' : '📋');
     const titulo  = m.titulo || (m.tipo === 'NOTA' ? 'Nota' : m.acao || 'Evento');
-    const desc    = m.conteudo ? `<div style="font-size:.7rem;color:var(--text-muted);margin-top:2px">${m.conteudo}</div>` : '';
+    // Conteúdo: prioriza m.conteudo, senão tenta dados_novos.conteudo
+    const txtConteudo = m.conteudo || m.dados_novos?.conteudo || '';
+    const desc    = txtConteudo
+      ? `<div style="font-size:.7rem;color:var(--text-muted);margin-top:2px;line-height:1.4">${txtConteudo}</div>`
+      : '';
+
+    // ── Badge de tag visual ──
+    let tagBadge = '';
+    const tagVal = m.dados_novos?.tag || m.dados_anteriores?.tag;
+    if (tagVal && (m.acao === 'TAG_ADD' || m.acao === 'TAG_REMOVE')) {
+      const tagColor = m.acao === 'TAG_ADD' ? '#34d399' : '#f87171';
+      tagBadge = `<span style="display:inline-block;background:${tagColor}22;color:${tagColor};border:1px solid ${tagColor}44;border-radius:999px;padding:1px 8px;font-size:.65rem;font-weight:700;margin-top:3px">${m.acao === 'TAG_ADD' ? '+ ' : '- '}${tagVal}</span>`;
+    }
 
     // ── Diff antes/depois ──
     let diffHtml = '';
     const ant = m.dados_anteriores;
     const nov = m.dados_novos;
-    if (nov && typeof nov === 'object' && Object.keys(nov).length) {
+    if (nov && typeof nov === 'object' && Object.keys(nov).length && !tagVal) {
       const uid = 'tl-diff-' + m.id;
-      const linhas = Object.entries(nov).map(([k, v]) => {
-        const vAnt = ant?.[k];
-        const vNov = String(v ?? '');
-        const vAntStr = String(vAnt ?? '');
-        if (vAnt !== undefined && vAntStr !== vNov && vAntStr !== '') {
+      const linhas = Object.entries(nov)
+        .filter(([k]) => !['conteudo','tag'].includes(k)) // já mostrado no desc/tagBadge
+        .map(([k, v]) => {
+          const vAnt = ant?.[k];
+          const vNov = String(v ?? '');
+          const vAntStr = String(vAnt ?? '');
+          if (vAnt !== undefined && vAntStr !== vNov && vAntStr !== '') {
+            return `<div style="font-size:.67rem;margin:1px 0">
+              <span style="color:var(--text-muted)">${k}:</span>
+              <span style="color:#FF3B5C;text-decoration:line-through;margin:0 4px">${vAntStr}</span>
+              <span style="color:#6CFF4E">→ ${vNov}</span>
+            </div>`;
+          }
           return `<div style="font-size:.67rem;margin:1px 0">
             <span style="color:var(--text-muted)">${k}:</span>
-            <span style="color:#FF3B5C;text-decoration:line-through;margin:0 4px">${vAntStr}</span>
-            <span style="color:#6CFF4E">→ ${vNov}</span>
+            <span style="color:var(--text-secondary);margin-left:4px">${vNov}</span>
           </div>`;
-        }
-        return `<div style="font-size:.67rem;margin:1px 0">
-          <span style="color:var(--text-muted)">${k}:</span>
-          <span style="color:var(--text-secondary);margin-left:4px">${vNov}</span>
-        </div>`;
-      }).join('');
+        }).join('');
 
       if (linhas) {
         diffHtml = `
@@ -979,7 +1021,10 @@ function _renderTimeline(itens, leadId) {
       const diffH = Math.round((data - prev) / 3600000);
       if (diffH >= 0) duracao = diffH < 24 ? `${diffH}h` : `${Math.round(diffH/24)}d`;
     }
-    const borderStyle = isAuto ? 'border-left:2px solid #6C47FF44;' : '';
+
+    const borderColor = BORDER_COLOR[m.acao] || BORDER_COLOR[m.tipo] || (isAuto ? '#6C47FF44' : 'transparent');
+    const borderStyle = `border-left:2px solid ${borderColor};`;
+
     return `<div class="timeline-item" style="${borderStyle}">
       <div class="timeline-dot${isLast?' current':''}">${icone}</div>
       <div class="timeline-body">
