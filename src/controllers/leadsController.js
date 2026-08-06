@@ -231,13 +231,13 @@ async function _validarProdutoParaGanho(sb, leadId) {
   try {
     const { data: itens, error } = await sb
       .from('lead_produtos')
-      .select('id, produto_id, produto_nome, quantidade, valor_unitario, total')
+      .select('id, produto_id, produto_nome, quantidade, valor_unitario, valor_total')
       .eq('lead_id', leadId)
       .is('deleted_at', null);
 
     if (error) {
-      console.error('[PRODUTO_OBRIG] Erro ao buscar lead_produtos:', error.message);
-      return { valido: false, motivo: 'Erro ao verificar produtos. Tente novamente.' };
+      console.error('[PRODUTO_OBRIG] Erro Supabase ao buscar lead_produtos:', error.message, '| código:', error.code, '| lead_id:', leadId);
+      return { valido: false, motivo: `Erro ao verificar produtos (${error.code || error.message}). Tente novamente.` };
     }
 
     const itensValidos = (itens || []).filter(i => {

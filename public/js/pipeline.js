@@ -487,6 +487,9 @@ function renderKanban() {
 
   const modoTodos = !_filtros.funil; // no modo "Todos", mostra badge do funil no card
 
+  // Rastreia leads já alocados em alguma coluna para detectar "órfãos"
+  const leadsAlocados = new Set();
+
   _etapas.forEach(etapa => {
     // Em modo "Todos": agrupa leads de TODAS as etapas com o mesmo nome
     let leads;
@@ -505,6 +508,10 @@ function renderKanban() {
       vendedorIds.add(_usuario.id); // inclui a si mesmo
       leads = leads.filter(l => !l.responsavel_id || vendedorIds.has(l.responsavel_id));
     }
+
+    // Marca todos os leads desta coluna como alocados
+    leads.forEach(l => leadsAlocados.add(l.id));
+
     const col = document.createElement('div');
     col.className = 'kanban-col';
 
@@ -552,6 +559,38 @@ function renderKanban() {
       card.addEventListener('dragend', () => card.classList.remove('dragging'));
     });
   });
+
+  // ── Leads órfãos: têm funil correto mas etapa_id null/inválida ──────────────
+  // Só se aplica em modo funil específico (não no "Todos")
+  if (!modoTodos) {
+    let leadsOrfaos = _leads.filter(l => !leadsAlocados.has(l.id));
+    if (_usuario?.role === 'VENDEDOR') {
+      const vendedorIds = new Set((_usuarios || []).map(u => u.id));
+      vendedorIds.add(_usuario.id);
+      leadsOrfaos = leadsOrfaos.filter(l => !l.responsavel_id || vendedorIds.has(l.responsavel_id));
+    }
+    if (leadsOrfaos.length > 0) {
+      console.warn('[KANBAN_ORFAOS] leads do funil sem etapa reconhecida:', leadsOrfaos.length,
+        '| ids:', leadsOrfaos.map(l => l.id).join(','));
+      // Coloca na 1ª etapa disponível (para permitir mover), ou cria coluna "Sem etapa"
+      const primeiraEtapa = _etapas[0];
+      const colOrfaos = document.createElement('div');
+      colOrfaos.className = 'kanban-col';
+      colOrfaos.innerHTML = `
+        <div class="col-header">
+          <div class="col-dot" style="background:var(--text-muted)"></div>
+          <span class="col-title" style="color:var(--text-muted)">Sem etapa</span>
+          <span class="col-count">${leadsOrfaos.length}</span>
+        </div>
+        <div class="col-body" data-etapa="${primeiraEtapa?.id || ''}">
+          ${leadsOrfaos.map(l => renderCard(l, false)).join('')}
+        </div>`;
+      wrap.insertBefore(colOrfaos, wrap.firstChild); // coloca no início do kanban
+      colOrfaos.querySelectorAll('.lead-card').forEach(card => {
+        card.addEventListener('click', () => abrirLead(card.dataset.id));
+      });
+    }
+  }
 }
 
 function renderCard(l, mostrarFunil) {
