@@ -191,42 +191,34 @@ async function resumo(req, res) {
       if (responsavel_id)     q = q.eq('responsavel_id', responsavel_id);
       if (req.usuario.role === 'VENDEDOR') q = q.eq('responsavel_id', req.usuario.id);
 
-      // Filtro de data
+      // Filtro de data — timezone explícito UTC-3 (America/Sao_Paulo)
+      // IMPORTANTE: sem o offset, o Supabase interpreta como UTC e desloca o dia 3h
       const periodo = calcPeriodo(data_tipo, data_periodo, data_inicio, data_fim);
       if (periodo?.ini || periodo?.fim) {
         const campo = campoData(data_tipo);
-        if (periodo.ini) q = q.gte(campo, periodo.ini + 'T00:00:00');
-        if (periodo.fim) q = q.lte(campo, periodo.fim + 'T23:59:59');
+        const ini = periodo.ini ? periodo.ini + 'T00:00:00-03:00' : null;
+        const fim = periodo.fim ? periodo.fim + 'T23:59:59.999-03:00' : null;
+        if (ini) q = q.gte(campo, ini);
+        if (fim) q = q.lte(campo, fim);
+        // Bug crítico: PostgREST ignora NULLs em .gte()/.lte() — leads sem
+        // perdido_em preenchido passam pelo filtro sem ser filtrados.
+        // Força exclusão explícita de NULLs para filtros de campo opcional.
+        if (data_tipo === 'perdido') q = q.not('perdido_em', 'is', null);
+        if (data_tipo === 'fechamento' || data_tipo === 'ganho') q = q.not('ganho_em', 'is', null);
+        console.log('[DASHBOARD_DATE_FILTER]', {
+          campo, ini, fim, data_tipo,
+          timezone: 'America/Sao_Paulo (UTC-3)',
+          nota: 'NULL rows excluídas para filtro de campo opcional',
+        });
       }
 
       const { data: leads, error } = await q;
       if (error) throw error;
 
       // ── 3. KPIs ──────────────────────────────────────────────────────────────
-      // Fix #4: perdidos filtrados por perdido_em quando há filtro de data
-      let perdidos = leads.filter(l => isPerdidoLead(l, etapaMap));
-      if (periodo?.ini || periodo?.fim) {
-        // Perdidos SEMPRE filtrados por perdido_em (independente do data_tipo principal)
-        // Isso garante que o card de perdidos não "some" quando data_tipo=fechamento
-        const ini = periodo.ini ? new Date(periodo.ini + 'T00:00:00').getTime() : null;
-        const fim = periodo.fim ? new Date(periodo.fim + 'T23:59:59').getTime() : null;
-        if (data_tipo === 'perdido' || data_tipo === 'perda') {
-          // Já filtrado pelo campo perdido_em via query principal
-          perdidos = perdidos.filter(l => {
-            if (!l.perdido_em) return false;
-            const t = new Date(l.perdido_em).getTime();
-            if (ini && t < ini) return false;
-            if (fim && t > fim) return false;
-            return true;
-          });
-        } else {
-          // Para outros tipos de data: busca perdidos adicionais por perdido_em
-          // mas NÃO filtra pela data (já que a query foi filtrada por outro campo)
-          // Mantém todos os perdidos que existem nos leads do período
-          // (ex: lead criado no período que foi perdido)
-          // Nenhuma mudança necessária — perdidos já vêm do array `leads` filtrado
-        }
-      }
+      // Leads já chegam filtrados pela query com campo correto + timezone + NOT NULL.
+      // NÃO aplicar filtro adicional em memória — causaria inconsistência com o array total.
+      const perdidos = leads.filter(l => isPerdidoLead(l, etapaMap));
       const ganhos   = leads.filter(l => isGanhoLead(l, etapaMap));
       const abertos  = leads.filter(l => !isGanhoLead(l, etapaMap) && !isPerdidoLead(l, etapaMap));
 

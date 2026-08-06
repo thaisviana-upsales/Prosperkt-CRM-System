@@ -1276,7 +1276,8 @@ async function mover(req, res) {
       if (funilIdUpd) upd.funil_id = funilIdUpd;
       if (pipeline_id) upd.pipeline_id = pipeline_id;
       if (isGanho && !lead.ganho_em) upd.ganho_em = agora;
-      if (isPerdido && motivo_perda) { upd.perdido_em = agora; upd.perdido_motivo = motivo_perda; upd.motivo_perda = motivo_perda; }
+      if (isPerdido && !lead.perdido_em) upd.perdido_em = agora; // salva sempre — independente de motivo
+      if (isPerdido && motivo_perda)    { upd.perdido_motivo = motivo_perda; upd.motivo_perda = motivo_perda; }
       // ── Layout Virtual: entrada e saída ────────────────────────────────────
       const isLayoutVirtual = /layout.?virtual/i.test(etapa.nome||'');
       const isAmostrafisica  = /amostra.?física/i.test(etapa.nome||'');
