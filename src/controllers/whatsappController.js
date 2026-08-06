@@ -378,6 +378,35 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
     }
   }
 
+  // ── Passo 2b: LID + sem tel → busca telefone do lead para localizar conversa ───
+  // Cenário principal do bug: webhook retornou @lid sem participant.
+  // telFinal=null, mas leadId pode ter sido resolvido via nome/alias.
+  // Solução: pega o telefone do lead e busca conversa já existente por ele.
+  if (!conversaId && isLidJid && lidNumero && leadId && !tel) {
+    try {
+      console.log('CONVERSA_LOOKUP_LID_TEL_FROM_LEAD', { leadId, lidNumero });
+      const { data: ldTel } = await sb.from('leads').select('telefone').eq('id', leadId).single();
+      const telDoLead = ldTel?.telefone ? normalizePhone(ldTel.telefone) : null;
+      if (telDoLead) {
+        console.log('CONVERSA_LOOKUP_LID_TEL_DO_LEAD', { telDoLead, lidNumero });
+        for (const v of phoneVariants(telDoLead)) {
+          const { data: byTelLead } = await sb.from('conversas_whatsapp')
+            .select('id').eq('telefone', v).neq('status', 'FECHADA')
+            .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
+          if (byTelLead?.[0]) {
+            conversaId = byTelLead[0].id; fonte = 'lid_tel_do_lead';
+            console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte, lidNumero, telDoLead });
+            console.log('WHATSAPP_DUPLICATE_CONVERSA_PREVENTED', { lidNumero, conversaId, telDoLead });
+            registrarAlias(sb, {
+              conversaId, tel: telDoLead, rawJid: rawJid || null, lidNumero, nome: null,
+            }).catch(e => console.warn('WHATSAPP_ALIAS_LID_LEAD_WARN:', e.message));
+            break;
+          }
+        }
+      }
+    } catch(e) { console.warn('CONVERSA_LOOKUP_LID_TEL_LEAD_ERROR', e.message); }
+  }
+
   // ── Passo 3: telefone — exact match ─────────────────────────────────────
   if (!conversaId && tel) {
     console.log('CONVERSA_LOOKUP_PHONE', { tel });
@@ -1642,7 +1671,8 @@ function normalizarPayloadWA(body) {
       );
   const tel = normalizarTelWhatsApp(rawTel);
   // Preserva o número LID original (sem @) para mapeamento
-  const lidNumero = isLidRaw ? normalizePhone(remoteJid) : null;
+  // CORREÇÃO: não passa por normalizePhone — LIDs têm 14+ dígitos que seriam rejeitados.
+  const lidNumero = isLidRaw ? remoteJid.split('@')[0].replace(/\D/g, '') || null : null;
 
   // ── Extrai nome do contato ────────────────────────────────────────────────
   const nome = (
@@ -2018,16 +2048,32 @@ async function webhookReceberMensagem(req, res) {
   console.log('WEBHOOK_FROM_ME_VALUE', fromMe);
   console.log('WEBHOOK_PHONE_NORMALIZED', { rawJid, telNormalizado: tel || '(inválido)' });
 
-  // ── BUG-FIX: tel pode ser nulo se normalização falhar (ex: LID sem participant)
-  // Nesse caso usa rawJid como identificador provisório em vez de rejeitar
+  // ── Detecta JID no formato LID (WhatsApp Multi-Device) ──────────────────────
+  // MOVIDO para antes do bloco telFinal — que já precisa da variável
+  const isLidJid = rawJid.endsWith('@lid');
+  if (isLidJid) {
+    console.log(`[WA Webhook] ⚠️ LID_DETECTADO: ${lidNumero || '(sem numero)'} (JID: ${rawJid})`);
+  }
+
+  // ── CORREÇÃO LID: tel pode ser nulo quando remoteJid é @lid sem participant ──
+  // O fallback ANTERIOR usava o número do LID (ex: 67044573708506) como telefone
+  // provisório — causava criação de conversa duplicada com número falso.
+  // NOVA LÓGICA:
+  //   - isLidJid=true e tel=null → telFinal fica null; resolver usa lidNumero+leadId
+  //   - isLidJid=false e tel=null → fallback pelo rawJid (comportamento preservado)
   let telFinal = tel;
   if (!telFinal) {
-    if (rawJid && rawJid.length > 3) {
-      // Usa rawJid limpo (sem @) como telefone provisório para não perder a mensagem
+    if (isLidJid) {
+      // LID sem participant: não há telefone real no payload.
+      // Não usar o número do LID como tel — é um ID interno do WhatsApp, não um telefone.
+      telFinal = null;
+      console.warn('WHATSAPP_LID_SEM_TELEFONE_REAL', { lidNumero, rawJid, motivo: 'lid_sem_participant_aguardando_resolucao' });
+    } else if (rawJid && rawJid.length > 3) {
+      // Não é LID: usa rawJid como fallback (comportamento original)
       telFinal = rawJid.split('@')[0].replace(/\D/g, '') || null;
       console.warn('WHATSAPP_INBOUND_PHONE_FALLBACK_JID', { rawJid, telFinal, motivo: 'tel_nulo_usando_jid' });
     }
-    if (!telFinal) {
+    if (!telFinal && !isLidJid) {
       console.warn('WEBHOOK_PHONE_INVALID_REJECTED', { rawJid, body: JSON.stringify(body).slice(0, 200) });
       return res.status(400).json({ sucesso: false, erro: 'Telefone não identificado no payload.' });
     }
@@ -2035,11 +2081,6 @@ async function webhookReceberMensagem(req, res) {
   // Reatribui para manter compatibilidade com o restante do código
   // (Nota: parsed.tel era const, criamos telFinal como variável mutável)
 
-  // ── Detecta JID no formato LID (WhatsApp Multi-Device) ──────────────────────
-  const isLidJid = rawJid.endsWith('@lid');
-  if (isLidJid) {
-    console.log(`[WA Webhook] ⚠️ LID_DETECTADO: ${lidNumero || telFinal} (JID: ${rawJid}) participant_tel=${telFinal}`);
-  }
 
   // ── Valida número — permissivo para não bloquear recebimento ────────────────
   // Brasil: 55 + DDD(2) + número(8-9) = 12-13 dígitos
@@ -2216,11 +2257,15 @@ async function webhookReceberMensagem(req, res) {
     if (isSupa && !conversaId) {
       // Cria nova conversa — só chega aqui se resolverConversaWhatsapp liberou (permiteCreate=true)
       const novoConvId = crypto.randomBytes(16).toString('hex');
-      const telParaConversa = (isLidJid && !leadId) ? `LID:${lidNumero}` : (telFinal || null);
+      // CORREÇÃO: NUNCA usar LID como telefone da conversa.
+      // Antes: (isLidJid && !leadId) ? `LID:${lidNumero}` : (telFinal || null)
+      // Agora: usa telFinal (que pode ser null para LID sem participant) — o LID
+      // fica apenas em dados_extras para rastreio interno, nunca no campo telefone.
+      const telParaConversa = telFinal || null;
       const dadosExtrasNova = isLidJid && lidNumero
         ? JSON.stringify({ lid: lidNumero, remoteJid: rawJid })
         : null;
-      console.log('WHATSAPP_INBOUND_CONVERSA_CREATED', { tel: telParaConversa, leadId, nomeContato });
+      console.log('WHATSAPP_INBOUND_CONVERSA_CREATED', { tel: telParaConversa, lidNumero: lidNumero || null, leadId, nomeContato });
       const { data: novaConv, error: errC } = await sb.from('conversas_whatsapp').insert({
         id: novoConvId, telefone: telParaConversa, nome_contato: nomeContato,
         lead_id: leadId || null, origem: 'WHATSAPP_WEBHOOK', status: 'ABERTA',
@@ -2228,7 +2273,7 @@ async function webhookReceberMensagem(req, res) {
       }).select('id').single();
       if (!errC && novaConv) {
         conversaId = novaConv.id;
-        console.log('WEBHOOK_CONVERSA_CREATED', { conversaId, tel: telParaConversa, leadId, nomeContato });
+        console.log('WEBHOOK_CONVERSA_CREATED', { conversaId, tel: telParaConversa, lidNumero: lidNumero || null, leadId, nomeContato });
       } else {
         console.error('[WA Webhook] Erro ao criar conversa:', errC?.message);
       }
@@ -2377,13 +2422,39 @@ async function webhookReceberMensagem(req, res) {
       // Popula whatsapp_conversa_aliases para que próximas mensagens deste
       // cliente sejam resolvidas na mesma conversa (Passo 0 do resolver).
       if (isSupa && conversaId) {
+        // CORREÇÃO: só registra tel no alias se for número válido.
+        // Quando LID sem participant, telFinal=null — não passar número inválido.
+        const _telAlias = (telFinal && normalizePhoneBR(telFinal)) ? telFinal : null;
+        console.log('WHATSAPP_ALIAS_REGISTER_RECV', { conversaId, tel: _telAlias, lidNumero: lidNumero || null, rawJid });
         registrarAlias(sb, {
           conversaId,
-          tel:       telFinal,
+          tel:       _telAlias,
           rawJid:    rawJid || null,
           lidNumero: lidNumero || null,
           nome:      !fromMe ? nome : null,
         }).catch(e => console.warn('WHATSAPP_ALIAS_REGISTER_RECV_WARN:', e.message));
+
+        // CORREÇÃO: se LID com lead vinculado e sem telefone na conversa,
+        // atualiza o telefone da conversa com o tel real do lead (background).
+        if (isLidJid && lidNumero && leadId && !telFinal) {
+          (async () => {
+            try {
+              const { data: _cv } = await sb.from('conversas_whatsapp')
+                .select('telefone').eq('id', conversaId).single();
+              if (!_cv?.telefone || _cv.telefone.startsWith('LID:')) {
+                const { data: _ld } = await sb.from('leads').select('telefone').eq('id', leadId).single();
+                const _telReal = _ld?.telefone ? normalizePhoneBR(_ld.telefone) : null;
+                if (_telReal) {
+                  await sb.from('conversas_whatsapp')
+                    .update({ telefone: _telReal, atualizado_em: new Date().toISOString() })
+                    .eq('id', conversaId);
+                  console.log('WHATSAPP_LID_CONVERSA_TEL_ATUALIZADO', { conversaId, _telReal, lidNumero });
+                  await registrarAlias(sb, { conversaId, tel: _telReal, rawJid: rawJid || null, lidNumero, nome: null });
+                }
+              }
+            } catch(_e) { console.warn('WHATSAPP_LID_TEL_UPDATE_WARN:', _e.message); }
+          })();
+        }
       }
 
       // ── Classificação automática de resposta à mensagem de boas-vindas ────
