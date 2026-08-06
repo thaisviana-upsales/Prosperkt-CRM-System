@@ -1501,11 +1501,27 @@ async function excluirLead() {
 }
 
 async function adicionarNota() {
-  const id=document.getElementById('fl-id').value;
-  const txt=document.getElementById('nova-nota').value.trim();
-  if (!id||!txt) return;
-  const r=await Auth.api('POST',`/leads/${id}/mensagens`,{ conteudo:txt, tipo:'NOTA' });
-  if (r?.ok) { Toast.show('Nota adicionada!','success'); document.getElementById('nova-nota').value=''; await abrirLead(id); }
+  const id  = document.getElementById('fl-id').value;
+  const txt = document.getElementById('nova-nota').value.trim();
+  if (!id || !txt) return;
+  const btn = document.getElementById('btn-add-nota');
+  const origText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Salvando...'; }
+  try {
+    const r = await Auth.api('POST', `/leads/${id}/mensagens`, { conteudo: txt, tipo: 'NOTA' });
+    if (r?.ok) {
+      Toast.show('Nota adicionada!', 'success');
+      document.getElementById('nova-nota').value = '';
+      // Atualiza apenas timeline/notas — NÃO chama abrirLead() para não trocar de aba
+      await carregarHistorico(id);
+    } else {
+      Toast.show(r?.data?.erro || 'Erro ao adicionar nota.', 'error');
+    }
+  } catch(e) {
+    Toast.show('Erro ao adicionar nota.', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origText || 'Adicionar Nota'; }
+  }
 }
 
 function fecharModal() { document.getElementById('ov-lead').classList.remove('open'); }

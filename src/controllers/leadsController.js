@@ -806,9 +806,10 @@ async function atualizar(req, res) {
           antes:{ funil_id: atual.funil_id },
           depois:{ funil_id: upd.funil_id } });
       }
-      // ── Timeline: diff completo de campos editados ───────────────────────────
+      // ── Timeline: diff completo de campos editados + etapa + responsável ───────
       setImmediate(async () => {
         try {
+          // NOTA: responsavel_id e etapa_id tratados separadamente com nomes resolvidos
           const CAMPOS_RASTREADOS = [
             ['nome',            'Nome'],
             ['email',           'E-mail'],
@@ -829,7 +830,7 @@ async function atualizar(req, res) {
             ['cidade_entrega',  'Cidade'],
             ['uf_entrega',      'UF'],
             ['motivo_perda',    'Motivo de Perda'],
-            ['responsavel_id',  'Responsável'],
+            // responsavel_id omitido aqui — tratado separadamente com nome resolvido
           ];
           const ant = {};
           const nov = {};
@@ -854,6 +855,59 @@ async function atualizar(req, res) {
               origem: 'crm',
             });
           }
+
+          // ── Mudança de etapa via PATCH (complementa o mover()) ────────────────
+          if (upd.etapa_id && upd.etapa_id !== atual.etapa_id) {
+            try {
+              const { sb: _sbE } = getProvider();
+              let etapaAntNome = '', etapaNovoNome = '';
+              if (_sbE) {
+                const [eAnt, eNov] = await Promise.all([
+                  atual.etapa_id ? _sbE.from('etapas').select('nome').eq('id', atual.etapa_id).single() : { data: null },
+                  _sbE.from('etapas').select('nome').eq('id', upd.etapa_id).single(),
+                ]);
+                etapaAntNome  = eAnt.data?.nome || '';
+                etapaNovoNome = eNov.data?.nome || '';
+              }
+              await registrarTimeline({
+                leadId:          id,
+                usuarioId:       req.usuario?.id,
+                usuarioNome:     req.usuario?.nome || 'Sistema',
+                tipoAcao:        'MUDANCA_ETAPA',
+                descricao:       `Etapa alterada: ${etapaAntNome || '(inicial)'} → ${etapaNovoNome}.`,
+                dadosAnteriores: { etapa_id: atual.etapa_id, etapa_nome: etapaAntNome },
+                dadosNovos:      { etapa_id: upd.etapa_id, etapa_nome: etapaNovoNome },
+                origem:          'crm',
+              });
+            } catch(eE) { console.error('[TIMELINE_ETAPA_UPDATE]', eE.message); }
+          }
+
+          // ── Mudança de responsável via PATCH — resolve nomes reais ────────────
+          if (upd.responsavel_id && upd.responsavel_id !== atual.responsavel_id) {
+            try {
+              const { sb: _sbR } = getProvider();
+              let respAntNome = '', respNovoNome = '';
+              if (_sbR) {
+                const [rAnt, rNov] = await Promise.all([
+                  atual.responsavel_id ? _sbR.from('usuarios').select('nome').eq('id', atual.responsavel_id).single() : { data: null },
+                  _sbR.from('usuarios').select('nome').eq('id', upd.responsavel_id).single(),
+                ]);
+                respAntNome  = rAnt.data?.nome || '';
+                respNovoNome = rNov.data?.nome || '';
+              }
+              await registrarTimeline({
+                leadId:          id,
+                usuarioId:       req.usuario?.id,
+                usuarioNome:     req.usuario?.nome || 'Sistema',
+                tipoAcao:        'RESPONSAVEL_ALTERADO',
+                descricao:       `Responsável: ${respAntNome || '(anterior)'} → ${respNovoNome}.`,
+                dadosAnteriores: { responsavel_id: atual.responsavel_id, responsavel_nome: respAntNome },
+                dadosNovos:      { responsavel_id: upd.responsavel_id, responsavel_nome: respNovoNome },
+                origem:          'crm',
+              });
+            } catch(eR) { console.error('[TIMELINE_RESP_UPDATE]', eR.message); }
+          }
+
         } catch(e) { console.error('[TIMELINE_UPDATE]', e.message); }
       });
       return res.json({ sucesso:true, dados: normalizeLead(data) });
@@ -1773,16 +1827,26 @@ async function historico(req, res) {
         id: m.id, tipo: 'NOTA', acao: 'NOTA',
         icone: '📝', titulo: 'Nota adicionada',
         conteudo: m.texto || m.conteudo || '',
-        autor_nome: m.autor?.nome || 'Sistema',
-        criado_em: m.criado_em || m.enviado_em,
+        autor_nome: m.autor?.nome || m.usuario_nome || 'Sistema',
+        criado_em: m.criado_em || m.enviado_em || new Date().toISOString(),
       }));
 
-      // ── 2. Logs de auditoria (leads + atividades para este lead) ──────────
-      // Usa .or() para pegar logs de 'leads' e 'atividades' juntos
-      const { data: lgData } = await sb.from('logs')
+      // ── 2. Logs de auditoria (duas queries simples em vez de .or() composto) ─
+      // Query separada por entidade para evitar erros de sintaxe no PostgREST
+      const { data: lgLeads, error: lgErr1 } = await sb.from('logs')
         .select('*, usuario:usuarios!usuario_id(nome)')
-        .or(`and(entidade.eq.leads,entidade_id.eq.${leadId}),and(entidade.eq.atividades,entidade_id.eq.${leadId}),and(entidade.eq.lead_produtos,entidade_id.eq.${leadId})`)
-        .order('criado_em');
+        .eq('entidade', 'leads')
+        .eq('entidade_id', leadId)
+        .order('criado_em', { ascending: true });
+      if (lgErr1) console.warn('[HISTORICO] logs leads error:', lgErr1.message);
+
+      const { data: lgAtiv } = await sb.from('logs')
+        .select('*, usuario:usuarios!usuario_id(nome)')
+        .eq('entidade', 'atividades')
+        .eq('entidade_id', leadId)
+        .order('criado_em', { ascending: true });
+
+      const lgData = [...(lgLeads || []), ...(lgAtiv || [])];
 
       const etapaIds = [...new Set((lgData||[])
         .flatMap(l => [_parseSafe(l.dados_depois || l.depois).etapa_id, _parseSafe(l.dados_antes || l.antes).etapa_id])
@@ -1913,38 +1977,68 @@ async function historico(req, res) {
 // Helpers de Timeline
 function _tipoAcaoIcone(tipo) {
   const MAP = {
-    CRIACAO_LEAD:    '🌱',
-    EDICAO_DADOS:    '✏️',
-    MUDANCA_ETAPA:   '➡️',
-    LEAD_GANHO:      '🏆',
-    VENDA_GANHA:     '🏆',
-    LEAD_PERDIDO:    '❌',
-    CLONE_CARTEIRA:  '🔄',
-    CLONE:           '📋',
-    ARQUIVO_ANEXADO: '📎',
-    ATIVIDADE_CRIADA:'📅',
-    ATIVIDADE_CONCLUIDA:'✔️',
-    ADM_VENDAS_CRIADO:'📦',
-    NOTA:            '📝',
+    CRIACAO_LEAD:           '🌱',
+    EDICAO_DADOS:           '✏️',
+    MUDANCA_ETAPA:          '➡️',
+    LEAD_GANHO:             '🏆',
+    VENDA_GANHA:            '🏆',
+    VENDA_REGISTRADA:       '💰',
+    VENDA_ATUALIZADA:       '💰',
+    LEAD_PERDIDO:           '❌',
+    LEAD_DESQUALIFICADO:    '🚫',
+    CLONE_CARTEIRA:         '🔄',
+    CLONE:                  '📋',
+    ARQUIVO_ANEXADO:        '📎',
+    UPLOAD_ARQUIVO:         '📎',
+    ATIVIDADE_CRIADA:       '📅',
+    ATIVIDADE_CONCLUIDA:    '✔️',
+    ATIVIDADE_ADIADA:       '⏩',
+    ADM_VENDAS_CRIADO:      '📦',
+    NOTA:                   '📝',
+    TAG_ADD:                '🏷️',
+    TAG_REMOVE:             '🗑️',
+    UPDATE_RESPONSAVEL:     '👤',
+    RESPONSAVEL_ALTERADO:   '👤',
+    EMAIL_ENVIADO:          '📧',
+    AUTOMACAO:              '🤖',
+    AUTOMACAO_SEM_RESPOSTA: '🤖',
+    SLA_CONTATO_1:          '🤖',
+    LAYOUT_VIRTUAL_ENTRADA: '🖥️',
+    LAYOUT_VIRTUAL_APROVADO:'✅',
   };
   return MAP[tipo] || '📋';
 }
 
 function _tipoAcaoTitulo(tipo) {
   const MAP = {
-    CRIACAO_LEAD:    'Lead criado',
-    EDICAO_DADOS:    'Dados atualizados',
-    MUDANCA_ETAPA:   'Etapa alterada',
-    LEAD_GANHO:      'Venda/Ganho',
-    VENDA_GANHA:     'Venda/Ganho',
-    LEAD_PERDIDO:    'Lead perdido',
-    CLONE_CARTEIRA:  'Enviado para Carteira Recorrente',
-    CLONE:           'Lead clonado',
-    ARQUIVO_ANEXADO: 'Arquivo anexado',
-    ATIVIDADE_CRIADA:'Atividade criada',
-    ATIVIDADE_CONCLUIDA:'Atividade concluída',
-    ADM_VENDAS_CRIADO:'Enviado para Adm. de Vendas',
-    NOTA:            'Nota adicionada',
+    CRIACAO_LEAD:           'Lead criado',
+    EDICAO_DADOS:           'Dados atualizados',
+    MUDANCA_ETAPA:          'Etapa alterada',
+    LEAD_GANHO:             'Venda ganha',
+    VENDA_GANHA:            'Venda ganha',
+    VENDA_REGISTRADA:       'Venda registrada',
+    VENDA_ATUALIZADA:       'Venda atualizada',
+    LEAD_PERDIDO:           'Lead perdido',
+    LEAD_DESQUALIFICADO:    'Lead desqualificado',
+    CLONE_CARTEIRA:         'Enviado para Carteira Recorrente',
+    CLONE:                  'Lead clonado',
+    ARQUIVO_ANEXADO:        'Arquivo anexado',
+    UPLOAD_ARQUIVO:         'Arquivo anexado',
+    ATIVIDADE_CRIADA:       'Atividade criada',
+    ATIVIDADE_CONCLUIDA:    'Atividade concluída',
+    ATIVIDADE_ADIADA:       'Atividade adiada',
+    ADM_VENDAS_CRIADO:      'Enviado para Adm. de Vendas',
+    NOTA:                   'Nota adicionada',
+    TAG_ADD:                'Tag adicionada',
+    TAG_REMOVE:             'Tag removida',
+    UPDATE_RESPONSAVEL:     'Responsável alterado',
+    RESPONSAVEL_ALTERADO:   'Responsável alterado',
+    EMAIL_ENVIADO:          'E-mail enviado',
+    AUTOMACAO:              'Ação automática',
+    AUTOMACAO_SEM_RESPOSTA: 'Mensagem automática',
+    SLA_CONTATO_1:          'SLA Contato 1',
+    LAYOUT_VIRTUAL_ENTRADA: 'Layout Virtual — entrada',
+    LAYOUT_VIRTUAL_APROVADO:'Layout Virtual aprovado',
   };
   return MAP[tipo] || tipo || 'Evento';
 }
