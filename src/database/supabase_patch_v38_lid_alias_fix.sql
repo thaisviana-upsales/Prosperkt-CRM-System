@@ -6,30 +6,31 @@
 -- ── 1. Corrige conversas cujo telefone foi gravado como "LID:XXXXXXXX" ────────
 -- Substitui pelo telefone do lead vinculado quando disponível.
 -- Guarda o LID original em dados_extras para rastreio.
-UPDATE conversas_whatsapp
+-- NOTA: qualificamos TODAS as colunas com o alias da tabela principal (cw)
+--       para evitar o erro "referência ambígua" quando há JOIN com leads.
+UPDATE conversas_whatsapp AS cw
 SET
-  telefone = leads.telefone,
-  dados_extras = COALESCE(
-    (
+  telefone      = l.telefone,
+  dados_extras  = (
+    COALESCE(
       CASE
-        WHEN dados_extras IS NULL OR dados_extras = '' THEN '{}'::jsonb
-        ELSE dados_extras::jsonb
-      END
-    )::jsonb || jsonb_build_object(
-      'lid_original',    split_part(conversas_whatsapp.telefone, ':', 2),
-      'lid_corrigido_em', now()::text
-    ),
-    jsonb_build_object(
-      'lid_original',    split_part(conversas_whatsapp.telefone, ':', 2),
-      'lid_corrigido_em', now()::text
+        WHEN cw.dados_extras IS NULL OR cw.dados_extras = ''
+          THEN '{}'::jsonb
+        ELSE cw.dados_extras::jsonb
+      END,
+      '{}'::jsonb
     )
+    || jsonb_build_object(
+         'lid_original',    split_part(cw.telefone, ':', 2),
+         'lid_corrigido_em', now()::text
+       )
   )::text,
   atualizado_em = now()::text
-FROM leads
-WHERE conversas_whatsapp.lead_id = leads.id
-  AND conversas_whatsapp.telefone LIKE 'LID:%'
-  AND leads.telefone IS NOT NULL
-  AND leads.telefone ~ '^[0-9]{10,15}$';
+FROM leads l
+WHERE cw.lead_id    = l.id
+  AND cw.telefone   LIKE 'LID:%'
+  AND l.telefone    IS NOT NULL
+  AND l.telefone    ~ '^[0-9]{10,15}$';
 
 -- ── 2. Registra aliases para as conversas corrigidas ─────────────────────────
 -- Garante que o LID e o telefone real estejam na tabela de aliases,
@@ -39,10 +40,10 @@ INSERT INTO whatsapp_conversa_aliases (
 )
 SELECT
   gen_random_uuid()::text,
-  c.id                                   AS conversa_id,
-  c.telefone                             AS telefone_normalizado,
-  (c.dados_extras::jsonb ->> 'lid_original')                        AS lid,
-  (c.dados_extras::jsonb ->> 'lid_original') || '@lid'              AS remote_jid,
+  c.id                                                AS conversa_id,
+  c.telefone                                          AS telefone_normalizado,
+  (c.dados_extras::jsonb ->> 'lid_original')          AS lid,
+  (c.dados_extras::jsonb ->> 'lid_original') || '@lid' AS remote_jid,
   now()::text,
   now()::text
 FROM conversas_whatsapp c
@@ -59,39 +60,46 @@ WHERE c.dados_extras IS NOT NULL
 ON CONFLICT DO NOTHING;
 
 -- ── 3. Consolida mensagens de conversas LID duplicadas ───────────────────────
--- Para cada conversa com telefone LID:... que AINDA tenha lead_id vinculado
--- e uma conversa principal com telefone real do mesmo lead:
--- move as mensagens para a conversa principal e marca a LID como FECHADA.
+-- Para cada conversa com telefone LID:... que tenha lead_id vinculado
+-- e uma conversa principal (telefone real) do mesmo lead:
+-- move as mensagens para a conversa principal e fecha a LID.
 
--- 3a. Move mensagens da conversa LID para a conversa principal (mesmo lead)
+-- 3a. Move mensagens da conversa LID para a conversa principal
 UPDATE mensagens_whatsapp m
 SET conversa_id = principal.id
 FROM conversas_whatsapp lid_conv
 JOIN conversas_whatsapp principal
-  ON principal.lead_id = lid_conv.lead_id
-  AND principal.id      != lid_conv.id
+  ON principal.lead_id  = lid_conv.lead_id
+  AND principal.id       != lid_conv.id
   AND principal.telefone NOT LIKE 'LID:%'
   AND principal.status   != 'FECHADA'
 WHERE m.conversa_id = lid_conv.id
   AND lid_conv.telefone LIKE 'LID:%'
-  AND lid_conv.lead_id IS NOT NULL
-  -- Evita duplicar mensagens já presentes na conversa principal (por evolution_message_id)
+  AND lid_conv.lead_id  IS NOT NULL
+  -- Evita duplicar mensagens já presentes na conversa principal
   AND NOT EXISTS (
     SELECT 1 FROM mensagens_whatsapp m2
-    WHERE m2.conversa_id = principal.id
+    WHERE m2.conversa_id          = principal.id
       AND m2.evolution_message_id IS NOT NULL
       AND m2.evolution_message_id = m.evolution_message_id
   );
 
 -- 3b. Fecha as conversas LID que foram consolidadas
-UPDATE conversas_whatsapp lid_conv
+UPDATE conversas_whatsapp AS lid_conv
 SET
   status        = 'FECHADA',
   atualizado_em = now()::text,
-  dados_extras  = COALESCE(
-    (lid_conv.dados_extras::jsonb || '{"consolidada": true}'::jsonb)::text,
-    '{"consolidada": true}'
-  )
+  dados_extras  = (
+    COALESCE(
+      CASE
+        WHEN lid_conv.dados_extras IS NULL OR lid_conv.dados_extras = ''
+          THEN '{}'::jsonb
+        ELSE lid_conv.dados_extras::jsonb
+      END,
+      '{}'::jsonb
+    )
+    || '{"consolidada": true}'::jsonb
+  )::text
 FROM conversas_whatsapp principal
 WHERE lid_conv.lead_id   = principal.lead_id
   AND lid_conv.id         != principal.id
@@ -100,8 +108,8 @@ WHERE lid_conv.lead_id   = principal.lead_id
   AND principal.telefone  NOT LIKE 'LID:%'
   AND principal.status    != 'FECHADA';
 
--- ── 4. Garante índice único suave: 1 conversa ativa por lead ─────────────────
--- (não constraint rígida — apenas índice parcial para diagnóstico)
+-- ── 4. Garante índice parcial de diagnóstico ─────────────────────────────────
+-- (não constraint rígida — apenas para consultar facilmente conversas duplicadas)
 CREATE INDEX IF NOT EXISTS idx_cw_lead_ativa
   ON conversas_whatsapp (lead_id)
   WHERE lead_id IS NOT NULL AND status != 'FECHADA';
