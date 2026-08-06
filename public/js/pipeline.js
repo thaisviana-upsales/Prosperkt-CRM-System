@@ -690,38 +690,113 @@ async function moverLead(etapaId) {
   }
 
   if (isGanho) {
-    const leadIdLocal = _dragLeadId;
-    const etapaIdLocal = etapaId;
-    const pidLocal = pid;
+    const leadIdLocal    = _dragLeadId;
+    const etapaIdLocal   = etapaId;
+    const pidLocal       = pid;
     const etapaDestLocal = etapaDest;
     _dragLeadId=null; _dragEtapaOrigem=null;
     if (!leadIdLocal) return;
 
-    // Abre o modal de venda para preenchimento obrigatório dos produtos
-    // O vendedor PRECISA selecionar produto(s), valor e forma de pagamento
-    Toast.show('📋 Preencha os dados da venda para concluir. Selecione os produtos vendidos.', 'info');
+    // ── [DRAG→VENDAS] Busca dados completos do lead na fonte oficial ──────────
+    // Mesma fonte que abrirLead usa — garante consistência com o fluxo interno
+    console.log('[DRAG_VENDAS] Validando lead:', leadIdLocal, '→ etapa:', etapaIdLocal);
+
+    const rLead = await Auth.api('GET', `/leads/${leadIdLocal}`);
+    const leadCompleto = rLead?.data?.dados || lead;
+    console.log('[DRAG_VENDAS] Dados do lead:', {
+      email: leadCompleto?.email,
+      forma_pagamento: leadCompleto?.forma_pagamento,
+      valor_venda: leadCompleto?.valor_venda,
+      previsao_proxima_compra: leadCompleto?.previsao_proxima_compra,
+    });
+
+    // ── Busca produtos persistidos (mesmo endpoint de carregarProdutosLead) ──
+    const rProd = await Auth.api('GET', `/leads/${leadIdLocal}/produtos`);
+    const produtosPersistidos = (rProd?.ok && rProd.data.dados?.length)
+      ? rProd.data.dados
+      : [];
+    console.log('[DRAG_VENDAS] Produtos encontrados:', produtosPersistidos.length,
+      produtosPersistidos.map(p => p.produto_nome));
+
+    // ── Valida com a mesma regra de salvarLead ────────────────────────────────
+    const prodAtivos    = produtosPersistidos.filter(p => !p._removido);
+    const prodOficial   = prodAtivos.find(p => p.produto_id && p.produto_id !== '');
+    const prodIncompleto = prodAtivos.find(p => !p.produto_nome || !(p.quantidade > 0) || !(p.valor_unitario >= 0));
+    const email         = (leadCompleto?.email || '').trim();
+    const formaPgto     = leadCompleto?.forma_pagamento || '';
+    const valorVenda    = Number(leadCompleto?.valor_venda) || 0;
+    const prevCompra    = leadCompleto?.previsao_proxima_compra || '';
+    const endLogradouro = (leadCompleto?.endereco_entrega || '').trim();
+    const endNum        = (leadCompleto?.numero_entrega   || '').trim();
+    const endBairro     = (leadCompleto?.bairro_entrega   || '').trim();
+    const endCidade     = (leadCompleto?.cidade_entrega   || '').trim();
+    const endUF         = (leadCompleto?.uf_entrega       || '').trim();
+    const cepRaw        = (leadCompleto?.cep_entrega      || '').replace(/\D/g, '');
+
+    const temProdutos    = prodAtivos.length > 0;
+    const temProdOficial = !!prodOficial;
+    const prodOk         = temProdutos && temProdOficial && !prodIncompleto;
+
+    const camposFaltando = [];
+    if (!email)          camposFaltando.push('E-mail');
+    if (!formaPgto)      camposFaltando.push('Forma de Pagamento');
+    if (valorVenda <= 0) camposFaltando.push('Valor da Venda');
+    if (!prevCompra)     camposFaltando.push('Previsão de Próxima Compra');
+    if (cepRaw.length < 8 || !endLogradouro || !endNum || !endBairro || !endCidade || !endUF)
+      camposFaltando.push('Endereço de Entrega completo');
+
+    console.log('[DRAG_VENDAS] Resultado da validação:', {
+      temProdutos, temProdOficial, prodOk, camposFaltando,
+      origemProdutos: rProd?.ok ? 'API /leads/:id/produtos' : 'nenhum',
+    });
+
+    // ── SE tudo válido: move diretamente, sem abrir modal ────────────────────
+    if (prodOk && camposFaltando.length === 0) {
+      console.log('[DRAG_VENDAS] ✅ Todos os dados OK — movendo diretamente para Vendas');
+      await _executarMover(leadIdLocal, etapaIdLocal, pidLocal, etapaDestLocal, null);
+      return;
+    }
+
+    // ── SE falta algo: abre modal posicionado na aba Venda ───────────────────
+    console.log('[DRAG_VENDAS] ⚠️ Dados incompletos — abrindo modal para preenchimento');
     await abrirLead(leadIdLocal);
     showTab('venda');
     abrirSecaoComercial();
 
-    // Garante que a etapa de destino está pré-selecionada no modal
-    const etapaSel = document.getElementById('fl-etapa');
-    if (etapaSel && etapaIdLocal) etapaSel.value = etapaIdLocal;
+    // Pré-seleciona etapa destino para que salvarLead detecte etapaMudou=true
+    // e execute o PATCH /mover automaticamente após salvar
+    const etapaSelEl = document.getElementById('fl-etapa');
+    if (etapaSelEl && etapaIdLocal) etapaSelEl.value = etapaIdLocal;
 
-    // Destaca campo de produto se não houver nenhum ainda
-    setTimeout(() => {
-      const lpEmpty = document.getElementById('lp-empty');
-      if (lpEmpty && lpEmpty.style.display !== 'none') {
-        // Sem produtos — destaca botão de adicionar produto
+    // Monta mensagem de alerta com apenas os campos realmente faltantes
+    const alertEl = document.getElementById('ml-alert');
+    if (alertEl) {
+      const msgs = [];
+      if (!prodOk) {
+        if (!temProdutos)         msgs.push('Selecione ao menos um produto da lista oficial.');
+        else if (!temProdOficial) msgs.push('Selecione um produto da lista oficial (busque pelo nome e clique na opção).');
+        else if (prodIncompleto)  msgs.push('Preencha nome, quantidade e valor de todos os produtos.');
+      }
+      if (camposFaltando.length) msgs.push(`Campos obrigatórios faltando: ${camposFaltando.join(', ')}.`);
+      if (msgs.length) {
+        alertEl.className = 'alert alert-error';
+        alertEl.textContent = msgs.join(' ');
+        alertEl.style.display = '';
+      }
+    }
+
+    // Destaca botão de adicionar produto apenas se não há produtos
+    if (!temProdutos) {
+      setTimeout(() => {
         const btnAdd = document.getElementById('btn-add-linha-produto');
         if (btnAdd) {
-          btnAdd.style.outline = '2px solid var(--green,#6CFF4E)';
+          btnAdd.style.outline   = '2px solid var(--green,#6CFF4E)';
           btnAdd.style.boxShadow = '0 0 8px rgba(108,255,78,.5)';
           btnAdd.scrollIntoView({ behavior: 'smooth', block: 'center' });
           setTimeout(() => { btnAdd.style.outline = ''; btnAdd.style.boxShadow = ''; }, 4000);
         }
-      }
-    }, 400);
+      }, 400);
+    }
     return;
   }
 
