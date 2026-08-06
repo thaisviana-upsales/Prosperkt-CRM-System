@@ -758,6 +758,8 @@ async function atualizar(req, res) {
         'observacoes','motivo_perda','dados_extras','valor_venda','forma_pagamento',
         'quantidade_parcelas','parcelas_json','produto_id','produto_nome','produto_cor',
         'previsao_proxima_compra',
+        // dados fiscais
+        'cnpj',
         // campos de layout virtual (aprovação e entrada)
         'layout_virtual_aprovado_em','layout_virtual_entrada_em',
         // endereço de entrega (campos separados)
@@ -918,7 +920,7 @@ async function atualizar(req, res) {
     if (!atual) return res.status(404).json({ sucesso:false, erro:'Lead não encontrado.' });
     if (req.usuario.role==='VENDEDOR' && atual.responsavel_id !== req.usuario.id) return res.status(403).json({ sucesso:false, erro:'Acesso negado.' });
     const campos = {};
-    ['nome','email','telefone','empresa','cargo','valor','origem','data_fechamento','motivo_perda','dados_extras','previsao_proxima_compra'].forEach(k => { if (req.body[k] !== undefined) campos[k] = req.body[k]; });
+    ['nome','email','telefone','empresa','cargo','valor','origem','data_fechamento','motivo_perda','dados_extras','previsao_proxima_compra','cnpj'].forEach(k => { if (req.body[k] !== undefined) campos[k] = req.body[k]; });
     if (req.body.tags !== undefined) campos.tags = JSON.stringify(req.body.tags);
     if (req.body.responsavel_id && req.usuario.role !== 'VENDEDOR') campos.responsavel_id = req.body.responsavel_id;
     campos.atualizado_em = new Date().toISOString();

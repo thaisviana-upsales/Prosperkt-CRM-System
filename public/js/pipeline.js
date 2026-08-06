@@ -47,6 +47,37 @@ function _setLoadingState(on) {
 }
 
 
+// ── Máscara CNPJ / CPF ────────────────────────────────────────────────────────
+function _mascaraCnpj(v) {
+  const d = (v || '').replace(/\D/g, '').slice(0, 14);
+  if (d.length <= 11) {
+    // CPF: 000.000.000-00
+    return d.replace(/(\d{3})(\d)/, '$1.$2')
+            .replace(/(\d{3})(\d)/, '$1.$2')
+            .replace(/(\d{3})(\d{1,2})$/, '$1-$2');
+  }
+  // CNPJ: 00.000.000/0000-00
+  return d.replace(/(\d{2})(\d)/, '$1.$2')
+          .replace(/(\d{3})(\d)/, '$1.$2')
+          .replace(/(\d{3})(\d)/, '$1/$2')
+          .replace(/(\d{4})(\d{1,2})$/, '$1-$2');
+}
+
+// Bind da máscara no campo CNPJ — executado uma vez no DOMContentLoaded
+document.addEventListener('DOMContentLoaded', () => {
+  const cnpjEl = document.getElementById('fl-cnpj');
+  if (cnpjEl) {
+    cnpjEl.addEventListener('input', function() {
+      const pos = this.selectionStart;
+      const antesLen = this.value.length;
+      this.value = _mascaraCnpj(this.value);
+      // Ajusta cursor após a formatação
+      const delta = this.value.length - antesLen;
+      try { this.setSelectionRange(pos + delta, pos + delta); } catch {}
+    });
+  }
+});
+
 
 // ── Init ──────────────────────────────────────────────────────
 async function init() {
@@ -853,6 +884,7 @@ async function abrirLead(id) {
   document.getElementById('fl-empresa').value=l.empresa||'';
   document.getElementById('fl-tel').value=l.telefone||'';
   document.getElementById('fl-email').value=l.email||'';
+  document.getElementById('fl-cnpj').value=_mascaraCnpj(l.cnpj||'');
   document.getElementById('fl-valor').value=l.valor||'';
   document.getElementById('fl-status').value=l.status||'ABERTO';
   atualizarStatusBadge(l.status||'ABERTO');
@@ -1430,12 +1462,17 @@ async function salvarLead() {
     bairro_entrega:      document.getElementById('fl-bairro-entrega')?.value?.trim()||undefined,
     cidade_entrega:      document.getElementById('fl-cidade-entrega')?.value?.trim()||undefined,
     uf_entrega:          document.getElementById('fl-uf-entrega')?.value?.trim()?.toUpperCase()||undefined,
+    // Dados fiscais
+    cnpj: (document.getElementById('fl-cnpj')?.value||'').replace(/\D/g,'')||undefined,
     dados_extras: {
       obs_pedido:   document.getElementById('fl-obs-pedido')?.value||undefined,
       num_produtos: document.getElementById('fl-num-produtos')?.value||undefined,
       qtd_pecas:    document.getElementById('fl-qtd-pecas')?.value||undefined,
     },
   };
+
+  // ── Máscara CNPJ (bind único no init) ────────────────────────────────────
+  // A função _mascaraCnpj e o bind já estão definidos globalmente abaixo.
 
   const btn=document.getElementById('ml-salvar');
   btn.disabled=true;

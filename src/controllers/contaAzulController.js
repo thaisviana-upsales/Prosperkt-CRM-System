@@ -114,6 +114,7 @@ async function enviar(req, res) {
     const pendencias = [];
     if (!lead.nome)                                          pendencias.push('Nome do cliente');
     if (!lead.telefone)                                      pendencias.push('Telefone');
+    if (!lead.cnpj)                                          pendencias.push('CNPJ / CPF');
     if (!leadProdutos || leadProdutos.length === 0)          pendencias.push('Produto(s)');
     if (!lead.valor_venda && !lead.valor)                    pendencias.push('Valor da venda');
     if (!lead.forma_pagamento)                               pendencias.push('Forma de pagamento');
@@ -264,7 +265,7 @@ function gerarHtmlEmail({ lead, dadosExtras, produtosList, observacao_adicional,
         ${linha('Empresa', lead.empresa)}
         ${linha('Telefone', lead.telefone)}
         ${linha('E-mail', lead.email)}
-        ${linha('CPF / CNPJ', lead.cpf_cnpj || dadosExtras?.cpf_cnpj)}
+        ${linha('CPF / CNPJ', lead.cnpj || lead.cpf_cnpj || dadosExtras?.cpf_cnpj)}
       </table>`)}
 
       ${secao('Dados da Venda', `<table style="border-collapse:collapse;width:100%">

@@ -124,6 +124,7 @@ const ContaAzul = (() => {
       `Empresa:       ${lead.empresa || '—'}`,
       `Telefone:      ${lead.telefone || '—'}`,
       `E-mail:        ${lead.email || '—'}`,
+      `CNPJ / CPF:    ${lead.cnpj || '—'}`,
       '',
       '=== DADOS DA VENDA ===',
       `Vendedor:      ${lead.responsavel_nome || '—'}`,
