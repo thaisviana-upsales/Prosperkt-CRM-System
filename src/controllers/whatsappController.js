@@ -1695,9 +1695,27 @@ function normalizarPayloadWA(body) {
     body.messageId || body.message_id || body.wamid || body.msgId || null;
 
   // ── Mídia ─────────────────────────────────────────────────────────────────
-  const midiaUrl    = dataRaw?.mediaUrl || body.midia_url || body.mediaUrl || body.media_url || null;
-  const arquivoNome = dataRaw?.fileName || body.arquivo_nome || body.fileName || body.filename || null;
-  const mimeType    = dataRaw?.mimeType || body.mime_type   || body.mimeType   || null;
+  // mediaUrl: Evolution v1.8.6 fornece URL temporária em dataRaw.mediaUrl (pode expirar)
+  // mime_type e fileName ficam DENTRO do objeto de mídia específico (imageMessage etc)
+  const midiaUrl = dataRaw?.mediaUrl || body.midia_url || body.mediaUrl || body.media_url || null;
+
+  // Objeto de mídia específico — prioridade para extrair mimeType e fileName
+  const _imgMsg  = msgData?.imageMessage    || null;
+  const _vidMsg  = msgData?.videoMessage    || null;
+  const _audMsg  = msgData?.audioMessage    || msgData?.pttMessage || null;
+  const _docMsg  = msgData?.documentMessage || null;
+  const _midiaMsg = _imgMsg || _vidMsg || _audMsg || _docMsg || msgData?.stickerMessage || null;
+
+  const mimeType = (
+    _midiaMsg?.mimetype || _midiaMsg?.mediaType ||
+    dataRaw?.mimeType   || body.mime_type || body.mimeType || null
+  );
+  const arquivoNome = (
+    _docMsg?.fileName || _docMsg?.title ||
+    _midiaMsg?.fileName ||
+    dataRaw?.fileName || body.arquivo_nome || body.fileName || body.filename || null
+  );
+  console.log('[WA Webhook] MEDIA_META', { tipo, hasMidiaUrl: !!midiaUrl, mimeType, arquivoNome });
 
   // ── fromMe / direção ──────────────────────────────────────────────────────
   const resolvedFromMe = isEvolution
