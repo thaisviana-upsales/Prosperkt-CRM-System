@@ -186,66 +186,101 @@ async function buscarEnderecoViaCep(cep) {
   } catch { return null; }
 }
 
+// ── CEP carregado do banco (referência para detectar mudança) ──────────────────
+let _cepUltimoCarregado = '';
+
 function bindCepEntrega() {
-  const cepEl    = document.getElementById('fl-cep-entrega');
-  const msgEl    = document.getElementById('fl-cep-msg');
-  const spinner  = document.getElementById('fl-cep-spinner');
+  const cepEl   = document.getElementById('fl-cep-entrega');
+  const msgEl   = document.getElementById('fl-cep-msg');
+  const spinner = document.getElementById('fl-cep-spinner');
   if (!cepEl) return;
 
-  // Máscara em tempo real
-  cepEl.addEventListener('input', () => {
-    const raw   = cepEl.value.replace(/\D/g,'').slice(0,8);
-    cepEl.value = raw.length > 5 ? raw.slice(0,5) + '-' + raw.slice(5) : raw;
-    if (msgEl) msgEl.style.display = 'none';
+  // ── Máscara em tempo real + busca automática ao completar 8 dígitos ──────
+  cepEl.addEventListener('input', async () => {
+    const raw = cepEl.value.replace(/\D/g,'').slice(0,8);
+    // Aplica máscara preservando posição do cursor
+    const formatted = raw.length > 5 ? raw.slice(0,5) + '-' + raw.slice(5) : raw;
+    if (cepEl.value !== formatted) cepEl.value = formatted;
+    // Esconde mensagem enquanto digita
+    if (msgEl) { msgEl.style.display = 'none'; }
+    // Dispara busca automática ao completar 8 dígitos sem esperar blur
+    if (raw.length === 8) {
+      await _buscarEPreencherCep(raw, cepEl, msgEl, spinner);
+    }
   });
 
-  // Busca ao completar 8 dígitos
+  // ── Busca também no blur (garante para colar/preencher externamente) ─────
   cepEl.addEventListener('blur', async () => {
     const raw = cepEl.value.replace(/\D/g,'');
-    if (raw.length !== 8) {
-      if (raw.length > 0 && raw.length < 8) {
-        if (msgEl) { msgEl.textContent = 'Informe um CEP válido com 8 dígitos.'; msgEl.style.display = ''; }
-      }
-      return;
-    }
-    if (msgEl) msgEl.style.display = 'none';
-    if (spinner) spinner.style.display = '';
-    cepEl.disabled = true;
-
-    const dados = await buscarEnderecoViaCep(raw);
-    cepEl.disabled = false;
-    if (spinner) spinner.style.display = 'none';
-
-    if (!dados) {
+    if (raw.length === 0) return;
+    if (raw.length > 0 && raw.length < 8) {
       if (msgEl) {
-        msgEl.textContent = 'Não foi possível localizar o CEP automaticamente. Preencha o endereço manualmente.';
-        msgEl.style.color = 'var(--text-muted)';
+        msgEl.textContent = 'Informe um CEP válido com 8 dígitos.';
+        msgEl.style.color  = 'var(--pink,#FF3B5C)';
         msgEl.style.display = '';
       }
       return;
     }
-
-    // Preenche automaticamente — só se o campo estiver vazio (não sobrescreve)
-    const setIfEmpty = (id, val) => {
-      const el = document.getElementById(id);
-      if (el && !el.value.trim() && val) el.value = val;
-    };
-    setIfEmpty('fl-endereco-entrega', dados.logradouro);
-    setIfEmpty('fl-bairro-entrega',   dados.bairro);
-    setIfEmpty('fl-cidade-entrega',   dados.localidade);
-    setIfEmpty('fl-uf-entrega',       (dados.uf || '').toUpperCase());
-
-    if (msgEl) {
-      msgEl.textContent = '✓ CEP encontrado — confira os dados e ajuste se necessário.';
-      msgEl.style.color = 'var(--green,#6CFF4E)';
-      msgEl.style.display = '';
-      setTimeout(() => { if (msgEl) msgEl.style.display = 'none'; }, 4000);
+    if (raw.length === 8) {
+      await _buscarEPreencherCep(raw, cepEl, msgEl, spinner);
     }
-    // Foca no próximo campo obrigatório vazio
-    const proximo = ['fl-endereco-entrega','fl-numero-entrega','fl-complemento-entrega']
-      .find(id => !document.getElementById(id)?.value.trim());
-    if (proximo) document.getElementById(proximo)?.focus();
   });
+}
+
+// Lógica central de busca e preenchimento — chamada por input e blur
+async function _buscarEPreencherCep(raw, cepEl, msgEl, spinner) {
+  // Evita dupla chamada se já está carregando
+  if (cepEl.disabled) return;
+  if (msgEl) msgEl.style.display = 'none';
+  if (spinner) spinner.style.display = '';
+  cepEl.disabled = true;
+
+  const dados = await buscarEnderecoViaCep(raw);
+
+  cepEl.disabled = false;
+  if (spinner) spinner.style.display = 'none';
+
+  if (!dados) {
+    // API falhou: NÃO apaga dados manuais existentes
+    if (msgEl) {
+      msgEl.textContent = 'CEP não localizado. Preencha o endereço manualmente.';
+      msgEl.style.color  = 'var(--text-muted,#888)';
+      msgEl.style.display = '';
+    }
+    return;
+  }
+
+  // Preenchimento inteligente:
+  // - CEP mudou vs banco → substitui logradouro/bairro/cidade/UF
+  // - Mesmo CEP → só preenche campos vazios (preserva edições manuais)
+  const cepMudou = raw !== (_cepUltimoCarregado || '').replace(/D/g,'');
+
+  const preencher = (id, val) => {
+    const el = document.getElementById(id);
+    if (!el || !val) return;
+    if (cepMudou) {
+      el.value = val;
+    } else {
+      if (!el.value.trim()) el.value = val;
+    }
+  };
+
+  preencher('fl-endereco-entrega', dados.logradouro || '');
+  preencher('fl-bairro-entrega',   dados.bairro     || '');
+  preencher('fl-cidade-entrega',   dados.localidade || '');
+  preencher('fl-uf-entrega',       (dados.uf || '').toUpperCase());
+
+  if (msgEl) {
+    msgEl.textContent = '✓ CEP encontrado — confira e ajuste se necessário.';
+    msgEl.style.color  = 'var(--green,#6CFF4E)';
+    msgEl.style.display = '';
+    setTimeout(() => { if (msgEl) msgEl.style.display = 'none'; }, 4000);
+  }
+
+  // Foca no próximo campo vazio relevante
+  const proximo = ['fl-numero-entrega','fl-complemento-entrega','fl-referencia-entrega']
+    .find(id => !document.getElementById(id)?.value.trim());
+  if (proximo) setTimeout(() => document.getElementById(proximo)?.focus(), 50);
 }
 
 
@@ -851,10 +886,10 @@ async function abrirLead(id) {
   const selPrev = document.getElementById('fl-previsao-proxima-compra');
   if (selPrev) selPrev.value = l.previsao_proxima_compra || '';
   setVal('fl-obs-pedido', l.dados_extras?.obs_pedido || '');
-  // Endereço de entrega
-  setVal('fl-endereco-entrega', l.endereco_entrega || '');
   // Endereço de entrega — todos os campos separados
   setVal('fl-cep-entrega',          formatarCep(l.cep_entrega || ''));
+  // Salva referência do CEP carregado para detectar mudança no auto-preenchimento
+  _cepUltimoCarregado = (l.cep_entrega || '').replace(/\D/g,'');
   setVal('fl-endereco-entrega',     l.endereco_entrega     || '');
   setVal('fl-numero-entrega',       l.numero_entrega       || '');
   setVal('fl-complemento-entrega',  l.complemento_entrega  || '');
@@ -862,6 +897,9 @@ async function abrirLead(id) {
   setVal('fl-bairro-entrega',       l.bairro_entrega       || '');
   setVal('fl-cidade-entrega',       l.cidade_entrega       || '');
   setVal('fl-uf-entrega',           (l.uf_entrega          || '').toUpperCase());
+  // Esconde mensagem de CEP ao recarregar lead
+  const cepMsg = document.getElementById('fl-cep-msg');
+  if (cepMsg) cepMsg.style.display = 'none';
   // Layout Virtual
   setVal('fl-layout-virtual-aprovado-em', l.layout_virtual_aprovado_em);
   setVal('fl-layout-virtual-entrada-em',  l.layout_virtual_entrada_em);
@@ -1297,13 +1335,12 @@ async function salvarLead() {
       showTab('venda');
       return;
     }
-    // ── Endereço de Entrega — todos os campos OBRIGATÓRIOS para ganho ────────
+    // ── Endereço de Entrega — obrigatórios: CEP, logradouro, número, bairro, cidade, UF
+    // complemento_entrega e referencia_entrega são OPCIONAIS — não bloqueiam o ganho
     const _endReq = [
       { id: 'fl-cep-entrega',         label: 'CEP' },
       { id: 'fl-endereco-entrega',     label: 'Logradouro/Rua' },
       { id: 'fl-numero-entrega',       label: 'Número' },
-      { id: 'fl-complemento-entrega',  label: 'Complemento' },
-      { id: 'fl-referencia-entrega',   label: 'Referência' },
       { id: 'fl-bairro-entrega',       label: 'Bairro' },
       { id: 'fl-cidade-entrega',       label: 'Cidade' },
       { id: 'fl-uf-entrega',           label: 'UF' },
@@ -1317,8 +1354,9 @@ async function salvarLead() {
       return !v;
     });
     if (camposFaltandoEnd.length > 0) {
+      const nomesStr = camposFaltandoEnd.map(c => c.label).join(', ');
       alertEl.className='alert alert-error';
-      alertEl.textContent='Para concluir a venda, preencha todos os dados do Endereço de Entrega.';
+      alertEl.textContent=`Para concluir a venda, preencha: ${nomesStr}.`;
       alertEl.style.display='';
       // Destaca o primeiro campo vazio e faz scroll
       const primeiroFaltando = document.getElementById(camposFaltandoEnd[0].id);
