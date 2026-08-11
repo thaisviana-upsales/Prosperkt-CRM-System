@@ -2004,8 +2004,9 @@ function _tipoAcaoIcone(tipo) {
     RESPONSAVEL_ALTERADO:   '👤',
     EMAIL_ENVIADO:          '📧',
     AUTOMACAO:              '🤖',
-    AUTOMACAO_SEM_RESPOSTA: '🤖',
-    SLA_CONTATO_1:          '🤖',
+    AUTOMACAO_SEM_RESPOSTA: '🚫',
+    LEAD_PERDIDO_AUTO:      '🚫',
+    SLA_CONTATO_1:          '💬',
     LAYOUT_VIRTUAL_ENTRADA: '🖥️',
     LAYOUT_VIRTUAL_APROVADO:'✅',
   };
@@ -2038,8 +2039,9 @@ function _tipoAcaoTitulo(tipo) {
     RESPONSAVEL_ALTERADO:   'Responsável alterado',
     EMAIL_ENVIADO:          'E-mail enviado',
     AUTOMACAO:              'Ação automática',
-    AUTOMACAO_SEM_RESPOSTA: 'Mensagem automática',
-    SLA_CONTATO_1:          'SLA Contato 1',
+    AUTOMACAO_SEM_RESPOSTA: 'Lead desqualificado automaticamente',
+    LEAD_PERDIDO_AUTO:      'Lead marcado como perdido automaticamente',
+    SLA_CONTATO_1:          'SLA — Mensagem de boas-vindas',
     LAYOUT_VIRTUAL_ENTRADA: 'Layout Virtual — entrada',
     LAYOUT_VIRTUAL_APROVADO:'Layout Virtual aprovado',
   };

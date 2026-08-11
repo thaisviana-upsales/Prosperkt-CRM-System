@@ -1145,8 +1145,10 @@ function _renderTimeline(itens, leadId) {
     const data    = new Date(m.criado_em || m.enviado_em);
     const dataStr = data.toLocaleDateString('pt-BR') + ' às ' + data.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
     const isLast  = i === sorted.length - 1;
-    const isAuto  = m.origem_acao === 'automação' || (m.acao||'').startsWith('AUTOMACAO') || (m.acao||'') === 'SLA_CONTATO_1';
-    const isBackfill = m.origem === 'backfill_timeline';
+    const isAuto  = m.origem === 'automacao' || m.origem === 'automação'
+      || m.origem_acao === 'automacao' || m.origem_acao === 'automação'
+      || (m.acao||'').startsWith('AUTOMACAO') || (m.acao||'') === 'SLA_CONTATO_1';
+    const isBackfill = m.origem === 'backfill_timeline' || m.origem?.startsWith('backfill');
 
     const icone   = m.icone  || (m.tipo === 'NOTA' ? '📝' : '📋');
     const titulo  = m.titulo || (m.tipo === 'NOTA' ? 'Nota' : m.acao || 'Evento');

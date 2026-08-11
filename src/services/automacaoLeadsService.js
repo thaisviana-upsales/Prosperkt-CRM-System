@@ -77,8 +77,10 @@ async function registrarHistorico(sb, leadId, mensagem) {
   }
 }
 
+const { registrarTimeline: _registrarTimelineLead } = require('./auditService');
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Helper: registra evento rico na tabela logs (timeline) + audit_logs
+// Helper: registra evento rico na tabela logs (timeline) + audit_logs + lead_timeline
 // ─────────────────────────────────────────────────────────────────────────────
 async function registrarTimelineEvento({ sb, isSupa, sqlite, leadId, acao, titulo, descricao, antes, depois }) {
   const id    = crypto.randomBytes(16).toString('hex');
@@ -96,6 +98,19 @@ async function registrarTimelineEvento({ sb, isSupa, sqlite, leadId, acao, titul
         acao, entidade: 'leads', entidade_id: leadId,
         descricao, criado_em: agora, origem: 'automacao',
       }).catch(()=>{});
+
+      // ── CORREÇÃO: grava também na lead_timeline (tabela visual do card) ──────
+      // A tabela lead_timeline é lida pela função historico() e exibida no modal.
+      await _registrarTimelineLead({
+        leadId,
+        usuarioId:       null,
+        usuarioNome:     'Sistema (Automação)',
+        tipoAcao:        acao,
+        descricao:       titulo ? `${titulo}: ${descricao}` : descricao,
+        dadosAnteriores: antes  || null,
+        dadosNovos:      depois || null,
+        origem:          'automacao',
+      });
       console.log('TIMELINE_CREATE_SUCCESS', { leadId, acao });
     } else if (sqlite) {
       try {
@@ -112,6 +127,7 @@ async function registrarTimelineEvento({ sb, isSupa, sqlite, leadId, acao, titul
     }
   } catch(e) { console.error('TIMELINE_CREATE_ERROR', { leadId, acao, err: e.message }); }
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Módulo 1: Automação de Leads Parados
