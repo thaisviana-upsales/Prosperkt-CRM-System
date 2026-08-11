@@ -1,19 +1,18 @@
 -- ============================================================================
--- PATCH v38 (v3): Correção definitiva — Conversas duplicadas por LID/JID
+-- PATCH v38 (v4): Correção definitiva — Conversas duplicadas por LID/JID
 -- Safe: pode rodar múltiplas vezes (IF NOT EXISTS / ON CONFLICT DO NOTHING)
+-- Observação: dados_extras é coluna JSONB — sem ::text nos assignments.
 -- ============================================================================
 
 -- ── 1. Corrige conversas cujo telefone foi gravado como "LID:XXXXXXXX" ────────
--- Substitui pelo telefone real do lead. NÃO tenta fazer cast do dados_extras
--- existente para jsonb (pode conter texto inválido como JSON). Em vez disso,
--- constrói o novo valor direto via jsonb_build_object, sem ler o anterior.
+-- Substitui pelo telefone real do lead. dados_extras recebe JSONB diretamente.
 UPDATE conversas_whatsapp AS cw
 SET
   telefone      = l.telefone,
   dados_extras  = jsonb_build_object(
                     'lid_original',    split_part(cw.telefone, ':', 2),
                     'lid_corrigido_em', now()::text
-                  )::text,
+                  ),
   atualizado_em = now()::text
 FROM leads l
 WHERE cw.lead_id  = l.id
@@ -22,27 +21,25 @@ WHERE cw.lead_id  = l.id
   AND l.telefone  ~ '^[0-9]{10,15}$';
 
 -- ── 2. Registra aliases para as conversas corrigidas ─────────────────────────
--- Extrai o LID gravado em dados_extras e cria alias para resolução futura.
--- Usa try_cast seguro: só processa linhas onde dados_extras tem lid_original.
 INSERT INTO whatsapp_conversa_aliases (
   id, conversa_id, telefone_normalizado, lid, remote_jid, criado_em, atualizado_em
 )
 SELECT
   gen_random_uuid()::text,
-  c.id           AS conversa_id,
-  c.telefone     AS telefone_normalizado,
-  c.dados_extras::jsonb ->> 'lid_original'              AS lid,
-  (c.dados_extras::jsonb ->> 'lid_original') || '@lid'  AS remote_jid,
+  c.id                                           AS conversa_id,
+  c.telefone                                     AS telefone_normalizado,
+  c.dados_extras ->> 'lid_original'              AS lid,
+  (c.dados_extras ->> 'lid_original') || '@lid'  AS remote_jid,
   now()::text,
   now()::text
 FROM conversas_whatsapp c
-WHERE c.dados_extras LIKE '%lid_original%'
-  AND c.telefone     IS NOT NULL
-  AND c.telefone     NOT LIKE 'LID:%'
+WHERE c.dados_extras::text LIKE '%lid_original%'
+  AND c.telefone IS NOT NULL
+  AND c.telefone NOT LIKE 'LID:%'
   AND NOT EXISTS (
     SELECT 1 FROM whatsapp_conversa_aliases a
     WHERE a.conversa_id = c.id
-      AND a.lid = c.dados_extras::jsonb ->> 'lid_original'
+      AND a.lid = c.dados_extras ->> 'lid_original'
   )
 ON CONFLICT DO NOTHING;
 
@@ -55,7 +52,7 @@ JOIN conversas_whatsapp principal
   AND principal.id       != lid_conv.id
   AND principal.telefone NOT LIKE 'LID:%'
   AND principal.status   != 'FECHADA'
-WHERE m.conversa_id   = lid_conv.id
+WHERE m.conversa_id    = lid_conv.id
   AND lid_conv.telefone LIKE 'LID:%'
   AND lid_conv.lead_id  IS NOT NULL
   AND NOT EXISTS (
@@ -70,7 +67,7 @@ UPDATE conversas_whatsapp AS lid_conv
 SET
   status        = 'FECHADA',
   atualizado_em = now()::text,
-  dados_extras  = jsonb_build_object('consolidada', true)::text
+  dados_extras  = jsonb_build_object('consolidada', true)
 FROM conversas_whatsapp principal
 WHERE lid_conv.lead_id   = principal.lead_id
   AND lid_conv.id         != principal.id
@@ -86,11 +83,11 @@ CREATE INDEX IF NOT EXISTS idx_cw_lead_ativa
 
 -- ── 5. Relatório final ────────────────────────────────────────────────────────
 SELECT
-  'patch_v38_ok'                                                              AS resultado,
+  'patch_v38_ok'                                                                AS resultado,
   (SELECT count(*) FROM conversas_whatsapp
-   WHERE telefone NOT LIKE 'LID:%' AND status != 'FECHADA')                  AS conversas_ativas_tel_real,
+   WHERE telefone NOT LIKE 'LID:%' AND status != 'FECHADA')                    AS conversas_ativas_tel_real,
   (SELECT count(*) FROM conversas_whatsapp
-   WHERE telefone LIKE 'LID:%' AND status != 'FECHADA')                      AS conversas_lid_ainda_abertas,
+   WHERE telefone LIKE 'LID:%' AND status != 'FECHADA')                        AS conversas_lid_ainda_abertas,
   (SELECT count(*) FROM conversas_whatsapp
-   WHERE status = 'FECHADA' AND dados_extras LIKE '%consolidada%')            AS conversas_lid_fechadas,
-  (SELECT count(*) FROM whatsapp_conversa_aliases)                            AS total_aliases;
+   WHERE status = 'FECHADA' AND dados_extras::text LIKE '%consolidada%')        AS conversas_lid_fechadas,
+  (SELECT count(*) FROM whatsapp_conversa_aliases)                              AS total_aliases;
