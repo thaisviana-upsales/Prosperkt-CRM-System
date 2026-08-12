@@ -376,6 +376,78 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
     }
   }
 
+  // ── Passo 1b: LID → recuperação por mensagem enviada recente (fallback robusto) ─
+  // Cenário: LID chegou, sem alias (envio foi antes do fix), sem dados_extras com LID.
+  // Estratégia: busca a mensagem ENVIADA mais recente (direto pelo CRM, não fromMe do WA)
+  // dentro de 72h e com pushName/nome idêntico ao do contato. UMA candidata = seguro.
+  if (!conversaId && isLidJid && lidNumero) {
+    try {
+      console.log('WHATSAPP_INBOUND_ALIAS_LOOKUP_START', { lidNumero, nome: nome?.slice(0,30) });
+      // Busca as conversas que tiveram mensagem enviada (direcao=enviada) nas últimas 72h
+      const h72 = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+      const { data: recentOuts } = await sb.from('mensagens_whatsapp')
+        .select('conversa_id')
+        .eq('direcao', 'enviada')
+        .gte('criado_em', h72)
+        .order('criado_em', { ascending: false })
+        .limit(100);
+
+      if (recentOuts && recentOuts.length > 0) {
+        // IDs únicos das conversas com envio recente
+        const recentConvIds = [...new Set(recentOuts.map(m => m.conversa_id))];
+
+        // Busca detalhes dessas conversas que ainda não têm resposta LID (sem dado_extras.lid)
+        const { data: candidatas } = await sb.from('conversas_whatsapp')
+          .select('id,nome_contato,dados_extras,telefone')
+          .in('id', recentConvIds)
+          .neq('status', 'FECHADA');
+
+        // Filtra candidatas: sem alias/LID já mapeado E nome compatível (se disponível)
+        const semLid = (candidatas || []).filter(c => {
+          const ext = (() => { try { return typeof c.dados_extras === 'object' ? (c.dados_extras || {}) : JSON.parse(c.dados_extras || '{}'); } catch { return {}; } })();
+          return !ext.lid; // só candidatas sem LID já mapeado
+        });
+
+        let candidataUnica = null;
+
+        if (nome && semLid.length > 0) {
+          // Tenta match por nome (primeiro token do nome)
+          const primeiroNome = nome.trim().split(' ')[0].toLowerCase();
+          const comNome = semLid.filter(c =>
+            c.nome_contato && c.nome_contato.trim().toLowerCase().startsWith(primeiroNome)
+          );
+          if (comNome.length === 1) {
+            candidataUnica = comNome[0];
+            console.log('WHATSAPP_LID_RECOVERED_BY_RECENT_OUTBOUND', { lidNumero, conversaId: candidataUnica.id, nome, nomeContato: candidataUnica.nome_contato, fonte: 'nome+outbound_72h' });
+          } else if (comNome.length > 1) {
+            console.warn('WHATSAPP_LID_AMBIGUOUS_NOT_LINKED', { lidNumero, nome, candidatas: comNome.length, motivo: 'multiplas_com_mesmo_nome' });
+          }
+        }
+
+        // Se não achou por nome mas há UMA única conversa com envio recente e sem LID
+        if (!candidataUnica && semLid.length === 1) {
+          candidataUnica = semLid[0];
+          console.log('WHATSAPP_LID_RECOVERED_BY_RECENT_OUTBOUND', { lidNumero, conversaId: candidataUnica.id, fonte: 'unica_conversa_sem_lid_72h' });
+        } else if (!candidataUnica && semLid.length > 1) {
+          console.warn('WHATSAPP_LID_AMBIGUOUS_NOT_LINKED', { lidNumero, nome, candidatas: semLid.length, motivo: 'multiplas_conversas_sem_lid' });
+        }
+
+        if (candidataUnica) {
+          conversaId = candidataUnica.id;
+          fonte = 'lid_recovered_outbound';
+          // Salva alias para próximas vezes
+          await registrarAlias(sb, {
+            conversaId, tel: candidataUnica.telefone || null, rawJid: rawJid || null, lidNumero, nome: nome || null,
+          }).catch(e => console.warn('WHATSAPP_ALIAS_RECOVERED_WARN:', e.message));
+          console.log('WHATSAPP_INBOUND_CANONICAL_CONVERSA_FOUND', { conversaId, fonte, lidNumero });
+          console.log('WHATSAPP_INBOUND_SAVED_IN_CANONICAL', { conversaId, lidNumero });
+        }
+      }
+    } catch(eRec) {
+      console.warn('CONVERSA_LOOKUP_LID_OUTBOUND_RECOVERY_WARN', eRec.message);
+    }
+  }
+
   // ── Passo 2: por lead_id ────────────────────────────────────────────────
   if (!conversaId && leadId) {
     console.log('CONVERSA_LOOKUP_LEAD', { leadId });
@@ -554,7 +626,8 @@ async function listarConversas(req, res) {
       if (status) {
         q = q.eq('status', status);
       } else {
-        q = q.neq('status', 'FECHADA');
+        // Por padrão: exclui FECHADA e PENDENTE_IDENTIFICACAO (conversas LID não resolvidas)
+        q = q.neq('status', 'FECHADA').neq('status', 'PENDENTE_IDENTIFICACAO');
       }
       if (busca)       q = q.or(`telefone.ilike.%${busca}%,nome_contato.ilike.%${busca}%`);
       const { data, error } = await q;
@@ -880,6 +953,30 @@ async function enviarMensagem(req, res) {
 
     // ── 5. SÓ SALVA após confirmação da Evolution ────────────────────────────
     const agora = new Date().toISOString();
+    
+    // ── Fix CRÍTICO: registra alias após envio (AGUARDA — impede race condition) ─
+    // Se o cliente responder ANTES do alias ser salvo (fire-and-forget), o
+    // webhook não encontra a conversa via alias e cria duplicata.
+    // SOLUÇÃO: await garante que o alias existe ANTES de retornar ao frontend.
+    const _evoRemoteJid = evoRes?.dados?.key?.remoteJid || '';
+    const _lidEnvio = _evoRemoteJid.endsWith('@lid') ? _evoRemoteJid.split('@')[0] : null;
+    console.log('WHATSAPP_SEND_RESPONSE_REMOTE_JID', { remoteJid: _evoRemoteJid || 'none', isLid: !!_lidEnvio });
+    if (_lidEnvio) console.log('WHATSAPP_SEND_RESPONSE_LID_DETECTED', { lid: _lidEnvio, conversaId: id, telefone: telNormalizado });
+    // AWAIT (antes era fire-and-forget .catch())
+    try {
+      await registrarAlias(sb, {
+        conversaId: id,
+        tel:        telNormalizado,
+        rawJid:     _evoRemoteJid || `${telNormalizado}@s.whatsapp.net`,
+        lidNumero:  _lidEnvio,
+        nome:       null,
+      });
+      if (_lidEnvio) console.log('WHATSAPP_SEND_ALIAS_LID_SAVED',   { lid: _lidEnvio, conversaId: id });
+      console.log('WHATSAPP_SEND_ALIAS_PHONE_SAVED', { telefone: telNormalizado, remoteJid: _evoRemoteJid || `${telNormalizado}@s.whatsapp.net`, conversaId: id });
+    } catch(eAlias) {
+      console.warn('WHATSAPP_ALIAS_REGISTER_SEND_WARN:', eAlias.message);
+    }
+
     const msgId = crypto.randomBytes(16).toString('hex');
     // ID retornado pela Evolution — agora evoRes está acessível no escopo correto
     const evoMsgId = evoRes?.dados?.key?.id || null;
@@ -2315,22 +2412,30 @@ async function webhookReceberMensagem(req, res) {
       // Cria nova conversa — só chega aqui se resolverConversaWhatsapp liberou (permiteCreate=true)
       const novoConvId = crypto.randomBytes(16).toString('hex');
       // CORREÇÃO: NUNCA usar LID como telefone da conversa.
-      // Antes: (isLidJid && !leadId) ? `LID:${lidNumero}` : (telFinal || null)
-      // Agora: usa telFinal (que pode ser null para LID sem participant) — o LID
-      // fica apenas em dados_extras para rastreio interno, nunca no campo telefone.
       const telParaConversa = telFinal || null;
       const dadosExtrasNova = isLidJid && lidNumero
-        ? JSON.stringify({ lid: lidNumero, remoteJid: rawJid })
+        ? JSON.stringify({ lid: lidNumero, remoteJid: rawJid, tipo_identidade: 'lid' })
         : null;
-      console.log('WHATSAPP_INBOUND_CONVERSA_CREATED', { tel: telParaConversa, lidNumero: lidNumero || null, leadId, nomeContato });
+
+      // ── FIX: LID sem alias usa status PENDENTE_IDENTIFICACAO ─────────────
+      // Impede que apareça na lista principal de conversas como conversa normal.
+      // Será mesclada quando o alias for recuperado ou o operador identificar.
+      const statusNovaConversa = (isLidJid && lidNumero && !telFinal)
+        ? 'PENDENTE_IDENTIFICACAO'
+        : 'ABERTA';
+      if (statusNovaConversa === 'PENDENTE_IDENTIFICACAO') {
+        console.warn('WHATSAPP_LID_WITHOUT_ALIAS_BLOCKED_FROM_ACTIVE_CREATION', { lidNumero, rawJid, nomeContato, motivo: 'lid_sem_telefone_real_sem_alias' });
+      } else {
+        console.log('WHATSAPP_INBOUND_CONVERSA_CREATED', { tel: telParaConversa, lidNumero: lidNumero || null, leadId, nomeContato });
+      }
       const { data: novaConv, error: errC } = await sb.from('conversas_whatsapp').insert({
         id: novoConvId, telefone: telParaConversa, nome_contato: nomeContato,
-        lead_id: leadId || null, origem: 'WHATSAPP_WEBHOOK', status: 'ABERTA',
+        lead_id: leadId || null, origem: 'WHATSAPP_WEBHOOK', status: statusNovaConversa,
         dados_extras: dadosExtrasNova, criado_em: agora, atualizado_em: agora,
       }).select('id').single();
       if (!errC && novaConv) {
         conversaId = novaConv.id;
-        console.log('WEBHOOK_CONVERSA_CREATED', { conversaId, tel: telParaConversa, lidNumero: lidNumero || null, leadId, nomeContato });
+        console.log('WEBHOOK_CONVERSA_CREATED', { conversaId, tel: telParaConversa, status: statusNovaConversa, lidNumero: lidNumero || null, leadId, nomeContato });
       } else {
         console.error('[WA Webhook] Erro ao criar conversa:', errC?.message);
       }
