@@ -230,6 +230,25 @@ async function _classificarRespostaBoasVindas(sb, leadId, texto) {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Schema real — nomes canônicos das tabelas WhatsApp
+// Se o banco tiver nome diferente, altere APENAS aqui.
+// ─────────────────────────────────────────────────────────────────────────────
+const ALIAS_TABLE      = 'whatsapp_conversa_aliases';   // tabela de mapeamento LID/JID → conversa
+const MENSAGENS_TABLE  = 'mensagens_whatsapp';           // mensagens recebidas/enviadas por conversa
+const CONVERSAS_TABLE  = 'conversas_whatsapp';           // conversas WhatsApp
+
+console.log('WHATSAPP_SCHEMA_REAL_TABLES_USED', {
+  alias:     ALIAS_TABLE,
+  mensagens: MENSAGENS_TABLE,
+  conversas: CONVERSAS_TABLE,
+});
+console.log('WHATSAPP_ALIAS_TABLE_USED', ALIAS_TABLE);
+console.log('WHATSAPP_CONVERSAS_COLUMNS_OK', {
+  id: true, lead_id: true, telefone: true, nome_contato: true,
+  status: true, ultima_msg_em: true, dados_extras: true, nao_lidas: true, visivel: true,
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // registrarAlias — salva mapeamento remoteJid/LID → conversa na tabela de aliases
 // Chamado após localizar ou criar conversa para garantir deduplicação futura.
 // Após salvar, dispara reprocessamento de mensagens pendentes com mesmo LID/JID.
@@ -238,17 +257,18 @@ async function registrarAlias(sb, { conversaId, tel, rawJid, lidNumero, nome }) 
   if (!conversaId) return;
   try {
     const remotejid = rawJid && rawJid.includes('@') ? rawJid : null;
+
     const lid = lidNumero || null;
     let aliasAtualizado = false;
 
     // Verifica se já existe alias para esse remoteJid
     if (remotejid) {
-      const { data: existing } = await sb.from('whatsapp_conversa_aliases')
+      const { data: existing } = await sb.from(ALIAS_TABLE)
         .select('id,conversa_id').eq('remote_jid', remotejid).limit(1);
       if (existing?.[0]) {
         // Já existe — atualiza se a conversa mudou
         if (existing[0].conversa_id !== conversaId) {
-          await sb.from('whatsapp_conversa_aliases')
+          await sb.from(ALIAS_TABLE)
             .update({ conversa_id: conversaId, telefone_normalizado: tel || null, lid, push_name: nome || null })
             .eq('id', existing[0].id);
           console.log('WHATSAPP_RESOLVE_ALIAS_UPDATED', { conversaId, remotejid, lid });
@@ -265,13 +285,13 @@ async function registrarAlias(sb, { conversaId, tel, rawJid, lidNumero, nome }) 
 
     // Também verifica por telefone (sem remoteJid)
     if (!remotejid && tel) {
-      const { data: existingTel } = await sb.from('whatsapp_conversa_aliases')
+      const { data: existingTel } = await sb.from(ALIAS_TABLE)
         .select('id,conversa_id').eq('telefone_normalizado', tel).eq('conversa_id', conversaId).limit(1);
       if (existingTel?.[0]) return; // já existe para esta conversa+telefone
     }
 
     // Insere novo alias — deixa criado_em/atualizado_em com DEFAULT do banco (timestamp)
-    const { error } = await sb.from('whatsapp_conversa_aliases').insert({
+    const { error } = await sb.from(ALIAS_TABLE).insert({
       conversa_id:          conversaId,
       telefone_normalizado: tel    || null,
       remote_jid:           remotejid,
@@ -312,7 +332,7 @@ async function reprocessarPendentes(sb, { conversaId, lidNumero, remotejid }) {
     let pendenteIds = [];
     for (const filtro of filtros) {
       if (!filtro) continue;
-      const { data: pends } = await sb.from('conversas_whatsapp')
+      const { data: pends } = await sb.from(CONVERSAS_TABLE)
         .select('id')
         .eq('status', 'PENDENTE_IDENTIFICACAO')
         .neq('id', conversaId) // não é a própria canônica
@@ -333,12 +353,12 @@ async function reprocessarPendentes(sb, { conversaId, lidNumero, remotejid }) {
     // Move mensagens de cada conversa pendente para a canônica
     for (const pendId of pendenteIds) {
       // Busca mensagens da pendente
-      const { data: msgs } = await sb.from('mensagens_whatsapp')
+      const { data: msgs } = await sb.from(MENSAGENS_TABLE)
         .select('id').eq('conversa_id', pendId);
       if (msgs?.length) {
         // Move para canônica — só move se não existe duplicata por evolution_message_id
         for (const msg of msgs) {
-          await sb.from('mensagens_whatsapp')
+          await sb.from(MENSAGENS_TABLE)
             .update({ conversa_id: conversaId })
             .eq('id', msg.id);
         }
@@ -348,7 +368,7 @@ async function reprocessarPendentes(sb, { conversaId, lidNumero, remotejid }) {
       }
 
       // Fecha a conversa pendente (não deleta)
-      await sb.from('conversas_whatsapp').update({
+      await sb.from(CONVERSAS_TABLE).update({
         status:        'FECHADA',
         visivel:       false,
         atualizado_em: agora,
@@ -357,7 +377,7 @@ async function reprocessarPendentes(sb, { conversaId, lidNumero, remotejid }) {
     }
 
     // Atualiza conversa canônica
-    await sb.from('conversas_whatsapp').update({
+    await sb.from(CONVERSAS_TABLE).update({
       ultima_msg_em: agora,
       atualizado_em: agora,
       status:        'ABERTA',
@@ -406,7 +426,7 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
     const lidBusca  = lidNumero || null;
 
     if (remotejid) {
-      const { data: porJid } = await sb.from('whatsapp_conversa_aliases')
+      const { data: porJid } = await sb.from(ALIAS_TABLE)
         .select('conversa_id')
         .eq('remote_jid', remotejid)
         .limit(1);
@@ -418,7 +438,7 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
     }
 
     if (!conversaId && lidBusca) {
-      const { data: porLid } = await sb.from('whatsapp_conversa_aliases')
+      const { data: porLid } = await sb.from(ALIAS_TABLE)
         .select('conversa_id')
         .eq('lid', lidBusca)
         .limit(1);
@@ -433,7 +453,7 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
       // Busca por variantes do telefone (com/sem 9 dígito, com/sem 55)
       const variantesTel = phoneVariants(tel);
       for (const v of variantesTel) {
-        const { data: porTelAlias } = await sb.from('whatsapp_conversa_aliases')
+        const { data: porTelAlias } = await sb.from(ALIAS_TABLE)
           .select('conversa_id')
           .eq('telefone_normalizado', v)
           .limit(1);
@@ -450,11 +470,11 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
     // A conversa pendente é uma duplicata oculta — não deve receber mensagens.
     // Tenta encontrar a conversa canônica via lead_id antes de aceitar a pendente.
     if (conversaId) {
-      const { data: convAlias } = await sb.from('conversas_whatsapp')
+      const { data: convAlias } = await sb.from(CONVERSAS_TABLE)
         .select('id,status,lead_id').eq('id', conversaId).single();
       if (convAlias?.status === 'PENDENTE_IDENTIFICACAO' && convAlias?.lead_id) {
         console.log('WHATSAPP_ALIAS_POINTS_TO_PENDING — escalando para canônica via lead_id', { pendente: conversaId, leadId: convAlias.lead_id });
-        const { data: canonicaLead } = await sb.from('conversas_whatsapp')
+        const { data: canonicaLead } = await sb.from(CONVERSAS_TABLE)
           .select('id')
           .eq('lead_id', convAlias.lead_id)
           .neq('status', 'FECHADA')
@@ -466,7 +486,7 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
           const canonicaId = canonicaLead[0].id;
           console.log('WHATSAPP_INBOUND_CANONICAL_CONVERSA_SELECTED', { canonical: canonicaId, abandonando_pendente: conversaId, fonte });
           // Atualiza o alias para apontar para a canônica
-          await sb.from('whatsapp_conversa_aliases')
+          await sb.from(ALIAS_TABLE)
             .update({ conversa_id: canonicaId })
             .eq('conversa_id', conversaId);
           conversaId = canonicaId;
@@ -484,7 +504,7 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
   // ── Passo 1: LID em dados_extras ────────────────────────────────────────
   if (!conversaId && isLidJid && lidNumero) {
     console.log('CONVERSA_LOOKUP_LID', { lidNumero });
-    const { data: byLike } = await sb.from('conversas_whatsapp')
+    const { data: byLike } = await sb.from(CONVERSAS_TABLE)
       .select('id,telefone,lead_id').like('dados_extras', `%${lidNumero}%`)
       .neq('status', 'FECHADA').order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
     if (byLike?.[0]) {
@@ -493,7 +513,7 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
     }
     if (!conversaId) {
       try {
-        const { data: byJson } = await sb.from('conversas_whatsapp')
+        const { data: byJson } = await sb.from(CONVERSAS_TABLE)
           .select('id,telefone,lead_id')
           .filter('dados_extras', 'cs', JSON.stringify({ lid: lidNumero }))
           .neq('status', 'FECHADA').order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
@@ -514,7 +534,7 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
       console.log('WHATSAPP_INBOUND_ALIAS_LOOKUP_START', { lidNumero, nome: nome?.slice(0,30) });
       // Busca as conversas que tiveram mensagem enviada (direcao=enviada) nas últimas 72h
       const h72 = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
-      const { data: recentOuts } = await sb.from('mensagens_whatsapp')
+      const { data: recentOuts } = await sb.from(MENSAGENS_TABLE)
         .select('conversa_id')
         .eq('direcao', 'enviada')
         .gte('criado_em', h72)
@@ -526,7 +546,7 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
         const recentConvIds = [...new Set(recentOuts.map(m => m.conversa_id))];
 
         // Busca detalhes dessas conversas que ainda não têm resposta LID (sem dado_extras.lid)
-        const { data: candidatas } = await sb.from('conversas_whatsapp')
+        const { data: candidatas } = await sb.from(CONVERSAS_TABLE)
           .select('id,nome_contato,dados_extras,telefone')
           .in('id', recentConvIds)
           .neq('status', 'FECHADA');
@@ -579,7 +599,7 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
   if (!conversaId && leadId) {
     console.log('WEBHOOK_LEAD_ID_RESOLVIDO', { leadId });
     // 2a: busca canônica: ABERTA, com telefone real (não LID, não nulo)
-    const { data: byLeadCanonica } = await sb.from('conversas_whatsapp')
+    const { data: byLeadCanonica } = await sb.from(CONVERSAS_TABLE)
       .select('id,telefone,status')
       .eq('lead_id', leadId)
       .not('status', 'in', '("FECHADA","PENDENTE_IDENTIFICACAO")')
@@ -606,7 +626,7 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
       }
     } else {
       // 2b: fallback — qualquer não-FECHADA (pode ser PENDENTE, último recurso dentro do passo 2)
-      const { data: byLeadAny } = await sb.from('conversas_whatsapp')
+      const { data: byLeadAny } = await sb.from(CONVERSAS_TABLE)
         .select('id,status').eq('lead_id', leadId).neq('status', 'FECHADA')
         .not('status', 'eq', 'PENDENTE_IDENTIFICACAO') // ainda exclui PENDENTE
         .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
@@ -622,7 +642,7 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
     console.log('CONVERSA_LOOKUP_PHONE', { tel });
     const variantes = phoneVariants(tel);
     for (const v of variantes) {
-      const { data: byTel } = await sb.from('conversas_whatsapp')
+      const { data: byTel } = await sb.from(CONVERSAS_TABLE)
         .select('id,telefone').eq('telefone', v).neq('status', 'FECHADA')
         .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
       if (byTel?.[0]) {
@@ -637,13 +657,13 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
   if (!conversaId && tel) {
     const variantes = phoneVariants(tel).filter(v => v.length >= 10);
     for (const v of variantes) {
-      const { data: byIlike } = await sb.from('conversas_whatsapp')
+      const { data: byIlike } = await sb.from(CONVERSAS_TABLE)
         .select('id,telefone').ilike('telefone', `%${v}%`).neq('status', 'FECHADA')
         .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
       if (byIlike?.[0]) {
         conversaId = byIlike[0].id; fonte = `telefone_ilike`;
         console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte, variante: v, telSalvo: byIlike[0].telefone });
-        await sb.from('conversas_whatsapp')
+        await sb.from(CONVERSAS_TABLE)
           .update({ telefone: tel, atualizado_em: agora }).eq('id', conversaId);
         break;
       }
@@ -663,7 +683,7 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
         if (telRaw) {
           const telNorm = normalizePhone(telRaw);
           for (const v of phoneVariants(telNorm)) {
-            const { data: byEvo } = await sb.from('conversas_whatsapp')
+            const { data: byEvo } = await sb.from(CONVERSAS_TABLE)
               .select('id,dados_extras').eq('telefone', v).neq('status', 'FECHADA')
               .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
             if (byEvo?.[0]) {
@@ -671,7 +691,7 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
               console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte, lidNumero, telNorm });
               const ext = (() => { try { return typeof byEvo[0].dados_extras === 'object' ? (byEvo[0].dados_extras || {}) : JSON.parse(byEvo[0].dados_extras || '{}'); } catch { return {}; } })();
               if (!ext.lid) {
-                await sb.from('conversas_whatsapp')
+                await sb.from(CONVERSAS_TABLE)
                   .update({ dados_extras: { ...ext, lid: lidNumero }, atualizado_em: agora })
                   .eq('id', conversaId);
               }
@@ -687,7 +707,7 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
   if (!conversaId && isLidJid && lidNumero && nome && !fromMe) {
     const primeiroNome = nome.split(' ')[0];
     if (primeiroNome.length >= 3) {
-      const { data: byNome } = await sb.from('conversas_whatsapp')
+      const { data: byNome } = await sb.from(CONVERSAS_TABLE)
         .select('id,dados_extras').ilike('nome_contato', `%${primeiroNome}%`)
         .neq('status', 'FECHADA').order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(2);
       if (byNome?.length === 1) {
@@ -695,7 +715,7 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
         console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte, nome, primeiroNome });
         const ext = (() => { try { return typeof byNome[0].dados_extras === 'object' ? (byNome[0].dados_extras || {}) : JSON.parse(byNome[0].dados_extras || '{}'); } catch { return {}; } })();
         if (!ext.lid) {
-          await sb.from('conversas_whatsapp')
+          await sb.from(CONVERSAS_TABLE)
             .update({ dados_extras: { ...ext, lid: lidNumero }, atualizado_em: agora })
             .eq('id', conversaId);
         }
@@ -709,7 +729,7 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
   // ATENÇÃO: se a pendente existe mas tem lead_id, preferir a canônica real.
   if (!conversaId && isLidJid && lidNumero) {
     // 7a: busca conversa pendente com este LID nos dados_extras
-    const { data: pendente } = await sb.from('conversas_whatsapp')
+    const { data: pendente } = await sb.from(CONVERSAS_TABLE)
       .select('id,lead_id,status').like('dados_extras', `%${lidNumero}%`)
       .order('criado_em', { ascending: false }).limit(1);
 
@@ -717,7 +737,7 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
       const pend = pendente[0];
       // 7b: se a pendente tem lead_id → busca canônica real primeiro
       if (pend.lead_id) {
-        const { data: canonicaP } = await sb.from('conversas_whatsapp')
+        const { data: canonicaP } = await sb.from(CONVERSAS_TABLE)
           .select('id')
           .eq('lead_id', pend.lead_id)
           .neq('status', 'FECHADA')
@@ -772,7 +792,7 @@ async function listarConversas(req, res) {
     const role = req.usuario.role;
 
     if (isSupa) {
-      let q = sb.from('conversas_whatsapp')
+      let q = sb.from(CONVERSAS_TABLE)
         .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa)')
         .order('ultima_msg_em', { ascending: false, nullsFirst: false })
         .range(Number(offset), Number(offset) + Number(limit) - 1);
@@ -830,7 +850,7 @@ async function listarConversas(req, res) {
       const ids = conversas.map(c => c.id);
       let ultimaMap = {};
       if (ids.length > 0) {
-        const { data: msgs } = await sb.from('mensagens_whatsapp')
+        const { data: msgs } = await sb.from(MENSAGENS_TABLE)
           .select('conversa_id,mensagem,direcao,criado_em')
           .in('conversa_id', ids)
           .order('criado_em', { ascending: false });
@@ -909,14 +929,14 @@ async function listarMensagens(req, res) {
     const { limit = 200, offset = 0 } = req.query;
 
     if (isSupa) {
-      const { data: conversa, error: errC } = await sb.from('conversas_whatsapp')
+      const { data: conversa, error: errC } = await sb.from(CONVERSAS_TABLE)
         .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa)')
         .eq('id', id).single();
       if (errC || !conversa) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
       if (req.usuario.role === 'VENDEDOR' && conversa.vendedor_id !== req.usuario.id)
         return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
 
-      const { data: msgs, error: errM } = await sb.from('mensagens_whatsapp')
+      const { data: msgs, error: errM } = await sb.from(MENSAGENS_TABLE)
         .select('*, usuarios!mensagens_whatsapp_vendedor_id_fkey(nome)')
         .eq('conversa_id', id)
         .order('criado_em', { ascending: true })
@@ -929,9 +949,9 @@ async function listarMensagens(req, res) {
       // Marca como lidas e zera nao_lidas (não bloqueia resposta)
       // WHATSAPP_MARK_READ: log obrigatório para auditoria
       Promise.all([
-        sb.from('mensagens_whatsapp').update({ status: 'lido' })
+        sb.from(MENSAGENS_TABLE).update({ status: 'lido' })
           .eq('conversa_id', id).eq('direcao', 'recebida').neq('status', 'lido'),
-        sb.from('conversas_whatsapp').update({ nao_lidas: 0, atualizado_em: new Date().toISOString() })
+        sb.from(CONVERSAS_TABLE).update({ nao_lidas: 0, atualizado_em: new Date().toISOString() })
           .eq('id', id).gt('nao_lidas', 0),
       ]).then(() => {
         console.log('WHATSAPP_MARK_READ', { conversaId: id });
@@ -970,7 +990,7 @@ async function enviarMensagem(req, res) {
     // ── 1. Busca conversa ────────────────────────────────────────────────────
     let conversa = null;
     if (isSupa) {
-      const { data, error: errC } = await sb.from('conversas_whatsapp').select('*').eq('id', id).single();
+      const { data, error: errC } = await sb.from(CONVERSAS_TABLE).select('*').eq('id', id).single();
       if (errC || !data) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
       conversa = data;
     } else {
@@ -1000,7 +1020,7 @@ async function enviarMensagem(req, res) {
     // VENDEDOR assume conversa sem vendedor_id
     if (req.usuario.role === 'VENDEDOR' && !conversa.vendedor_id) {
       try {
-        if (isSupa) await sb.from('conversas_whatsapp').update({ vendedor_id: req.usuario.id, atualizado_em: new Date().toISOString() }).eq('id', id).then(()=>{});
+        if (isSupa) await sb.from(CONVERSAS_TABLE).update({ vendedor_id: req.usuario.id, atualizado_em: new Date().toISOString() }).eq('id', id).then(()=>{});
         else getDb().prepare('UPDATE conversas_whatsapp SET vendedor_id=?, atualizado_em=? WHERE id=?').run(req.usuario.id, new Date().toISOString(), id);
         conversa.vendedor_id = req.usuario.id;
       } catch { /* não crítico */ }
@@ -1246,7 +1266,7 @@ async function enviarMensagem(req, res) {
       console.log('SUPA_INSERT_PAYLOAD_KEYS', Object.keys(dbPayload));
 
       // Insert sem nome de FK fixo no select (evita erro se FK tiver outro nome)
-      const { data: nova, error: errI } = await sb.from('mensagens_whatsapp')
+      const { data: nova, error: errI } = await sb.from(MENSAGENS_TABLE)
         .insert(dbPayload)
         .select('*')
         .single();
@@ -1271,7 +1291,7 @@ async function enviarMensagem(req, res) {
       // UPDATE conversas_whatsapp — SOMENTE colunas existentes
       // Colunas reais: ultima_msg_em, atualizado_em, status
       // NÃO EXISTEM: ultima_mensagem, ultima_direcao
-      const { error: errUpdConv } = await sb.from('conversas_whatsapp')
+      const { error: errUpdConv } = await sb.from(CONVERSAS_TABLE)
         .update({ ultima_msg_em: agora, atualizado_em: agora, status: 'ABERTA' })
         .eq('id', id);
       if (errUpdConv) console.warn('SUPA_UPDATE_CONVERSA_WARN:', errUpdConv.message);
@@ -1318,13 +1338,13 @@ async function enviarMensagem(req, res) {
 
       // Também mantém LID em dados_extras para compatibilidade com código anterior
       if (_lidEnvio) {
-        sb.from('conversas_whatsapp').select('dados_extras').eq('id', id).single()
+        sb.from(CONVERSAS_TABLE).select('dados_extras').eq('id', id).single()
           .then(({ data: _cv }) => {
             const _ex = (() => { try { return JSON.parse(_cv?.dados_extras || '{}'); } catch { return {}; } })();
             if (!_ex.lid || _ex.lid !== _lidEnvio) {
               _ex.lid = _lidEnvio;
               _ex.lid_telefone = telNormalizado;
-              return sb.from('conversas_whatsapp')
+              return sb.from(CONVERSAS_TABLE)
                 .update({ dados_extras: JSON.stringify(_ex), atualizado_em: new Date().toISOString() })
                 .eq('id', id)
                 .then(() => console.log('LID_MAPEADO_SUCESSO (Supabase):', { lid: _lidEnvio, conversaId: id }));
@@ -1413,7 +1433,7 @@ async function criarOuAbrirConversa(req, res) {
       let conversa = null;
       const variantes = phoneVariants(tel);
       for (const v of variantes) {
-        const { data } = await sb.from('conversas_whatsapp')
+        const { data } = await sb.from(CONVERSAS_TABLE)
           .select('*').eq('telefone', v).neq('status', 'FECHADA')
           .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
         if (data?.[0]) { conversa = data[0]; break; }
@@ -1421,7 +1441,7 @@ async function criarOuAbrirConversa(req, res) {
 
       // Se ainda não existe, tenta por lead_id
       if (!conversa && lead_id) {
-        const { data: byLead } = await sb.from('conversas_whatsapp')
+        const { data: byLead } = await sb.from(CONVERSAS_TABLE)
           .select('*').eq('lead_id', lead_id).neq('status', 'FECHADA')
           .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
         if (byLead?.[0]) { conversa = byLead[0]; console.log('WHATSAPP_CONVERSA_FOUND_BY_LEAD', conversa.id); }
@@ -1430,7 +1450,7 @@ async function criarOuAbrirConversa(req, res) {
       if (!conversa) {
         // Cria nova conversa vinculada ao lead e telefone
         const novaId = crypto.randomBytes(16).toString('hex');
-        const { data: nova, error } = await sb.from('conversas_whatsapp').insert({
+        const { data: nova, error } = await sb.from(CONVERSAS_TABLE).insert({
           id: novaId, lead_id: lead_id || null, telefone: tel,
           nome_contato: nomeContato,
           vendedor_id: vendedor_id || req.usuario.id,
@@ -1445,7 +1465,7 @@ async function criarOuAbrirConversa(req, res) {
         if (lead_id && !conversa.lead_id)         upd.lead_id      = lead_id;
         if (nomeContato && !conversa.nome_contato) upd.nome_contato = nomeContato;
         if (Object.keys(upd).length) {
-          await sb.from('conversas_whatsapp').update({ ...upd, atualizado_em: agora }).eq('id', conversa.id);
+          await sb.from(CONVERSAS_TABLE).update({ ...upd, atualizado_em: agora }).eq('id', conversa.id);
           Object.assign(conversa, upd);
         }
         console.log('WHATSAPP_CONVERSA_FOUND_BY_PHONE', { id: conversa.id, tel: conversa.telefone });
@@ -1644,7 +1664,7 @@ async function atualizarStatus(req, res) {
     if (!VALIDOS.includes(status)) return res.status(400).json({ sucesso: false, erro: 'Status inválido.' });
     const agora = new Date().toISOString();
     if (isSupa) {
-      const { error } = await sb.from('conversas_whatsapp').update({ status, atualizado_em: agora }).eq('id', id);
+      const { error } = await sb.from(CONVERSAS_TABLE).update({ status, atualizado_em: agora }).eq('id', id);
       if (error) throw error;
     } else {
       getDb().prepare('UPDATE conversas_whatsapp SET status = ?, atualizado_em = ? WHERE id = ?').run(status, agora, id);
@@ -1664,7 +1684,7 @@ async function buscarConversa(req, res) {
   try {
     const { sb, isSupa } = getProvider();
     if (isSupa) {
-      const { data, error } = await sb.from('conversas_whatsapp')
+      const { data, error } = await sb.from(CONVERSAS_TABLE)
         .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa)')
         .eq('id', req.params.id).single();
       if (error || !data) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
@@ -1690,7 +1710,7 @@ async function conversaPorLead(req, res) {
 
     if (isSupa) {
       // ── Fase 1: busca por lead_id ──────────────────────────────────────────
-      const { data: byLeadId } = await sb.from('conversas_whatsapp')
+      const { data: byLeadId } = await sb.from(CONVERSAS_TABLE)
         .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa)')
         .eq('lead_id', leadId)
         .neq('status', 'FECHADA')
@@ -1715,7 +1735,7 @@ async function conversaPorLead(req, res) {
       const telNorm = normalizePhone(lead.telefone);
       console.log(`[WA] conversaPorLead: buscando por telefone normalizado ${telNorm}`);
 
-      const { data: byTel } = await sb.from('conversas_whatsapp')
+      const { data: byTel } = await sb.from(CONVERSAS_TABLE)
         .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa)')
         .eq('telefone', telNorm)
         .order('criado_em', { ascending: false })
@@ -1726,7 +1746,7 @@ async function conversaPorLead(req, res) {
         console.log(`[WA] conversaPorLead: encontrou por telefone=${telNorm} conv=${c.id}`);
         // Vincula lead_id automaticamente se ainda não vinculado
         if (!c.lead_id) {
-          await sb.from('conversas_whatsapp')
+          await sb.from(CONVERSAS_TABLE)
             .update({ lead_id: leadId, atualizado_em: new Date().toISOString() })
             .eq('id', c.id);
         }
@@ -2204,7 +2224,7 @@ async function processarStatusMensagem(body, req, res) {
 
         // Tenta por evolution_message_id primeiro (coluna adicionada via migração)
         try {
-          const { data: byEvoId, error: errEvo } = await sb.from('mensagens_whatsapp')
+          const { data: byEvoId, error: errEvo } = await sb.from(MENSAGENS_TABLE)
             .update(updatePayload)
             .eq('evolution_message_id', evoMsgId)
             .select('id');
@@ -2217,7 +2237,7 @@ async function processarStatusMensagem(body, req, res) {
 
         // Fallback: busca por id (o campo id da mensagem = messageId da Evolution quando salvo)
         if (!updated) {
-          const { data: byId, error: errId } = await sb.from('mensagens_whatsapp')
+          const { data: byId, error: errId } = await sb.from(MENSAGENS_TABLE)
             .update(updatePayload)
             .eq('id', evoMsgId)
             .select('id');
@@ -2334,9 +2354,16 @@ async function webhookReceberMensagem(req, res) {
   const evento = String(body.event || body.type || '').toUpperCase().replace(/\./g, '_');
   const instance = body.instance || '(sem instance)';
 
+  console.log('WHATSAPP_WEBHOOK_INBOUND_START', {
+    event: evento, instance,
+    alias_table:   ALIAS_TABLE,
+    mensagens_table: MENSAGENS_TABLE,
+    conversas_table: CONVERSAS_TABLE,
+  });
   console.log('WEBHOOK_EVENT_NAME', evento || '(sem evento)');
   console.log('WEBHOOK_INSTANCE', instance);
   console.log('WEBHOOK_PROCESS_START', { event: evento, instance });
+
 
   // ── 2a. Evento de STATUS — atualiza check de entrega/leitura ─────────────
   // NUNCA cria mensagem nova — apenas atualiza status da mensagem existente
@@ -2496,7 +2523,7 @@ async function webhookReceberMensagem(req, res) {
     if (messageId) {
       if (isSupa) {
         // Verifica ambos os IDs: local e o da Evolution (salvo em evolution_message_id)
-        const { data: existing } = await sb.from('mensagens_whatsapp')
+        const { data: existing } = await sb.from(MENSAGENS_TABLE)
           .select('id')
           .or(`id.eq.${messageId},evolution_message_id.eq.${messageId}`)
           .limit(1);
@@ -2518,7 +2545,7 @@ async function webhookReceberMensagem(req, res) {
         const trintaSeg = new Date(Date.now() - 30_000).toISOString();
 
         if (isSupa) {
-          const { data: msgDup } = await sb.from('mensagens_whatsapp')
+          const { data: msgDup } = await sb.from(MENSAGENS_TABLE)
             .select('id')
             .eq('telefone', tel)
             .eq('direcao', 'enviada')
@@ -2570,7 +2597,7 @@ async function webhookReceberMensagem(req, res) {
       if (!leadId && isLidJid && lidNumero) {
         try {
           console.log('WEBHOOK_LEAD_LID_ALIAS_LOOKUP', { lidNumero });
-          const { data: aliasLead } = await sb.from('whatsapp_conversa_aliases')
+          const { data: aliasLead } = await sb.from(ALIAS_TABLE)
             .select('conversa_id, telefone_normalizado')
             .eq('lid', lidNumero)
             .limit(1);
@@ -2692,7 +2719,7 @@ async function webhookReceberMensagem(req, res) {
         // Se existir, usar ela como destino — evita mensagem ir para conversa oculta.
         let conversaCanonica = null;
         if (leadId) {
-          const { data: canonicaCheck } = await sb.from('conversas_whatsapp')
+          const { data: canonicaCheck } = await sb.from(CONVERSAS_TABLE)
             .select('id')
             .eq('lead_id', leadId)
             .neq('status', 'FECHADA')
@@ -2735,7 +2762,7 @@ async function webhookReceberMensagem(req, res) {
             bloqueio_motivo:  'identidade_nao_confiavel',
             bloqueio_em:      agora,
           });
-          const { data: convPendente, error: errPend } = await sb.from('conversas_whatsapp').insert({
+          const { data: convPendente, error: errPend } = await sb.from(CONVERSAS_TABLE).insert({
             id:           novoConvId,
             telefone:     null, // nunca LID como telefone
             nome_contato: nomeContato,
@@ -2770,7 +2797,7 @@ async function webhookReceberMensagem(req, res) {
           ? JSON.stringify({ lid: lidNumero, remoteJid: rawJid, tipo_identidade: 'lid' })
           : null;
         console.log('WHATSAPP_INBOUND_CONVERSA_CREATED', { tel: telParaConversa, lidNumero: lidNumero || null, leadId, nomeContato });
-        const { data: novaConv, error: errC } = await sb.from('conversas_whatsapp').insert({
+        const { data: novaConv, error: errC } = await sb.from(CONVERSAS_TABLE).insert({
           id: novoConvId, telefone: telParaConversa, nome_contato: nomeContato,
           lead_id: leadId || null, origem: 'WHATSAPP_WEBHOOK', status: 'ABERTA',
           dados_extras: dadosExtrasNova, criado_em: agora, atualizado_em: agora,
@@ -2784,7 +2811,7 @@ async function webhookReceberMensagem(req, res) {
       }
     } else if (isSupa && conversaId) {
       // Conversa existente — atualiza sem sobrescrever nome_contato com dado ruim
-      const { data: convAtual } = await sb.from('conversas_whatsapp')
+      const { data: convAtual } = await sb.from(CONVERSAS_TABLE)
         .select('telefone,lead_id,dados_extras,nome_contato').eq('id', conversaId).single();
       const upd = { ultima_msg_em: agora, atualizado_em: agora, status: 'ABERTA' };
       if (leadId) upd.lead_id = leadId;
@@ -2811,7 +2838,7 @@ async function webhookReceberMensagem(req, res) {
         }
       }
       console.log('CONVERSA_FOUND_EXISTING', { conversaId, leadId, upd: Object.keys(upd) });
-      await sb.from('conversas_whatsapp').update(upd).eq('id', conversaId);
+      await sb.from(CONVERSAS_TABLE).update(upd).eq('id', conversaId);
     } else if (db && !conversaId) {
       const cid = crypto.randomBytes(16).toString('hex');
       db.prepare('INSERT INTO conversas_whatsapp (id,telefone,nome_contato,lead_id,origem,criado_em,atualizado_em) VALUES (?,?,?,?,?,?,?)').run(cid, telFinal, nome||null, leadId||null, 'WHATSAPP_WEBHOOK', agora, agora);
@@ -2853,7 +2880,7 @@ async function webhookReceberMensagem(req, res) {
       if (midiaUrl) console.log('WHATSAPP_AUDIO_MEDIA_DETECTED', { tipo, mimeType, midiaUrl: midiaUrl.slice(0,80) });
 
       console.log('WHATSAPP_INBOUND_MESSAGE_SAVED', { msgId, conversaId, direcao, tel: telFinal, tipo });
-      const { error: errM } = await sb.from('mensagens_whatsapp').insert(insertPayload);
+      const { error: errM } = await sb.from(MENSAGENS_TABLE).insert(insertPayload);
       msgSalva = !errM;
       if (!errM) {
         console.log('WEBHOOK_MESSAGE_SAVED', { mensagemId: msgId, conversaId, direcao, telefone: tel });
@@ -2870,14 +2897,14 @@ async function webhookReceberMensagem(req, res) {
         if (direcao === 'recebida') {
           try {
             // Busca o valor atual e incrementa
-            const { data: convAtualNL } = await sb.from('conversas_whatsapp')
+            const { data: convAtualNL } = await sb.from(CONVERSAS_TABLE)
               .select('nao_lidas').eq('id', conversaId).single();
             const naoLidasAtual = convAtualNL?.nao_lidas || 0;
             convUpdate.nao_lidas = naoLidasAtual + 1;
             console.log('WHATSAPP_UNREAD_INCREMENT', { conversaId, nao_lidas: convUpdate.nao_lidas });
           } catch(eNL) { console.warn('WHATSAPP_UNREAD_INCREMENT_WARN (coluna pode nao existir):', eNL.message); }
         }
-        const { error: errConvUpd } = await sb.from('conversas_whatsapp').update(convUpdate).eq('id', conversaId);
+        const { error: errConvUpd } = await sb.from(CONVERSAS_TABLE).update(convUpdate).eq('id', conversaId);
         if (errConvUpd) console.warn('[WA Webhook] update conversa warn:', errConvUpd.message);
       }
       if (errM) {
@@ -2944,13 +2971,13 @@ async function webhookReceberMensagem(req, res) {
         if (isLidJid && lidNumero && leadId && !telFinal) {
           (async () => {
             try {
-              const { data: _cv } = await sb.from('conversas_whatsapp')
+              const { data: _cv } = await sb.from(CONVERSAS_TABLE)
                 .select('telefone').eq('id', conversaId).single();
               if (!_cv?.telefone || _cv.telefone.startsWith('LID:')) {
                 const { data: _ld } = await sb.from('leads').select('telefone').eq('id', leadId).single();
                 const _telReal = _ld?.telefone ? normalizePhoneBR(_ld.telefone) : null;
                 if (_telReal) {
-                  await sb.from('conversas_whatsapp')
+                  await sb.from(CONVERSAS_TABLE)
                     .update({ telefone: _telReal, atualizado_em: new Date().toISOString() })
                     .eq('id', conversaId);
                   console.log('WHATSAPP_LID_CONVERSA_TEL_ATUALIZADO', { conversaId, _telReal, lidNumero });
@@ -3031,13 +3058,13 @@ async function statusIntegracao(req, res) {
       // ── Supabase: contar mensagens e conversas ───────────────────────────────────
       // conversas_ativas: apenas ABERTA, excluindo PENDENTE_IDENTIFICACAO e LIDs
       const [r24, r7d, rConv, rUlt, rLogs] = await Promise.all([
-        sb.from('mensagens_whatsapp').select('id', { count: 'exact', head: true }).gte('criado_em', h24),
-        sb.from('mensagens_whatsapp').select('id', { count: 'exact', head: true }).gte('criado_em', d7),
+        sb.from(MENSAGENS_TABLE).select('id', { count: 'exact', head: true }).gte('criado_em', h24),
+        sb.from(MENSAGENS_TABLE).select('id', { count: 'exact', head: true }).gte('criado_em', d7),
         // Conta apenas conversas ABERTA sem telefone LID
-        sb.from('conversas_whatsapp').select('id,telefone,dados_extras', { count: 'exact' })
+        sb.from(CONVERSAS_TABLE).select('id,telefone,dados_extras', { count: 'exact' })
           .eq('status', 'ABERTA'),
-        sb.from('mensagens_whatsapp').select('telefone,direcao,mensagem,criado_em').order('criado_em', { ascending: false }).limit(30),
-        sb.from('mensagens_whatsapp').select('telefone,direcao,mensagem,conteudo,criado_em').order('criado_em', { ascending: false }).limit(50),
+        sb.from(MENSAGENS_TABLE).select('telefone,direcao,mensagem,criado_em').order('criado_em', { ascending: false }).limit(30),
+        sb.from(MENSAGENS_TABLE).select('telefone,direcao,mensagem,conteudo,criado_em').order('criado_em', { ascending: false }).limit(50),
       ]);
       msgs24    = r24.count  ?? 0;
       msgs7d    = r7d.count  ?? 0;
@@ -3158,7 +3185,7 @@ async function diagnosticarDuplicatas(req, res) {
     if (!isSupa) return res.json({ sucesso: true, aviso: 'Apenas Supabase suportado.', grupos: [] });
 
     console.log('DUPLICATE_CONVERSAS_SCAN_START');
-    const { data: todas } = await sb.from('conversas_whatsapp')
+    const { data: todas } = await sb.from(CONVERSAS_TABLE)
       .select('id,telefone,lead_id,nome_contato,status,criado_em,ultima_msg_em,dados_extras')
       .order('criado_em', { ascending: true });
 
@@ -3194,7 +3221,7 @@ async function executarDeduplicacao(req, res) {
 
     console.log('DUPLICATE_CONVERSAS_SCAN_START');
     const agora = new Date().toISOString();
-    const { data: todas } = await sb.from('conversas_whatsapp')
+    const { data: todas } = await sb.from(CONVERSAS_TABLE)
       .select('id,telefone,lead_id,nome_contato,status,criado_em,ultima_msg_em,dados_extras')
       .order('criado_em', { ascending: true });
 
@@ -3218,7 +3245,7 @@ async function executarDeduplicacao(req, res) {
       // Escolhe conversa canônica: prioridade = tem lead_id > status ABERTA > mais mensagens > mais antiga
       // Conta mensagens por conversa
       const ids = convs.map(c => c.id);
-      const { data: contagens } = await sb.from('mensagens_whatsapp')
+      const { data: contagens } = await sb.from(MENSAGENS_TABLE)
         .select('conversa_id')
         .in('conversa_id', ids);
       const contagemMap = {};
@@ -3241,7 +3268,7 @@ async function executarDeduplicacao(req, res) {
 
       for (const dup of duplicatas) {
         // Move mensagens da duplicata para a canônica
-        const { error: errMove } = await sb.from('mensagens_whatsapp')
+        const { error: errMove } = await sb.from(MENSAGENS_TABLE)
           .update({ conversa_id: canonica.id })
           .eq('conversa_id', dup.id);
         if (!errMove) {
@@ -3259,14 +3286,14 @@ async function executarDeduplicacao(req, res) {
         const ultimaRecente = [canonica.ultima_msg_em, dup.ultima_msg_em]
           .filter(Boolean).sort().pop();
 
-        await sb.from('conversas_whatsapp').update({
+        await sb.from(CONVERSAS_TABLE).update({
           dados_extras: JSON.stringify(extMerge),
           ultima_msg_em: ultimaRecente || agora,
           atualizado_em: agora,
         }).eq('id', canonica.id);
 
         // Marca duplicata como FECHADA (não deleta)
-        await sb.from('conversas_whatsapp').update({
+        await sb.from(CONVERSAS_TABLE).update({
           status: 'FECHADA',
           atualizado_em: agora,
           dados_extras: JSON.stringify({ ...extDup, _duplicata_de: canonica.id, _deduplicado_em: agora }),
@@ -3574,7 +3601,7 @@ async function servirMidia(req, res) {
     let mediaUrl = null;
     let mimeType = 'audio/ogg';
     if (isSupa) {
-      const { data: msg } = await sb.from('mensagens_whatsapp')
+      const { data: msg } = await sb.from(MENSAGENS_TABLE)
         .select('arquivo_url, mime_type').eq('id', msgId).eq('conversa_id', conversaId).single();
       mediaUrl = msg?.arquivo_url || null;
       mimeType = msg?.mime_type || mimeType;
