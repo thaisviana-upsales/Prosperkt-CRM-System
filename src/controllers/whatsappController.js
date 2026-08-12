@@ -230,12 +230,46 @@ async function _classificarRespostaBoasVindas(sb, leadId, texto) {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// isIdentidadeWhatsappConfiavel — guard de segurança de identidade
+// Retorna true SOMENTE se o remoteJid tem telefone real (não LID/interno).
+// Usado antes de criar conversa ABERTA — identidade LID → PENDENTE_IDENTIFICACAO.
+//
+// Regras:
+//   - LID (@lid no rawJid ou 14+ dígitos sem 55) → false
+//   - telefone null sem alias → false
+//   - telefone começando com 55 → true
+//   - aliasEncontrado (conversa existente) → true (confiar no alias)
+// ─────────────────────────────────────────────────────────────────────────────
+function isIdentidadeWhatsappConfiavel(telFinal, { isLidJid, lidNumero, aliasEncontrado, conversaExistente } = {}) {
+  // Alias encontrado = identidade já validada anteriormente → confiar
+  if (aliasEncontrado || conversaExistente) return true;
+
+  // Se for JID de LID → não confiável
+  if (isLidJid) return false;
+
+  // Se tiver lidNumero (14+ dígitos sem 55) → não confiável
+  if (lidNumero) return false;
+
+  // Sem telefone real → não confiável
+  if (!telFinal) return false;
+
+  // Telefone deve começar com 55 (Brasil) ou ser número internacional válido
+  const digits = String(telFinal).replace(/\D/g, '');
+  if (digits.length >= 14 && !digits.startsWith('55')) return false; // LID numérico
+
+  // Telefone válido → confiável
+  return true;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Schema real — nomes canônicos das tabelas WhatsApp
 // Se o banco tiver nome diferente, altere APENAS aqui.
 // ─────────────────────────────────────────────────────────────────────────────
 const ALIAS_TABLE      = 'whatsapp_conversa_aliases';   // tabela de mapeamento LID/JID → conversa
 const MENSAGENS_TABLE  = 'mensagens_whatsapp';           // mensagens recebidas/enviadas por conversa
 const CONVERSAS_TABLE  = 'conversas_whatsapp';           // conversas WhatsApp
+
 
 console.log('WHATSAPP_SCHEMA_REAL_TABLES_USED', {
   alias:     ALIAS_TABLE,
