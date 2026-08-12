@@ -629,22 +629,22 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
 
   // ── Passo 2: por lead_id — APENAS conversas canônicas (ABERTA com telefone real) ──
   // REGRA: não retornar PENDENTE_IDENTIFICACAO como destino.
-  // Se o lead tem uma PENDENTE e uma ABERTA, sempre prefer a ABERTA.
+  // USA .neq() ENCADEADO em vez de .not('status','in',...) por compat PostgREST.
   if (!conversaId && leadId) {
     console.log('WEBHOOK_LEAD_ID_RESOLVIDO', { leadId });
-    // 2a: busca canônica: ABERTA, com telefone real (não LID, não nulo)
     const { data: byLeadCanonica } = await sb.from(CONVERSAS_TABLE)
       .select('id,telefone,status')
       .eq('lead_id', leadId)
-      .not('status', 'in', '("FECHADA","PENDENTE_IDENTIFICACAO")')
+      .neq('status', 'FECHADA')
+      .neq('status', 'PENDENTE_IDENTIFICACAO')
       .not('telefone', 'is', null)
       .order('ultima_msg_em', { ascending: false, nullsFirst: false })
-      .limit(5);
+      .limit(10);
 
-    // Filtra para garantir que o telefone não é LID (14+ dígitos sem 55)
+    // Filtra LIDs numéricos (14+ dígitos sem 55) e LID: prefix
     const canonicaLead = (byLeadCanonica || []).find(c => {
       const digits = (c.telefone || '').replace(/\D/g, '');
-      if (digits.length >= 14 && !digits.startsWith('55')) return false; // LID numérico
+      if (digits.length >= 14 && !digits.startsWith('55')) return false;
       if ((c.telefone || '').startsWith('LID:')) return false;
       return true;
     });
@@ -653,16 +653,16 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
       conversaId = canonicaLead.id; fonte = 'lead_id_canonica';
       console.log('WEBHOOK_CANONICA_BY_LEAD_FOUND', { conversaId, leadId, telefone: canonicaLead.telefone, status: canonicaLead.status });
       console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte, leadId });
-      // Salva alias para evitar este caminho na próxima vez
       if (isLidJid && lidNumero && rawJid) {
         registrarAlias(sb, { conversaId, tel: canonicaLead.telefone || null, rawJid, lidNumero, nome: nome || null })
           .catch(e => console.warn('WHATSAPP_ALIAS_LEAD2_WARN:', e.message));
       }
     } else {
-      // 2b: fallback — qualquer não-FECHADA (pode ser PENDENTE, último recurso dentro do passo 2)
+      // 2b: fallback — qualquer não-FECHADA excluindo PENDENTE
       const { data: byLeadAny } = await sb.from(CONVERSAS_TABLE)
-        .select('id,status').eq('lead_id', leadId).neq('status', 'FECHADA')
-        .not('status', 'eq', 'PENDENTE_IDENTIFICACAO') // ainda exclui PENDENTE
+        .select('id,status').eq('lead_id', leadId)
+        .neq('status', 'FECHADA')
+        .neq('status', 'PENDENTE_IDENTIFICACAO')
         .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
       if (byLeadAny?.[0]) {
         conversaId = byLeadAny[0].id; fonte = 'lead_id_fallback';
@@ -738,12 +738,19 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
   }
 
   // ── Passo 6: LID → nome_contato único ───────────────────────────────────
+  // FIX: exclui PENDENTE_IDENTIFICACAO (antes só excluía FECHADA) para não
+  //      contar pendente como candidata e gerar falso-ambíguo.
+  //      limit(5) para filtrar por .not('telefone','is',null) e checar unicidade real.
   if (!conversaId && isLidJid && lidNumero && nome && !fromMe) {
     const primeiroNome = nome.split(' ')[0];
     if (primeiroNome.length >= 3) {
-      const { data: byNome } = await sb.from(CONVERSAS_TABLE)
-        .select('id,dados_extras').ilike('nome_contato', `%${primeiroNome}%`)
-        .neq('status', 'FECHADA').order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(2);
+      const { data: byNomeBruto } = await sb.from(CONVERSAS_TABLE)
+        .select('id,dados_extras,telefone').ilike('nome_contato', `%${primeiroNome}%`)
+        .neq('status', 'FECHADA')
+        .neq('status', 'PENDENTE_IDENTIFICACAO')
+        .not('telefone', 'is', null)
+        .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(5);
+      const byNome = (byNomeBruto || []).filter(r => r.telefone && r.telefone.trim() !== '');
       if (byNome?.length === 1) {
         conversaId = byNome[0].id; fonte = 'lid_nome_contato';
         console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte, nome, primeiroNome });
