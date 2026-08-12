@@ -632,7 +632,38 @@ async function listarConversas(req, res) {
       if (busca)       q = q.or(`telefone.ilike.%${busca}%,nome_contato.ilike.%${busca}%`);
       const { data, error } = await q;
       if (error) throw error;
-      const conversas = (data || []).map(c => ({
+
+      // ── FIX: filtro pós-query de conversas com telefone LID ─────────────────────
+      // Supabase não suporta regex nem "NOT LIKE" encadeado facilmente no PostgREST.
+      // Portanto: filtra no Node.js após a query.
+      // Critérios de exclusão:
+      //   • telefone LIKE 'LID:%'
+      //   • telefone numérico com 14+ dígitos que NÃO começa com '55'
+      //   • dados_extras.tipo_identidade = 'lid' ou 'lid_nao_resolvido'
+      // Objetivo: conversa LID NUNCA aparece na lista principal.
+      const isLidTelefone = (tel) => {
+        if (!tel) return false;
+        const t = String(tel).trim();
+        if (t.startsWith('LID:')) return true;
+        const digits = t.replace(/\D/g, '');
+        if (digits.length >= 14 && !digits.startsWith('55')) return true;
+        return false;
+      };
+      const rawData = (data || []).filter(c => {
+        if (isLidTelefone(c.telefone)) {
+          console.log('WHATSAPP_LIST_HIDE_LID_ONLY_CONVERSATION', { id: c.id, telefone: c.telefone, nome: c.nome_contato });
+          return false;
+        }
+        const ext = (() => { try { return typeof c.dados_extras === 'object' ? (c.dados_extras || {}) : JSON.parse(c.dados_extras || '{}'); } catch { return {}; } })();
+        const tipoId = ext.tipo_identidade || '';
+        if (tipoId === 'lid' || tipoId === 'lid_nao_resolvido') {
+          console.log('WHATSAPP_LIST_HIDE_LID_ONLY_CONVERSATION', { id: c.id, tipo_identidade: tipoId });
+          return false;
+        }
+        return true;
+      });
+
+      const conversas = rawData.map(c => ({
         ...c,
         vendedor_nome: c.usuarios?.nome || null,
         lead_nome:     c.leads?.nome    || null,
@@ -2685,18 +2716,57 @@ async function statusIntegracao(req, res) {
 
     if (isSupa) {
       // ── Supabase ──────────────────────────────────────────────────────────
+      // ── Supabase: contar mensagens e conversas ───────────────────────────────────
+      // conversas_ativas: apenas ABERTA, excluindo PENDENTE_IDENTIFICACAO e LIDs
       const [r24, r7d, rConv, rUlt, rLogs] = await Promise.all([
         sb.from('mensagens_whatsapp').select('id', { count: 'exact', head: true }).gte('criado_em', h24),
         sb.from('mensagens_whatsapp').select('id', { count: 'exact', head: true }).gte('criado_em', d7),
-        sb.from('conversas_whatsapp').select('id', { count: 'exact', head: true }).eq('status', 'ABERTA'),
-        sb.from('mensagens_whatsapp').select('telefone,direcao,mensagem,criado_em').order('criado_em', { ascending: false }).limit(1),
-        sb.from('mensagens_whatsapp').select('telefone,direcao,mensagem,criado_em').order('criado_em', { ascending: false }).limit(15),
+        // Conta apenas conversas ABERTA sem telefone LID
+        sb.from('conversas_whatsapp').select('id,telefone,dados_extras', { count: 'exact' })
+          .eq('status', 'ABERTA'),
+        sb.from('mensagens_whatsapp').select('telefone,direcao,mensagem,criado_em').order('criado_em', { ascending: false }).limit(30),
+        sb.from('mensagens_whatsapp').select('telefone,direcao,mensagem,conteudo,criado_em').order('criado_em', { ascending: false }).limit(50),
       ]);
       msgs24    = r24.count  ?? 0;
       msgs7d    = r7d.count  ?? 0;
-      convAtivas = rConv.count ?? 0;
-      ultima    = rUlt.data?.[0]  || null;
-      logs      = rLogs.data      || [];
+
+      // FIX: exclui conversas LID da contagem de ativas
+      const isLidPhone = (tel) => {
+        if (!tel) return false;
+        const t = String(tel).trim();
+        if (t.startsWith('LID:')) return true;
+        const d = t.replace(/\D/g, '');
+        return d.length >= 14 && !d.startsWith('55');
+      };
+      const convsAtivasFiltradas = (rConv.data || []).filter(c => {
+        if (isLidPhone(c.telefone)) return false;
+        const ext = (() => { try { return typeof c.dados_extras === 'object' ? (c.dados_extras || {}) : JSON.parse(c.dados_extras || '{}'); } catch { return {}; } })();
+        const tipoId = ext.tipo_identidade || '';
+        return tipoId !== 'lid' && tipoId !== 'lid_nao_resolvido';
+      });
+      convAtivas = convsAtivasFiltradas.length;
+
+      // FIX: filtra LID dos logs de atividade recente
+      // Mensagens com telefone LID mostram texto descritivo, nunca o número bruto
+      const NUMERO_OFICIAL_REGEX = /^(5511987994910|5511967668883)$/;
+      const logsRaw = (rLogs.data || []);
+      ultima = (rUlt.data || []).find(m => !isLidPhone(m.telefone)) || null;
+      logs = logsRaw
+        .filter(m => !NUMERO_OFICIAL_REGEX.test((m.telefone || '').replace(/\D/g, '')))
+        .map(m => {
+          const tel = m.telefone || '';
+          const lidDetectado = isLidPhone(tel);
+          return {
+            telefone:  lidDetectado ? null : tel,
+            direcao:   m.direcao,
+            mensagem:  lidDetectado
+              ? '(Mensagem pendente de identificação — LID interno do WhatsApp)'
+              : (m.mensagem || m.conteudo || ''),
+            criado_em: m.criado_em,
+            lid_pendente: lidDetectado,
+          };
+        })
+        .slice(0, 15);
     } else {
       // ── SQLite ────────────────────────────────────────────────────────────
       const db = getDb();

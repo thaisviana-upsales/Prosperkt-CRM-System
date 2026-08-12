@@ -159,15 +159,25 @@ function renderLogs(logs) {
     </div>`;
     return;
   }
-  el.innerHTML = logs.map(m => `
+  el.innerHTML = logs.map(m => {
+    // Mensagens com LID não resolvido: exibe indicador visual, nunca o número bruto
+    const isLid = m.lid_pendente;
+    const telHtml = isLid
+      ? '<em style="color:var(--text-muted);font-style:normal;font-size:.69rem;background:rgba(255,182,39,.1);border:1px solid rgba(255,182,39,.2);border-radius:4px;padding:1px 5px">🔄 Pendente ID</em>'
+      : formatTel(m.telefone || '');
+    const msgTxt = isLid
+      ? '<span style="color:var(--text-muted);font-style:italic">Mensagem pendente de identificação</span>'
+      : esc(m.mensagem || m.conteudo || '—');
+    return `
     <div class="log-it">
       <span class="log-dir ${m.direcao === 'recebida' ? 'r' : 'e'}">${m.direcao === 'recebida' ? '📥 Receb.' : '📤 Enviada'}</span>
       <div style="flex:1;min-width:0">
-        <div class="log-tel">${formatTel(m.telefone || '')}</div>
-        <div class="log-msg" style="font-size:.72rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(m.mensagem || m.conteudo || '—')}</div>
+        <div class="log-tel">${telHtml}</div>
+        <div class="log-msg" style="font-size:.72rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${msgTxt}</div>
       </div>
       <span style="font-size:.67rem;color:var(--text-muted);white-space:nowrap">${m.criado_em ? formatDate(m.criado_em) : ''}</span>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 // ── Evolution API ─────────────────────────────────────────────────────────────
