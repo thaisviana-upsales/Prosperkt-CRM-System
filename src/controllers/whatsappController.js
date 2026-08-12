@@ -43,6 +43,16 @@ function normalizePhoneBR(value) {
   t = t.replace(/\D/g, '');
   if (!t) return null;
 
+  // ── FIX: Rejeição explícita de LID WhatsApp ────────────────────────────────
+  // LIDs são identificadores internos do WhatsApp Multi-Device, NÃO são telefones.
+  // Tipicamente têm 14-17 dígitos e NÃO começam com 55 (DDI Brasil).
+  // Sem esta regra, passariam pelo check /^\d{10,15}$/ abaixo (14 dígitos = válido).
+  // Regra: se tiver 14+ dígitos E não começar com 55 → é LID, rejeitar.
+  if (t.length >= 14 && !t.startsWith('55')) {
+    return null; // LID identificador interno do WhatsApp — não é telefone
+  }
+  // ──────────────────────────────────────────────────────────────────────────
+
   // Rejeita se for timestamp unix
   const numVal = Number(t);
   if ((t.length === 10 && numVal >= 1000000000 && numVal <= 2200000000) ||
@@ -1646,9 +1656,12 @@ function normalizarPayloadWA(body) {
 
   // ── Extrai telefone (todos os caminhos possíveis) ─────────────────────────
   // PRIORIDADE para Evolution API com LID:
-  //   1. Se remoteJid é @lid, tenta participant (JID real do contato em grupos/multi-device)
-  //   2. Tenta campos alternativos: data.number, data.sender
-  //   3. Fallback: remoteJid (pode ser LID)
+  //   1. Se remoteJid é @lid COM participant: usa o participant JID (contém telefone real)
+  //   2. Se remoteJid é @lid SEM participant: rawTel = null (sem telefone real no payload)
+  //      ↳ FIX CAUSA RAIZ: antes usava remoteJid → normalizePhoneBR extraia o número LID
+  //        (ex: 67044573708506) como telefone válido via /^\d{10,15}$/ (14 dígitos ok),
+  //        criando uma conversa duplicada com LID como telefone em vez da conversa real.
+  //   3. JID normal @s.whatsapp.net: usa remoteJid diretamente
   const participantJid = isEvolution
     ? (dataRaw?.participant || dataRaw?.key?.participant || null)
     : null;
@@ -1656,9 +1669,9 @@ function normalizarPayloadWA(body) {
 
   const rawTel = isEvolution
     ? (
-        // Se LID, tenta participant primeiro (JID com telefone real)
-        (isLidRaw && participantJid) ? participantJid
-        : remoteJid
+        (isLidRaw && participantJid) ? participantJid   // LID + participant: JID real do contato
+        : isLidRaw ? null                               // ← FIX: LID sem participant = sem tel real
+        : remoteJid                                     // JID normal: usa direto
       )
     : (
         dataRaw?.key?.remoteJid ||
@@ -1670,8 +1683,8 @@ function normalizarPayloadWA(body) {
         body.telefone || body.phone || body.from || body.remoteJid || body.sender || body.number || ''
       );
   const tel = normalizarTelWhatsApp(rawTel);
-  // Preserva o número LID original (sem @) para mapeamento
-  // CORREÇÃO: não passa por normalizePhone — LIDs têm 14+ dígitos que seriam rejeitados.
+  // Preserva o número LID original (sem @) para mapeamento interno.
+  // Nunca usa lidNumero como telefone de conversa.
   const lidNumero = isLidRaw ? remoteJid.split('@')[0].replace(/\D/g, '') || null : null;
 
   // ── Extrai nome do contato ────────────────────────────────────────────────
@@ -2056,11 +2069,8 @@ async function webhookReceberMensagem(req, res) {
   }
 
   // ── CORREÇÃO LID: tel pode ser nulo quando remoteJid é @lid sem participant ──
-  // O fallback ANTERIOR usava o número do LID (ex: 67044573708506) como telefone
-  // provisório — causava criação de conversa duplicada com número falso.
-  // NOVA LÓGICA:
-  //   - isLidJid=true e tel=null → telFinal fica null; resolver usa lidNumero+leadId
-  //   - isLidJid=false e tel=null → fallback pelo rawJid (comportamento preservado)
+  // APÓS FIX DA CAUSA RAIZ: normalizarPayloadWA já retorna tel=null para LID sem participant.
+  // Esta seção mantém o comportamento correto como camada defensiva adicional.
   let telFinal = tel;
   if (!telFinal) {
     if (isLidJid) {
@@ -2078,16 +2088,29 @@ async function webhookReceberMensagem(req, res) {
       return res.status(400).json({ sucesso: false, erro: 'Telefone não identificado no payload.' });
     }
   }
-  // Reatribui para manter compatibilidade com o restante do código
-  // (Nota: parsed.tel era const, criamos telFinal como variável mutável)
 
+  // ── Log estruturado de identidade WA — diagnóstico obrigatório (Fase 12) ─────
+  // Permite rastrear QUALQUER duplicação futura em segundos pelos logs.
+  console.log('[WA_IDENTITY]', JSON.stringify({
+    messageId:         messageId      || null,
+    evento:            evento         || null,
+    rawJid:            rawJid         || null,
+    isLidJid:          isLidJid,
+    lidNumero:         lidNumero      || null,
+    participantJid:    (isLidJid ? (normalizarPayloadWA._lastParticipant || null) : null),
+    telNormalized:     telFinal       || null,
+    fromMe:            fromMe,
+    pushName:          nome?.slice(0, 40) || null,
+    instance:          instance       || null,
+  }));
 
   // ── Valida número — permissivo para não bloquear recebimento ────────────────
   // Brasil: 55 + DDD(2) + número(8-9) = 12-13 dígitos
   // Internacional genérico: 10-15 dígitos
-  const numBrasileiro = /^55\d{10,11}$/.test(telFinal);
-  const numGenerico   = /^\d{10,15}$/.test(telFinal);
-  if (!numBrasileiro && !numGenerico) {
+  // telFinal pode ser null quando LID sem participant (caso tratado acima)
+  const numBrasileiro = telFinal ? /^55\d{10,11}$/.test(telFinal) : false;
+  const numGenerico   = telFinal ? /^\d{10,15}$/.test(telFinal)   : false;
+  if (telFinal && !numBrasileiro && !numGenerico) {
     // APENAS LOGA — não descarta. Pode ser número LID ou formato não previsto.
     console.warn('WEBHOOK_NUMERO_FORMATO_INCOMUM', {
       telefoneOriginal: rawJid,
@@ -2167,19 +2190,53 @@ async function webhookReceberMensagem(req, res) {
 
     // ── 5. Busca lead pelo telefone (normalizado) ────────────────────────────
     let leadId = null;
-    const telSem55 = (telFinal.startsWith('55') && telFinal.length >= 12) ? telFinal.slice(2) : null;
+    const telSem55 = (telFinal && telFinal.startsWith('55') && telFinal.length >= 12) ? telFinal.slice(2) : null;
 
     if (isSupa) {
       let leadsFound = null;
-      const variantesCompletas = phoneVariants(telFinal);
-      for (const variant of variantesCompletas) {
-        const { data: found } = await sb.from('leads').select('id,telefone')
-          .or(`telefone.eq.${variant},telefone.ilike.%${variant}%`)
-          .is('deleted_at', null).limit(1);
-        if (found?.[0]) { leadsFound = found; break; }
+
+      // ── 5a. Busca por telefone (variantes) — só quando telFinal não é null ─
+      if (telFinal) {
+        const variantesCompletas = phoneVariants(telFinal);
+        for (const variant of variantesCompletas) {
+          const { data: found } = await sb.from('leads').select('id,telefone')
+            .or(`telefone.eq.${variant},telefone.ilike.%${variant}%`)
+            .is('deleted_at', null).limit(1);
+          if (found?.[0]) { leadsFound = found; break; }
+        }
+        leadId = leadsFound?.[0]?.id || null;
+        console.log(`WEBHOOK_LEAD_ENCONTRADO: tel=${telFinal} variantes=${phoneVariants(telFinal).join('|')} → leadId=${leadId}`);
+      } else {
+        console.log(`WEBHOOK_LEAD_LOOKUP_SKIP: telFinal=null (LID sem participant), buscando via alias`);
       }
-      leadId = leadsFound?.[0]?.id || null;
-      console.log(`WEBHOOK_LEAD_ENCONTRADO: tel=${telFinal} variantes=${variantesCompletas.join('|')} → leadId=${leadId}`);
+
+      // ── 5b. FIX: Quando telFinal=null (LID sem participant), busca lead via alias ─
+      // Cenário: LID chegou na resposta do cliente sem campo participant (sem telefone real).
+      // O alias foi gravado quando o CRM enviou a mensagem anterior e a Evolution retornou o LID.
+      // Sem isso, leadId=null e resolverConversaWhatsapp pula o Passo 2 (by lead_id).
+      if (!leadId && isLidJid && lidNumero) {
+        try {
+          console.log('WEBHOOK_LEAD_LID_ALIAS_LOOKUP', { lidNumero });
+          const { data: aliasLead } = await sb.from('whatsapp_conversa_aliases')
+            .select('conversa_id, telefone_normalizado')
+            .eq('lid', lidNumero)
+            .limit(1);
+          if (aliasLead?.[0]?.telefone_normalizado) {
+            const telAlias = aliasLead[0].telefone_normalizado;
+            for (const v of phoneVariants(telAlias)) {
+              const { data: foundByAlias } = await sb.from('leads').select('id,telefone')
+                .or(`telefone.eq.${v},telefone.ilike.%${v}%`)
+                .is('deleted_at', null).limit(1);
+              if (foundByAlias?.[0]) { leadId = foundByAlias[0].id; break; }
+            }
+            if (leadId) {
+              console.log('WEBHOOK_LEAD_ENCONTRADO_VIA_ALIAS', { lidNumero, telAlias, leadId });
+            }
+          }
+        } catch(eLA) {
+          console.warn('WEBHOOK_LEAD_LID_ALIAS_WARN:', eLA.message);
+        }
+      }
 
       // Só cria lead se for mensagem recebida (fromMe=false) e não existir
       if (!leadId && !fromMe) {
