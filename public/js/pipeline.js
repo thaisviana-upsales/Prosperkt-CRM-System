@@ -520,35 +520,11 @@ function renderKanban() {
         <div class="col-dot" style="background:${etapa.cor}"></div>
         <span class="col-title">${formatarNomeEtapa(etapa.nome)}</span>
         <span class="col-count">${leads.length}</span>
-      </div>
-      <div class="col-body" data-etapa="${etapa.id}">
-        ${leads.map(l=>renderCard(l, modoTodos)).join('')}
-      </div>
-      <button class="col-add" data-etapa="${etapa.id}">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        Adicionar lead
-      </button>`;
-    wrap.appendChild(col);
-
-    const body = col.querySelector('.col-body');
-    body.addEventListener('dragover', ev => { ev.preventDefault(); body.classList.add('drag-over'); });
-    body.addEventListener('dragleave', () => body.classList.remove('drag-over'));
-    body.addEventListener('drop', ev => { ev.preventDefault(); body.classList.remove('drag-over'); moverLead(etapa.id); });
-    col.querySelector('.col-add').addEventListener('click', () => abrirNovoLead(etapa.id));
-    body.querySelectorAll('.lead-card').forEach(card => {
+       body.querySelectorAll('.lead-card').forEach(card => {
       // Botão WhatsApp: captura o clique ANTES do card, evita abrir o modal
       const btnWa = card.querySelector('.btn-wa-nav');
       if (btnWa) {
-        btnWa.addEventListener('click', (ev) => {
-          ev.stopPropagation();   // impede card de abrir o modal
-          ev.preventDefault();
-          const leadId = btnWa.dataset.waLeadId;
-          const tel    = btnWa.dataset.waTel;
-          const nome   = btnWa.dataset.waNome || '';
-          const urlDestino = `/whatsapp.html?lead_id=${encodeURIComponent(leadId)}&phone=${encodeURIComponent(tel)}&nome=${encodeURIComponent(nome)}`;
-          console.log('ABRIR_WHATSAPP_DO_LEAD:', { leadId, telefoneNormalizado: tel, urlDestino });
-          window.location.href = urlDestino;
-        });
+        btnWa.addEventListener('click', _waBtnHandler);
       }
 
       card.addEventListener('click', () => abrirLead(card.dataset.id));
@@ -586,36 +562,97 @@ function renderKanban() {
           ${leadsOrfaos.map(l => renderCard(l, false)).join('')}
         </div>`;
       wrap.insertBefore(colOrfaos, wrap.firstChild); // coloca no início do kanban
+      // FIX CRÍTICO: registra handlers de botão WA E card para leads órfãos
+      // Antes este bloco só registrava card.click → botão WA propagava → abria modal
       colOrfaos.querySelectorAll('.lead-card').forEach(card => {
+        const btnWaOrfao = card.querySelector('.btn-wa-nav');
+        if (btnWaOrfao) btnWaOrfao.addEventListener('click', _waBtnHandler);
         card.addEventListener('click', () => abrirLead(card.dataset.id));
       });
     }
   }
 }
 
+// ── Handler reutilizável do botão WhatsApp do card ─────────────────────────────
+
+// Extraído em função nomeada para ser aplicado tanto nas colunas normais
+// quanto na coluna "Sem etapa" (leads órfãos).
+// FIX: antes, leads órfãos não tinham este handler → clique propagava → abria card.
+function _waBtnHandler(ev) {
+  ev.stopPropagation();   // NUNCA deve abrir o card do lead
+  ev.preventDefault();
+  console.log('WHATSAPP_CARD_BUTTON_CLICK', { target: ev.currentTarget?.dataset });
+  console.log('WHATSAPP_CARD_CLICK_PROPAGATION_STOPPED');
+
+  const btn    = ev.currentTarget;
+  const leadId = btn.dataset.waLeadId;
+  const tel    = btn.dataset.waTel;     // pode ser '' se lead não tem telefone
+  const nome   = btn.dataset.waNome || '';
+  const semTel = btn.dataset.waSemTel === '1';
+
+  console.log('WHATSAPP_OPEN_FROM_LEAD_START', { leadId, tel: tel ? tel.slice(0,6) + '****' : '(vazio)', nome });
+
+  // ── Lead sem telefone válido: exibe toast, NÃO abre card ──────────────────
+  if (semTel || !tel) {
+    console.log('WHATSAPP_OPEN_FROM_LEAD_INVALID_PHONE', { leadId, motivo: 'sem_telefone_no_lead' });
+    if (typeof Toast !== 'undefined') {
+      Toast.show('Este lead não possui telefone WhatsApp válido. Atualize o telefone no cadastro para iniciar a conversa.', 'warning', 6000);
+    } else {
+      alert('Este lead não possui telefone WhatsApp válido. Atualize o telefone no cadastro para iniciar a conversa.');
+    }
+    return;   // NÃO abre card, NÃO navega
+  }
+
+  // ── Telefone é número oficial do CRM — bloqueia ───────────────────────────
+  const NUMEROS_OFICIAIS = ['5511987994910', '5511967668883'];
+  if (NUMEROS_OFICIAIS.includes(tel)) {
+    console.log('WHATSAPP_OPEN_FROM_LEAD_INVALID_PHONE', { leadId, motivo: 'numero_oficial_crm', tel });
+    if (typeof Toast !== 'undefined') Toast.show('Número inválido para conversa (número do CRM).', 'warning');
+    return;
+  }
+
+  console.log('WHATSAPP_OPEN_FROM_LEAD_PHONE_RESOLVED', { leadId, tel: tel.slice(0,6) + '****' });
+  const urlDestino = `/whatsapp.html?lead_id=${encodeURIComponent(leadId)}&phone=${encodeURIComponent(tel)}&nome=${encodeURIComponent(nome)}`;
+  console.log('WHATSAPP_OPEN_FROM_LEAD_REDIRECT', { leadId, urlDestino });
+  window.location.href = urlDestino;
+}
+
 function renderCard(l, mostrarFunil) {
   const dataCriacao = l.criado_em
     ? new Date(l.criado_em).toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' })
     : '';
-  const telNorm = (() => { let t = (l.telefone||'').replace(/\D/g,''); if(t.length===10||t.length===11) t='55'+t; return t; })();
+
+  // ── Telefone: ordem de preferência: telefone > telefone_whatsapp > celular ──
+  // FIX: antes usava apenas l.telefone — leads com telefone em outro campo ficavam sem botão
+  const _telRaw = (l.telefone || l.telefone_whatsapp || l.celular || l.whatsapp || l.phone || '').trim();
+  const telNorm = (() => {
+    let t = _telRaw.replace(/\D/g,'');
+    if (t.length === 10 || t.length === 11) t = '55' + t;
+    return t;
+  })();
+  const telValido = telNorm.startsWith('55') && telNorm.length >= 12 && telNorm.length <= 13;
   const funilCor  = _funis.find(f => f.nome === l.funil_nome)?.cor || '#aaa';
   const funilNome = l.funil_nome || '';
 
-  const waIcon = l.telefone ? `
+  // Botão WA: renderiza sempre (mesmo sem telefone, com data-wa-sem-tel para mostrar aviso)
+  // FIX: antes, lead sem l.telefone não renderizava o botão — o clique no SVG propagava
+  const semTelFlag = telValido ? '0' : '1';
+  const waIcon = `
     <button
       class="btn-wa-card btn-wa-nav"
-      title="Abrir conversa WhatsApp"
+      title="${telValido ? 'Abrir conversa WhatsApp' : 'Cadastre o telefone para iniciar conversa'}"
       data-wa-lead-id="${l.id}"
-      data-wa-tel="${telNorm}"
+      data-wa-tel="${telValido ? telNorm : ''}"
       data-wa-nome="${l.nome.replace(/"/g,'&quot;')}"
-      style="background:none;border:none;padding:0 0 0 5px;cursor:pointer;display:inline-flex;align-items:center;flex-shrink:0;opacity:.7;transition:opacity .15s"
-      onmouseover="this.style.opacity='1'"
-      onmouseout="this.style.opacity='.7'"
+      data-wa-sem-tel="${semTelFlag}"
+      style="background:none;border:none;padding:0 0 0 5px;cursor:pointer;display:inline-flex;align-items:center;flex-shrink:0;opacity:${telValido ? '.7' : '.35'};transition:opacity .15s"
+      onmouseover="this.style.opacity='${telValido ? '1' : '.5'}'"
+      onmouseout="this.style.opacity='${telValido ? '.7' : '.35'}'"
     >
-      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#5BDE3E" stroke-width="2.2">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="${telValido ? '#5BDE3E' : '#aaa'}" stroke-width="2.2">
         <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
       </svg>
-    </button>` : '';
+    </button>`;
 
   return `<div class="lead-card" draggable="true" data-id="${l.id}">
     <div style="display:flex;align-items:center;gap:0;margin-bottom:3px">
