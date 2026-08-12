@@ -232,12 +232,14 @@ async function _classificarRespostaBoasVindas(sb, leadId, texto) {
 // ─────────────────────────────────────────────────────────────────────────────
 // registrarAlias — salva mapeamento remoteJid/LID → conversa na tabela de aliases
 // Chamado após localizar ou criar conversa para garantir deduplicação futura.
+// Após salvar, dispara reprocessamento de mensagens pendentes com mesmo LID/JID.
 // ─────────────────────────────────────────────────────────────────────────────
 async function registrarAlias(sb, { conversaId, tel, rawJid, lidNumero, nome }) {
   if (!conversaId) return;
   try {
     const remotejid = rawJid && rawJid.includes('@') ? rawJid : null;
     const lid = lidNumero || null;
+    let aliasAtualizado = false;
 
     // Verifica se já existe alias para esse remoteJid
     if (remotejid) {
@@ -250,6 +252,12 @@ async function registrarAlias(sb, { conversaId, tel, rawJid, lidNumero, nome }) 
             .update({ conversa_id: conversaId, telefone_normalizado: tel || null, lid, push_name: nome || null })
             .eq('id', existing[0].id);
           console.log('WHATSAPP_RESOLVE_ALIAS_UPDATED', { conversaId, remotejid, lid });
+          aliasAtualizado = true;
+        }
+        // Mesmo sem atualizar: tenta reprocessar pendentes (alias já existia)
+        if (lid || remotejid) {
+          reprocessarPendentes(sb, { conversaId, lidNumero: lid, remotejid }).catch(e =>
+            console.warn('WHATSAPP_PENDING_REPROCESS_WARN (alias updated):', e.message));
         }
         return;
       }
@@ -273,6 +281,11 @@ async function registrarAlias(sb, { conversaId, tel, rawJid, lidNumero, nome }) 
     });
     if (!error) {
       console.log('WHATSAPP_ALIAS_REGISTERED', { conversaId, remotejid, lid, tel });
+      // Alias novo salvo: reprocessa mensagens pendentes com mesmo LID/JID
+      if (lid || remotejid) {
+        reprocessarPendentes(sb, { conversaId, lidNumero: lid, remotejid }).catch(e =>
+          console.warn('WHATSAPP_PENDING_REPROCESS_WARN (new alias):', e.message));
+      }
     } else {
       console.warn('WHATSAPP_ALIAS_INSERT_WARN:', error.message);
     }
@@ -280,6 +293,82 @@ async function registrarAlias(sb, { conversaId, tel, rawJid, lidNumero, nome }) 
     console.warn('WHATSAPP_ALIAS_REGISTER_WARN (não crítico):', e.message);
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// reprocessarPendentes — move mensagens de conversas PENDENTE_IDENTIFICACAO
+// para a conversa canônica quando um alias for salvo.
+// Fire-and-forget: não bloqueia o fluxo principal.
+// ─────────────────────────────────────────────────────────────────────────────
+async function reprocessarPendentes(sb, { conversaId, lidNumero, remotejid }) {
+  try {
+    console.log('WHATSAPP_PENDING_REPROCESS_START', { conversaId, lidNumero, remotejid });
+    const agora = new Date().toISOString();
+
+    // Busca conversas PENDENTE_IDENTIFICACAO com o mesmo LID nos dados_extras
+    const filtros = [];
+    if (lidNumero) filtros.push(`%"lid":"${lidNumero}"%`);
+    if (remotejid) filtros.push(`%${lidNumero || remotejid.split('@')[0]}%`);
+
+    let pendenteIds = [];
+    for (const filtro of filtros) {
+      if (!filtro) continue;
+      const { data: pends } = await sb.from('conversas_whatsapp')
+        .select('id')
+        .eq('status', 'PENDENTE_IDENTIFICACAO')
+        .neq('id', conversaId) // não é a própria canônica
+        .like('dados_extras', filtro)
+        .limit(20);
+      if (pends?.length) {
+        pendenteIds.push(...pends.map(p => p.id).filter(id => !pendenteIds.includes(id)));
+      }
+    }
+
+    if (pendenteIds.length === 0) {
+      console.log('WHATSAPP_PENDING_REPROCESS_DONE', { conversaId, pendentes: 0 });
+      return;
+    }
+
+    console.log('WHATSAPP_PENDING_MATCH_FOUND', { conversaId, pendenteIds, count: pendenteIds.length });
+
+    // Move mensagens de cada conversa pendente para a canônica
+    for (const pendId of pendenteIds) {
+      // Busca mensagens da pendente
+      const { data: msgs } = await sb.from('mensagens_whatsapp')
+        .select('id').eq('conversa_id', pendId);
+      if (msgs?.length) {
+        // Move para canônica — só move se não existe duplicata por evolution_message_id
+        for (const msg of msgs) {
+          await sb.from('mensagens_whatsapp')
+            .update({ conversa_id: conversaId })
+            .eq('id', msg.id);
+        }
+        console.log('WHATSAPP_PENDING_MOVED_TO_CANONICAL', {
+          de: pendId, para: conversaId, qtd: msgs.length
+        });
+      }
+
+      // Fecha a conversa pendente (não deleta)
+      await sb.from('conversas_whatsapp').update({
+        status:        'FECHADA',
+        visivel:       false,
+        atualizado_em: agora,
+        dados_extras:  sb.raw ? undefined : undefined, // preserva dados_extras existente
+      }).eq('id', pendId);
+    }
+
+    // Atualiza conversa canônica
+    await sb.from('conversas_whatsapp').update({
+      ultima_msg_em: agora,
+      atualizado_em: agora,
+      status:        'ABERTA',
+    }).eq('id', conversaId);
+
+    console.log('WHATSAPP_PENDING_REPROCESS_DONE', { conversaId, pendentesFechadas: pendenteIds.length });
+  } catch (e) {
+    console.warn('WHATSAPP_PENDING_REPROCESS_ERROR:', e.message);
+  }
+}
+
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -451,7 +540,6 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
         let candidataUnica = null;
 
         if (nome && semLid.length > 0) {
-          // Tenta match por nome (primeiro token do nome)
           const primeiroNome = nome.trim().split(' ')[0].toLowerCase();
           const comNome = semLid.filter(c =>
             c.nome_contato && c.nome_contato.trim().toLowerCase().startsWith(primeiroNome)
@@ -464,7 +552,6 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
           }
         }
 
-        // Se não achou por nome mas há UMA única conversa com envio recente e sem LID
         if (!candidataUnica && semLid.length === 1) {
           candidataUnica = semLid[0];
           console.log('WHATSAPP_LID_RECOVERED_BY_RECENT_OUTBOUND', { lidNumero, conversaId: candidataUnica.id, fonte: 'unica_conversa_sem_lid_72h' });
@@ -475,12 +562,10 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
         if (candidataUnica) {
           conversaId = candidataUnica.id;
           fonte = 'lid_recovered_outbound';
-          // Salva alias para próximas vezes
           await registrarAlias(sb, {
             conversaId, tel: candidataUnica.telefone || null, rawJid: rawJid || null, lidNumero, nome: nome || null,
           }).catch(e => console.warn('WHATSAPP_ALIAS_RECOVERED_WARN:', e.message));
           console.log('WHATSAPP_INBOUND_CANONICAL_CONVERSA_FOUND', { conversaId, fonte, lidNumero });
-          console.log('WHATSAPP_INBOUND_SAVED_IN_CANONICAL', { conversaId, lidNumero });
         }
       }
     } catch(eRec) {
@@ -488,45 +573,48 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
     }
   }
 
-  // ── Passo 2: por lead_id ────────────────────────────────────────────────
+  // ── Passo 2: por lead_id — APENAS conversas canônicas (ABERTA com telefone real) ──
+  // REGRA: não retornar PENDENTE_IDENTIFICACAO como destino.
+  // Se o lead tem uma PENDENTE e uma ABERTA, sempre prefer a ABERTA.
   if (!conversaId && leadId) {
-    console.log('CONVERSA_LOOKUP_LEAD', { leadId });
-    const { data: byLead } = await sb.from('conversas_whatsapp')
-      .select('id').eq('lead_id', leadId).neq('status', 'FECHADA')
-      .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
-    if (byLead?.[0]) {
-      conversaId = byLead[0].id; fonte = 'lead_id';
-      console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte, leadId });
-    }
-  }
+    console.log('WEBHOOK_LEAD_ID_RESOLVIDO', { leadId });
+    // 2a: busca canônica: ABERTA, com telefone real (não LID, não nulo)
+    const { data: byLeadCanonica } = await sb.from('conversas_whatsapp')
+      .select('id,telefone,status')
+      .eq('lead_id', leadId)
+      .not('status', 'in', '("FECHADA","PENDENTE_IDENTIFICACAO")')
+      .not('telefone', 'is', null)
+      .order('ultima_msg_em', { ascending: false, nullsFirst: false })
+      .limit(5);
 
-  // ── Passo 2b: LID + sem tel → busca telefone do lead para localizar conversa ───
-  // Cenário principal do bug: webhook retornou @lid sem participant.
-  // telFinal=null, mas leadId pode ter sido resolvido via nome/alias.
-  // Solução: pega o telefone do lead e busca conversa já existente por ele.
-  if (!conversaId && isLidJid && lidNumero && leadId && !tel) {
-    try {
-      console.log('CONVERSA_LOOKUP_LID_TEL_FROM_LEAD', { leadId, lidNumero });
-      const { data: ldTel } = await sb.from('leads').select('telefone').eq('id', leadId).single();
-      const telDoLead = ldTel?.telefone ? normalizePhone(ldTel.telefone) : null;
-      if (telDoLead) {
-        console.log('CONVERSA_LOOKUP_LID_TEL_DO_LEAD', { telDoLead, lidNumero });
-        for (const v of phoneVariants(telDoLead)) {
-          const { data: byTelLead } = await sb.from('conversas_whatsapp')
-            .select('id').eq('telefone', v).neq('status', 'FECHADA')
-            .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
-          if (byTelLead?.[0]) {
-            conversaId = byTelLead[0].id; fonte = 'lid_tel_do_lead';
-            console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte, lidNumero, telDoLead });
-            console.log('WHATSAPP_DUPLICATE_CONVERSA_PREVENTED', { lidNumero, conversaId, telDoLead });
-            registrarAlias(sb, {
-              conversaId, tel: telDoLead, rawJid: rawJid || null, lidNumero, nome: null,
-            }).catch(e => console.warn('WHATSAPP_ALIAS_LID_LEAD_WARN:', e.message));
-            break;
-          }
-        }
+    // Filtra para garantir que o telefone não é LID (14+ dígitos sem 55)
+    const canonicaLead = (byLeadCanonica || []).find(c => {
+      const digits = (c.telefone || '').replace(/\D/g, '');
+      if (digits.length >= 14 && !digits.startsWith('55')) return false; // LID numérico
+      if ((c.telefone || '').startsWith('LID:')) return false;
+      return true;
+    });
+
+    if (canonicaLead) {
+      conversaId = canonicaLead.id; fonte = 'lead_id_canonica';
+      console.log('WEBHOOK_CANONICA_BY_LEAD_FOUND', { conversaId, leadId, telefone: canonicaLead.telefone, status: canonicaLead.status });
+      console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte, leadId });
+      // Salva alias para evitar este caminho na próxima vez
+      if (isLidJid && lidNumero && rawJid) {
+        registrarAlias(sb, { conversaId, tel: canonicaLead.telefone || null, rawJid, lidNumero, nome: nome || null })
+          .catch(e => console.warn('WHATSAPP_ALIAS_LEAD2_WARN:', e.message));
       }
-    } catch(e) { console.warn('CONVERSA_LOOKUP_LID_TEL_LEAD_ERROR', e.message); }
+    } else {
+      // 2b: fallback — qualquer não-FECHADA (pode ser PENDENTE, último recurso dentro do passo 2)
+      const { data: byLeadAny } = await sb.from('conversas_whatsapp')
+        .select('id,status').eq('lead_id', leadId).neq('status', 'FECHADA')
+        .not('status', 'eq', 'PENDENTE_IDENTIFICACAO') // ainda exclui PENDENTE
+        .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
+      if (byLeadAny?.[0]) {
+        conversaId = byLeadAny[0].id; fonte = 'lead_id_fallback';
+        console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte, leadId });
+      }
+    }
   }
 
   // ── Passo 3: telefone — exact match ─────────────────────────────────────
