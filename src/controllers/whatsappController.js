@@ -984,29 +984,8 @@ async function enviarMensagem(req, res) {
 
     // ── 5. SÓ SALVA após confirmação da Evolution ────────────────────────────
     const agora = new Date().toISOString();
-    
-    // ── Fix CRÍTICO: registra alias após envio (AGUARDA — impede race condition) ─
-    // Se o cliente responder ANTES do alias ser salvo (fire-and-forget), o
-    // webhook não encontra a conversa via alias e cria duplicata.
-    // SOLUÇÃO: await garante que o alias existe ANTES de retornar ao frontend.
-    const _evoRemoteJid = evoRes?.dados?.key?.remoteJid || '';
-    const _lidEnvio = _evoRemoteJid.endsWith('@lid') ? _evoRemoteJid.split('@')[0] : null;
-    console.log('WHATSAPP_SEND_RESPONSE_REMOTE_JID', { remoteJid: _evoRemoteJid || 'none', isLid: !!_lidEnvio });
-    if (_lidEnvio) console.log('WHATSAPP_SEND_RESPONSE_LID_DETECTED', { lid: _lidEnvio, conversaId: id, telefone: telNormalizado });
-    // AWAIT (antes era fire-and-forget .catch())
-    try {
-      await registrarAlias(sb, {
-        conversaId: id,
-        tel:        telNormalizado,
-        rawJid:     _evoRemoteJid || `${telNormalizado}@s.whatsapp.net`,
-        lidNumero:  _lidEnvio,
-        nome:       null,
-      });
-      if (_lidEnvio) console.log('WHATSAPP_SEND_ALIAS_LID_SAVED',   { lid: _lidEnvio, conversaId: id });
-      console.log('WHATSAPP_SEND_ALIAS_PHONE_SAVED', { telefone: telNormalizado, remoteJid: _evoRemoteJid || `${telNormalizado}@s.whatsapp.net`, conversaId: id });
-    } catch(eAlias) {
-      console.warn('WHATSAPP_ALIAS_REGISTER_SEND_WARN:', eAlias.message);
-    }
+    // Alias é registrado APÓS salvar a mensagem (não-bloqueante, fire-and-forget)
+    // Ver bloco abaixo dentro do if(isSupa) após insert com sucesso.
 
     const msgId = crypto.randomBytes(16).toString('hex');
     // ID retornado pela Evolution — agora evoRes está acessível no escopo correto
@@ -1075,23 +1054,40 @@ async function enviarMensagem(req, res) {
       const msg = { ...nova, vendedor_nome: req.usuario.nome };
       console.log('SUPA_INSERT_OK', { msgId, status: msg.status, evoMsgId });
 
-      // ── Fix CRÍTICO: registra alias após envio ────────────────────────────
-      // Garante que quando o cliente responder, o Passo 0 do resolver
-      // encontre a mesma conversa via whatsapp_conversa_aliases.
+      // ── Registra alias após envio (fire-and-forget, não bloqueia resposta) ────
+      // Alias = mapeamento remoteJid/LID → conversa, para que respostas futuras
+      // sejam roteadas para ESTA conversa e não criem duplicatas.
+      // É executado APÓS insert bem-sucedido e NUNCA bloqueia o retorno.
       const _evoRemoteJid = evoRes?.dados?.key?.remoteJid || '';
       const _lidEnvio = _evoRemoteJid.endsWith('@lid') ? _evoRemoteJid.split('@')[0] : null;
-      // Registra alias: telefone real + JID usado na resposta da Evolution
+      console.log('WHATSAPP_SEND_RESPONSE_REMOTE_JID', { remoteJid: _evoRemoteJid || 'none', isLid: !!_lidEnvio });
+      if (_lidEnvio) console.log('WHATSAPP_SEND_RESPONSE_LID_DETECTED', { lid: _lidEnvio, conversaId: id, telefone: telNormalizado });
+
+      // Logs obrigatórios de diagnóstico do envio
+      console.log('WHATSAPP_SEND_RESTORE_START',    { conversaId: id });
+      console.log('WHATSAPP_SEND_INSTANCE_USED',    evoSvc.EVOLUTION_INSTANCE);
+      console.log('WHATSAPP_SEND_PHONE_SOURCE',     { source: 'conversa.telefone', raw: conversa.telefone });
+      console.log('WHATSAPP_SEND_PHONE_FINAL',      { phone_final: telNormalizado, starts_with_55: telNormalizado?.startsWith('55') });
+      console.log('WHATSAPP_SEND_IS_LID_DESTINATION', !!_lidEnvio);
+      console.log('WHATSAPP_SEND_PAYLOAD_TYPE',     'text');
+      console.log('WHATSAPP_SEND_EVOLUTION_STATUS', evoRes?.status || 200);
+      console.log('WHATSAPP_SEND_EVOLUTION_RESPONSE_SAFE', { key_id: evoRes?.dados?.key?.id || null, remoteJid: _evoRemoteJid || null });
+      console.log('WHATSAPP_SEND_SUCCESS',          { conversaId: id, tel: telNormalizado, msgId, lidEnvio: _lidEnvio || 'nenhum' });
+
+      // Fire-and-forget: alias não pode bloquear resposta ao usuário
       registrarAlias(sb, {
         conversaId: id,
         tel:        telNormalizado,
         rawJid:     _evoRemoteJid || `${telNormalizado}@s.whatsapp.net`,
         lidNumero:  _lidEnvio,
         nome:       null,
-      }).catch(e => console.warn('WHATSAPP_ALIAS_REGISTER_SEND_WARN:', e.message));
+      }).then(() => {
+        if (_lidEnvio) console.log('WHATSAPP_SEND_ALIAS_LID_SAVED', { lid: _lidEnvio, conversaId: id });
+        else console.log('WHATSAPP_SEND_ALIAS_PHONE_SAVED', { telefone: telNormalizado, conversaId: id });
+      }).catch(e => console.warn('WHATSAPP_ALIAS_REGISTER_SEND_WARN (não crítico):', e.message));
 
       // Também mantém LID em dados_extras para compatibilidade com código anterior
       if (_lidEnvio) {
-        console.log('LID_DETECTADO_NO_ENVIO:', { lid: _lidEnvio, conversaId: id, telefone: telNormalizado });
         sb.from('conversas_whatsapp').select('dados_extras').eq('id', id).single()
           .then(({ data: _cv }) => {
             const _ex = (() => { try { return JSON.parse(_cv?.dados_extras || '{}'); } catch { return {}; } })();
@@ -1108,7 +1104,6 @@ async function enviarMensagem(req, res) {
       }
 
       req.log({ acao: 'WHATSAPP_SEND', entidade: 'conversas_whatsapp', entidade_id: id, depois: { mensagem: mensagem?.slice(0, 100), tipo, evo_ok: evoOk, evoMsgId } });
-      console.log('WHATSAPP_SEND_SUCCESS', { conversaId: id, tel: telNormalizado, msgId, lidEnvio: _lidEnvio || 'nenhum' });
       return res.status(201).json({ sucesso: true, dados: msg });
     }
 
@@ -2366,21 +2361,32 @@ async function webhookReceberMensagem(req, res) {
         }
       }
 
-      // Só cria lead se for mensagem recebida (fromMe=false) e não existir
+      // ── 5c. REGRA ABSOLUTA: NUNCA criar lead com identidade LID não confiável ──
+      // Um LID (14+ dígitos sem prefixo 55) nunca é telefone real de cliente.
+      // Criar lead com LID como telefone gera duplicata que não pode ser mesclada.
       if (!leadId && !fromMe) {
-        let destino = null;
-        try { destino = await planilhaSvc.resolverDestino(); } catch(e) {}
-        if (destino) {
-          const novoLeadId = crypto.randomBytes(16).toString('hex');
-          const { data: novoLead, error: errL } = await sb.from('leads').insert({
-            id: novoLeadId, nome: nome || `WhatsApp ${telFinal}`, telefone: telFinal,
-            status: 'ABERTO', funil_id: destino.funil.id,
-            pipeline_id: destino.pipeline.id, etapa_id: destino.etapa.id,
-            dados_extras: JSON.stringify({ fonte: 'evolution_webhook', numero_wa: telFinal }),
-            criado_em: agora, atualizado_em: agora,
-          }).select('id').single();
-          if (!errL && novoLead) { leadId = novoLead.id; console.log(`[WA Webhook] ✅ Lead criado: ${leadId} (${telFinal})`); }
-          else console.warn('[WA Webhook] Lead não criado:', errL?.message);
+        const identConfiavel = isIdentidadeWhatsappConfiavel(telFinal, { isLidJid, lidNumero });
+        if (!identConfiavel) {
+          console.warn('WHATSAPP_BLOCK_LEAD_CREATION_FOR_LID', {
+            telFinal, lidNumero, rawJid, isLidJid,
+            motivo: 'identidade_nao_confiavel_nao_cria_lead',
+          });
+          // não atribui destino nem cria lead — cai no bloco de criação de conversa pendente
+        } else {
+          let destino = null;
+          try { destino = await planilhaSvc.resolverDestino(); } catch(e) {}
+          if (destino) {
+            const novoLeadId = crypto.randomBytes(16).toString('hex');
+            const { data: novoLead, error: errL } = await sb.from('leads').insert({
+              id: novoLeadId, nome: nome || `WhatsApp ${telFinal}`, telefone: telFinal,
+              status: 'ABERTO', funil_id: destino.funil.id,
+              pipeline_id: destino.pipeline.id, etapa_id: destino.etapa.id,
+              dados_extras: JSON.stringify({ fonte: 'evolution_webhook', numero_wa: telFinal }),
+              criado_em: agora, atualizado_em: agora,
+            }).select('id').single();
+            if (!errL && novoLead) { leadId = novoLead.id; console.log(`[WA Webhook] ✅ Lead criado: ${leadId} (${telFinal})`); }
+            else console.warn('[WA Webhook] Lead não criado:', errL?.message);
+          }
         }
       }
     } else if (db) {
@@ -2440,35 +2446,80 @@ async function webhookReceberMensagem(req, res) {
     }
 
     if (isSupa && !conversaId) {
-      // Cria nova conversa — só chega aqui se resolverConversaWhatsapp liberou (permiteCreate=true)
-      const novoConvId = crypto.randomBytes(16).toString('hex');
-      // CORREÇÃO: NUNCA usar LID como telefone da conversa.
-      const telParaConversa = telFinal || null;
-      const dadosExtrasNova = isLidJid && lidNumero
-        ? JSON.stringify({ lid: lidNumero, remoteJid: rawJid, tipo_identidade: 'lid' })
-        : null;
+      // ── REGRA ABSOLUTA DE SEGURANÇA ──────────────────────────────────────────
+      // Antes de criar conversa: valida se a identidade é confiável.
+      // Uma identidade LID sem alias nem telefone real NÃO gera conversa ABERTA.
+      // Gera PENDENTE_IDENTIFICACAO (oculta da lista) para não duplicar.
+      const identidadeConfiavel = isIdentidadeWhatsappConfiavel(telFinal, {
+        isLidJid,
+        lidNumero,
+        aliasEncontrado:  false, // chegou aqui → alias não encontrou conversa
+        conversaExistente: false,
+      });
 
-      // ── FIX: LID sem alias usa status PENDENTE_IDENTIFICACAO ─────────────
-      // Impede que apareça na lista principal de conversas como conversa normal.
-      // Será mesclada quando o alias for recuperado ou o operador identificar.
-      const statusNovaConversa = (isLidJid && lidNumero && !telFinal)
-        ? 'PENDENTE_IDENTIFICACAO'
-        : 'ABERTA';
-      if (statusNovaConversa === 'PENDENTE_IDENTIFICACAO') {
-        console.warn('WHATSAPP_LID_WITHOUT_ALIAS_BLOCKED_FROM_ACTIVE_CREATION', { lidNumero, rawJid, nomeContato, motivo: 'lid_sem_telefone_real_sem_alias' });
+      if (!identidadeConfiavel) {
+        // BLOQUEIO: não cria conversa ativa — salva como PENDENTE
+        console.warn('WHATSAPP_BLOCK_ACTIVE_CONVERSATION_CREATION_FOR_LID', {
+          telFinal, lidNumero, rawJid, isLidJid, nomeContato,
+          motivo: 'identidade_nao_confiavel',
+        });
+        console.log('WHATSAPP_IDENTITY_IS_LID', { lidNumero, rawJid });
+
+        // Cria conversa PENDENTE_IDENTIFICACAO (oculta da lista, não é duplicata)
+        const novoConvId = crypto.randomBytes(16).toString('hex');
+        const dadosExtrasPendente = JSON.stringify({
+          lid:              lidNumero || null,
+          remoteJid:        rawJid || null,
+          tipo_identidade:  'lid_nao_resolvido',
+          bloqueio_motivo:  'identidade_nao_confiavel',
+          bloqueio_em:      agora,
+        });
+        const { data: convPendente, error: errPend } = await sb.from('conversas_whatsapp').insert({
+          id:           novoConvId,
+          telefone:     null, // nunca LID como telefone
+          nome_contato: nomeContato,
+          lead_id:      leadId || null,
+          origem:       'WHATSAPP_WEBHOOK',
+          status:       'PENDENTE_IDENTIFICACAO',
+          dados_extras: dadosExtrasPendente,
+          criado_em:    agora,
+          atualizado_em: agora,
+        }).select('id').single();
+
+        if (!errPend && convPendente) {
+          conversaId = convPendente.id;
+          console.log('WHATSAPP_MESSAGE_SAVED_UNRESOLVED', {
+            conversaId,
+            status: 'PENDENTE_IDENTIFICACAO',
+            lidNumero: lidNumero || null,
+            nomeContato,
+            motivo: 'identidade_nao_confiavel_salvo_pendente',
+          });
+        } else {
+          console.error('WEBHOOK_PENDENTE_CREATE_ERROR:', errPend?.message);
+          // Retorna 200 para Evolution (não reprocessar)
+          return res.json({ sucesso: true, ignorado: true, motivo: 'identidade_nao_confiavel_sem_conversa' });
+        }
+
       } else {
+        // Identidade confiável: cria conversa ABERTA normalmente
+        const novoConvId = crypto.randomBytes(16).toString('hex');
+        const telParaConversa = telFinal || null;
+        const dadosExtrasNova = isLidJid && lidNumero
+          ? JSON.stringify({ lid: lidNumero, remoteJid: rawJid, tipo_identidade: 'lid' })
+          : null;
         console.log('WHATSAPP_INBOUND_CONVERSA_CREATED', { tel: telParaConversa, lidNumero: lidNumero || null, leadId, nomeContato });
-      }
-      const { data: novaConv, error: errC } = await sb.from('conversas_whatsapp').insert({
-        id: novoConvId, telefone: telParaConversa, nome_contato: nomeContato,
-        lead_id: leadId || null, origem: 'WHATSAPP_WEBHOOK', status: statusNovaConversa,
-        dados_extras: dadosExtrasNova, criado_em: agora, atualizado_em: agora,
-      }).select('id').single();
-      if (!errC && novaConv) {
-        conversaId = novaConv.id;
-        console.log('WEBHOOK_CONVERSA_CREATED', { conversaId, tel: telParaConversa, status: statusNovaConversa, lidNumero: lidNumero || null, leadId, nomeContato });
-      } else {
-        console.error('[WA Webhook] Erro ao criar conversa:', errC?.message);
+        const { data: novaConv, error: errC } = await sb.from('conversas_whatsapp').insert({
+          id: novoConvId, telefone: telParaConversa, nome_contato: nomeContato,
+          lead_id: leadId || null, origem: 'WHATSAPP_WEBHOOK', status: 'ABERTA',
+          dados_extras: dadosExtrasNova, criado_em: agora, atualizado_em: agora,
+        }).select('id').single();
+        if (!errC && novaConv) {
+          conversaId = novaConv.id;
+          console.log('WEBHOOK_CONVERSA_CREATED', { conversaId, tel: telParaConversa, status: 'ABERTA', lidNumero: lidNumero || null, leadId, nomeContato });
+        } else {
+          console.error('[WA Webhook] Erro ao criar conversa:', errC?.message);
+        }
       }
     } else if (isSupa && conversaId) {
       // Conversa existente — atualiza sem sobrescrever nome_contato com dado ruim
