@@ -391,6 +391,40 @@ async function registrarAlias(sb, { conversaId, tel, rawJid, lidNumero, nome }) 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// BLOCO A — salvarAudioStorage
+// Upload de áudio (base64 ou Buffer) para Supabase Storage.
+// Retorna { sucesso, storage_path, storage_bucket } ou { sucesso: false, erro }.
+// Fire-and-forget — nunca lança exceção para o chamador.
+// ─────────────────────────────────────────────────────────────────────────────
+async function salvarAudioStorage(sb, { base64, buffer, mimeType, bucket, storagePath }) {
+  try {
+    let buf;
+    if (buffer) {
+      buf = buffer;
+    } else if (base64) {
+      const b64Data = base64.includes(',') ? base64.split(',')[1] : base64;
+      buf = Buffer.from(b64Data, 'base64');
+    } else {
+      return { sucesso: false, erro: 'Nenhum dado de áudio fornecido' };
+    }
+    const mime = mimeType || 'audio/ogg';
+    const { error } = await sb.storage.from(bucket).upload(storagePath, buf, {
+      contentType: mime,
+      upsert: true,
+    });
+    if (error) {
+      console.warn('WHATSAPP_AUDIO_STORAGE_UPLOAD_ERROR', { storagePath, bucket, erro: error.message });
+      return { sucesso: false, erro: error.message };
+    }
+    console.log('WHATSAPP_AUDIO_INBOUND_STORAGE_UPLOAD_SUCCESS', { storagePath, bucket, bytes: buf.length });
+    return { sucesso: true, storage_path: storagePath, storage_bucket: bucket };
+  } catch (e) {
+    console.warn('WHATSAPP_AUDIO_STORAGE_UPLOAD_EXCEPTION', { erro: e.message });
+    return { sucesso: false, erro: e.message };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // reprocessarPendentes — move mensagens de conversas PENDENTE_IDENTIFICACAO
 // para a conversa canônica quando um alias for salvo.
 // Fire-and-forget: não bloqueia o fluxo principal.
@@ -1386,6 +1420,38 @@ async function enviarMensagem(req, res) {
 
       const msg = { ...nova, vendedor_nome: req.usuario.nome };
       console.log('SUPA_INSERT_OK', { msgId, status: msg.status, evoMsgId });
+
+      // ── BLOCO D — Áudio outbound: mover base64 para Supabase Storage ──────
+      // Executa em background — não bloqueia resposta ao usuário
+      if (tipo === 'audio' && arquivo_url && arquivo_url.startsWith('data:') && isSupa) {
+        const _outMsgId  = msgId;
+        const _outConvId = id;
+        const _outB64    = arquivo_url;
+        const _outMime   = arquivo_url.split(';')[0]?.replace('data:', '') || 'audio/ogg';
+        setImmediate(async () => {
+          try {
+            console.log('WHATSAPP_AUDIO_SEND_STORAGE_UPLOAD_START', { msgId: _outMsgId });
+            const ext         = _outMime.includes('ogg') ? 'ogg' : _outMime.includes('mpeg') || _outMime.includes('mp3') ? 'mp3' : _outMime.includes('m4a') || _outMime.includes('mp4') ? 'm4a' : _outMime.includes('webm') ? 'webm' : 'ogg';
+            const bucket      = 'whatsapp-midias';
+            const datePart    = new Date().toISOString().slice(0, 7);
+            const storagePath = `conversa_${_outConvId}/enviados/${datePart}/${_outMsgId}.${ext}`;
+            const upResult    = await salvarAudioStorage(sb, { base64: _outB64, mimeType: _outMime, bucket, storagePath });
+            if (upResult.sucesso) {
+              await sb.from(MENSAGENS_TABLE).update({
+                storage_bucket: bucket,
+                storage_path:   storagePath,
+                arquivo_url:    `storage:${storagePath}`,
+              }).eq('id', _outMsgId);
+              console.log('WHATSAPP_AUDIO_SEND_STORAGE_UPLOAD_SUCCESS', { msgId: _outMsgId, storagePath });
+              console.log('WHATSAPP_AUDIO_SEND_DB_MESSAGE_SAVED', { msgId: _outMsgId, storagePath });
+            } else {
+              console.warn('WHATSAPP_AUDIO_SEND_STORAGE_FAILED (áudio já enviado, base64 permanece no banco):', upResult.erro);
+            }
+          } catch (eOut) {
+            console.warn('WHATSAPP_AUDIO_SEND_STORAGE_EXCEPTION (não crítico):', eOut.message);
+          }
+        });
+      }
 
       // ── Registra alias após envio (fire-and-forget, não bloqueia resposta) ────
       // Alias = mapeamento remoteJid/LID → conversa, para que respostas futuras
@@ -3196,6 +3262,68 @@ async function webhookReceberMensagem(req, res) {
           .catch(e => console.warn('CLASSIFICACAO_BOAS_VINDAS_HOOK_WARN:', e.message));
       }
 
+      // ── BLOCO B — Áudio inbound: download via getBase64Media + Supabase Storage ──
+      // Executa em background (setImmediate) — NUNCA bloqueia o webhook de texto
+      if (tipo === 'audio' && !fromMe && isSupa && conversaId && msgId && evoSvc.isConfigured()) {
+        const _capturedMsgId     = msgId;
+        const _capturedConvId    = conversaId;
+        const _capturedRawJid    = rawJid;
+        const _capturedEvoMsgId  = evoMsgIdWebhook;
+        const _capturedMimeType  = mimeType;
+        setImmediate(async () => {
+          try {
+            console.log('WHATSAPP_AUDIO_INBOUND_DETECTED', { msgId: _capturedEvoMsgId, conversaId: _capturedConvId });
+            if (!_capturedEvoMsgId || !_capturedRawJid) {
+              console.warn('WHATSAPP_AUDIO_INBOUND_DOWNLOAD_SKIP', { motivo: 'sem evoMsgId ou rawJid', msgId: _capturedMsgId });
+              return;
+            }
+            console.log('WHATSAPP_AUDIO_INBOUND_DOWNLOAD_START', { evoMsgId: _capturedEvoMsgId, remoteJid: _capturedRawJid });
+            const b64Result = await evoSvc.getBase64Media(_capturedEvoMsgId, _capturedRawJid);
+            if (!b64Result.sucesso || !b64Result.base64) {
+              console.warn('WHATSAPP_AUDIO_INBOUND_DOWNLOAD_FAILED', { evoMsgId: _capturedEvoMsgId, erro: b64Result.erro });
+              return;
+            }
+            console.log('WHATSAPP_AUDIO_INBOUND_DOWNLOAD_SUCCESS', { evoMsgId: _capturedEvoMsgId, mimeRetornado: b64Result.mime });
+            const mimeAudio    = b64Result.mime || _capturedMimeType || 'audio/ogg';
+            const ext          = mimeAudio.includes('ogg') ? 'ogg'
+                              : mimeAudio.includes('mpeg') || mimeAudio.includes('mp3') ? 'mp3'
+                              : mimeAudio.includes('mp4') || mimeAudio.includes('m4a') ? 'm4a'
+                              : mimeAudio.includes('webm') ? 'webm'
+                              : 'ogg';
+            const bucket       = 'whatsapp-midias';
+            const datePart     = new Date().toISOString().slice(0, 7);
+            const storagePath  = `conversa_${_capturedConvId}/recebidos/${datePart}/${_capturedMsgId}.${ext}`;
+            console.log('WHATSAPP_AUDIO_INBOUND_STORAGE_UPLOAD_START', { storagePath, bucket });
+            const uploadResult = await salvarAudioStorage(sb, {
+              base64:     b64Result.base64,
+              mimeType:   mimeAudio,
+              bucket,
+              storagePath,
+            });
+            if (!uploadResult.sucesso) {
+              console.warn('WHATSAPP_AUDIO_INBOUND_STORAGE_FAILED', { erro: uploadResult.erro, msgId: _capturedMsgId });
+              return;
+            }
+            // Atualiza mensagem no banco com referência ao Storage
+            const { error: errUpd } = await sb.from(MENSAGENS_TABLE).update({
+              storage_bucket: bucket,
+              storage_path:   storagePath,
+              arquivo_url:    `storage:${storagePath}`,
+              mime_type:      mimeAudio,
+            }).eq('id', _capturedMsgId);
+            if (errUpd) {
+              console.warn('WHATSAPP_AUDIO_INBOUND_DB_UPDATE_WARN', { erro: errUpd.message, msgId: _capturedMsgId });
+            } else {
+              console.log('WHATSAPP_AUDIO_INBOUND_DB_MESSAGE_SAVED', { msgId: _capturedMsgId, storagePath });
+              console.log('WHATSAPP_AUDIO_INBOUND_FILE_METADATA_SAVED', { conversaId: _capturedConvId, bucket, storagePath });
+              console.log('WHATSAPP_AUDIO_INBOUND_RENDER_READY', { msgId: _capturedMsgId, conversaId: _capturedConvId });
+            }
+          } catch (eAud) {
+            console.warn('WHATSAPP_AUDIO_INBOUND_BACKGROUND_ERROR (não crítico):', eAud.message);
+          }
+        });
+      }
+
       // ── 9. Se há mídia recebida: registra metadados em lead_arquivos ───────
       // Só para mensagens RECEBIDAS (fromMe=false) que tenham URL de mídia
       if (!fromMe && midiaUrl && leadId && conversaId && isSupa) {
@@ -3828,6 +3956,27 @@ async function servirMidia(req, res) {
 
     if (!mediaUrl) {
       return res.status(404).json({ sucesso: false, erro: 'Mídia não encontrada.' });
+    }
+
+    // ── BLOCO C — Storage Supabase: gera signed URL válida por 1h ──────────
+    if (mediaUrl.startsWith('storage:') && isSupa) {
+      try {
+        // Busca storage_bucket e storage_path da mensagem
+        const { data: msgInfo } = await sb.from(MENSAGENS_TABLE)
+          .select('storage_bucket, storage_path').eq('id', msgId).eq('conversa_id', conversaId).single();
+        const sBucket = msgInfo?.storage_bucket || 'whatsapp-midias';
+        const sPath   = msgInfo?.storage_path   || mediaUrl.replace('storage:', '');
+        const { data: signed, error: errSign } = await sb.storage.from(sBucket).createSignedUrl(sPath, 3600);
+        if (errSign || !signed?.signedUrl) {
+          console.warn('WHATSAPP_STORAGE_SIGNED_URL_ERROR', { erro: errSign?.message, sPath });
+          return res.status(502).json({ sucesso: false, erro: 'Não foi possível gerar URL de acesso ao áudio.' });
+        }
+        res.set('Cache-Control', 'private, max-age=3540');
+        return res.redirect(302, signed.signedUrl);
+      } catch (eSign) {
+        console.warn('WHATSAPP_STORAGE_SIGNED_URL_EXCEPTION', { erro: eSign.message });
+        return res.status(500).json({ sucesso: false, erro: 'Erro ao acessar storage.' });
+      }
     }
 
     // Se for base64 embutido, decodifica e serve diretamente
