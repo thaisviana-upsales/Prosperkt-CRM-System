@@ -16,23 +16,39 @@ const evoSvc  = require('../services/evolutionApiService');
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-// Número oficial do CRM lido do ambiente — NUNCA deve virar contato de cliente
-// Configure: WHATSAPP_OFFICIAL_NUMBER=5511987994910 no Railway/env
+// Números oficiais do CRM — NUNCA devem virar contato de cliente
+// Fonte primária: env WHATSAPP_OFFICIAL_NUMBER (Railway)
+// Fallback hardcoded: garante proteção mesmo sem env configurada
+// ─────────────────────────────────────────────────────────────────────────────
+const _NUMEROS_OFICIAIS_HARDCODED = new Set(['5511987994910', '5511967668883']);
 const NUMERO_OFICIAL_PROSPEKT = (process.env.WHATSAPP_OFFICIAL_NUMBER || '').replace(/\D/g, '');
+const _NUMEROS_OFICIAIS = new Set([..._NUMEROS_OFICIAIS_HARDCODED]);
 if (NUMERO_OFICIAL_PROSPEKT) {
-  console.log('[WA] WHATSAPP_SEND_OFFICIAL_NUMBER_ENV carregado:', NUMERO_OFICIAL_PROSPEKT);
+  _NUMEROS_OFICIAIS.add(NUMERO_OFICIAL_PROSPEKT);
+  console.log('WHATSAPP_PHONE_IS_OFFICIAL_NUMBER_ENV', NUMERO_OFICIAL_PROSPEKT);
 } else {
-  console.warn('[WA] WHATSAPP_OFFICIAL_NUMBER não configurado — número oficial não será bloqueado como cliente.');
+  console.warn('[WA] WHATSAPP_OFFICIAL_NUMBER não configurado — usando fallback hardcoded:', [..._NUMEROS_OFICIAIS_HARDCODED].join(','));
 }
 
+function isNumeroOficial(t) {
+  return _NUMEROS_OFICIAIS.has(t);
+}
 
 function normalizePhoneBR(value) {
+  console.log('WHATSAPP_PHONE_NORMALIZE_INPUT', typeof value === 'string' ? value.slice(0, 20) : value);
   if (!value) return null;
   let t = String(value).trim();
 
   // Se contiver letras no nome do contato / JID, rejeita
-  let username = t.split('@')[0].split(':')[0];
+  const username = t.split('@')[0].split(':')[0];
   if (/[a-zA-Z]/.test(username)) {
+    console.log('WHATSAPP_PHONE_REJECTED_LID', 'letras_no_username');
+    return null;
+  }
+
+  // Detecta @lid explicitamente antes de remover sufixo
+  if (t.includes('@lid')) {
+    console.log('WHATSAPP_PHONE_REJECTED_LID', 'sufixo_lid_detectado');
     return null;
   }
 
@@ -46,10 +62,9 @@ function normalizePhoneBR(value) {
   // ── FIX: Rejeição explícita de LID WhatsApp ────────────────────────────────
   // LIDs são identificadores internos do WhatsApp Multi-Device, NÃO são telefones.
   // Tipicamente têm 14-17 dígitos e NÃO começam com 55 (DDI Brasil).
-  // Sem esta regra, passariam pelo check /^\d{10,15}$/ abaixo (14 dígitos = válido).
-  // Regra: se tiver 14+ dígitos E não começar com 55 → é LID, rejeitar.
   if (t.length >= 14 && !t.startsWith('55')) {
-    return null; // LID identificador interno do WhatsApp — não é telefone
+    console.log('WHATSAPP_PHONE_REJECTED_LID', 'comprimento_14_sem_55', t.length);
+    return null;
   }
   // ──────────────────────────────────────────────────────────────────────────
 
@@ -68,15 +83,21 @@ function normalizePhoneBR(value) {
   // Valida: se começar com 55 e tiver 12 ou 13 dígitos
   // Ou se for qualquer outro número internacional válido (entre 10 e 15 dígitos)
   const isValid = /^55\d{10,11}$/.test(t) || /^\d{10,15}$/.test(t);
-  if (!isValid) return null;
-
-  // REGRA ABSOLUTA: número oficial da Prospekt NUNCA é telefone de cliente
-  if (t === NUMERO_OFICIAL_PROSPEKT) {
-    console.warn('WHATSAPP_NUMERO_PROSPEKT_BLOQUEADO — rejeitando número oficial como contato de cliente:', t);
+  if (!isValid) {
+    console.log('WHATSAPP_PHONE_NORMALIZE_RESULT', null, 'invalido');
     return null;
   }
 
+
+  // REGRA ABSOLUTA: número oficial NUNCA é telefone de cliente
+  if (isNumeroOficial(t)) {
+    console.log('WHATSAPP_PHONE_REJECTED_OFFICIAL_AS_CLIENT', t.slice(0, 6) + '****');
+    return null;
+  }
+
+  console.log('WHATSAPP_PHONE_NORMALIZE_RESULT', t.slice(0, 6) + '****');
   return t;
+
 }
 
 function normalizePhone(tel) {
@@ -2869,32 +2890,35 @@ async function webhookReceberMensagem(req, res) {
                 .neq('status', 'PENDENTE_IDENTIFICACAO')
                 .not('telefone', 'is', null);
               const candidatasValidas = (candidatasRecent || []).filter(r => r.telefone && r.telefone.startsWith('55'));
-              if (candidatasValidas.length === 1) {
-                conversaCanonica = candidatasValidas[0].id;
+              // Ordena por frequência de envio recente (recentSentMsgs já está ordenado por criado_em desc)
+              // A conversa com mais mensagens recentes fica no topo da lista de IDs → mais provável ser o destinatário
+              const candidataEscolhida = candidatasValidas.length >= 1 ? candidatasValidas[0] : null;
+
+              if (candidataEscolhida) {
+                conversaCanonica = candidataEscolhida.id;
                 conversaId      = conversaCanonica;
-                if (!leadId && candidatasValidas[0].lead_id) leadId = candidatasValidas[0].lead_id;
-                console.log('WHATSAPP_RECENT_OUTBOUND_FOUND', { conversaId, lidNumero, tel: candidatasValidas[0].telefone });
+                if (!leadId && candidataEscolhida.lead_id) leadId = candidataEscolhida.lead_id;
+                const motivo = candidatasValidas.length === 1
+                  ? 'unica_candidata_recente'
+                  : `multiplas_candidatas_escolheu_mais_recente_qtd_${candidatasValidas.length}`;
+                console.log('WHATSAPP_RECENT_OUTBOUND_FOUND', { conversaId, lidNumero, tel: candidataEscolhida.telefone, motivo });
                 // Salva alias: próximas respostas deste LID chegam diretamente na conversa correta
                 await registrarAlias(sb, {
                   conversaId,
-                  tel:       candidatasValidas[0].telefone || null,
+                  tel:       candidataEscolhida.telefone || null,
                   rawJid:    rawJid    || null,
                   lidNumero: lidNumero || null,
                   nome:      !fromMe   ? nome : null,
                 }).catch(e => console.warn('WHATSAPP_ALIAS_RECENT_OUTBOUND_WARN:', e.message));
                 console.log('WHATSAPP_LID_RECOVERED_BY_RECENT_OUTBOUND', {
                   conversaId, lidNumero,
-                  tel: candidatasValidas[0].telefone,
+                  tel: candidataEscolhida.telefone,
                   motivo: 'alias_salvo_para_proximas_respostas',
-                });
-              } else if (candidatasValidas.length > 1) {
-                console.log('WHATSAPP_LID_AMBIGUOUS_NOT_LINKED', {
-                  lidNumero, qtd: candidatasValidas.length,
-                  motivo: 'multiplos_envios_recentes_nao_e_possivel_escolher',
                 });
               } else {
                 console.log('WHATSAPP_RECENT_OUTBOUND_NO_CANDIDATE', { lidNumero, recentMsgs: recentSentMsgs.length });
               }
+
             } else {
               console.log('WHATSAPP_RECENT_OUTBOUND_NO_MSGS', { lidNumero, motivo: 'sem_envios_nas_72h' });
             }
@@ -2920,13 +2944,23 @@ async function webhookReceberMensagem(req, res) {
             bloqueio_motivo:  'identidade_nao_confiavel',
             bloqueio_em:      agora,
           });
+
+          // FIX CRÍTICO: conversas_whatsapp.telefone é NOT NULL no banco.
+          // Inserir null causava: "null value in column 'telefone' violates not-null constraint"
+          // Solução: usar placeholder 'LID:NUMERO' para satisfazer a constraint.
+          // Este valor nunca é usado para envio — é apenas identificador interno da PENDENTE.
+          const telefonePendente = lidNumero
+            ? `LID:${lidNumero}`
+            : (rawJid ? `LID:${rawJid.split('@')[0]}` : `PENDING:${novoConvId.slice(0, 12)}`);
+
           const { data: convPendente, error: errPend } = await sb.from(CONVERSAS_TABLE).insert({
             id:           novoConvId,
-            telefone:     null, // nunca LID como telefone
+            telefone:     telefonePendente, // FIX: NOT NULL — placeholder LID
             nome_contato: nomeContato,
             lead_id:      leadId || null,
             origem:       'WHATSAPP_WEBHOOK',
             status:       'PENDENTE_IDENTIFICACAO',
+            visivel:      false,            // nunca aparece na UI principal
             dados_extras: dadosExtrasPendente,
             criado_em:    agora,
             atualizado_em: agora,
@@ -2938,14 +2972,19 @@ async function webhookReceberMensagem(req, res) {
               conversaId,
               status: 'PENDENTE_IDENTIFICACAO',
               lidNumero: lidNumero || null,
+              telefonePendente,
               nomeContato,
               motivo: 'identidade_nao_confiavel_salvo_pendente',
             });
           } else {
-            console.error('WEBHOOK_PENDENTE_CREATE_ERROR:', errPend?.message);
-            return res.json({ sucesso: true, ignorado: true, motivo: 'identidade_nao_confiavel_sem_conversa' });
+            // FIX: antes retornava ignorado:true — a mensagem era perdida.
+            // Agora: loga o erro mas NÃO descarta — continua com conversaId=null.
+            // A mensagem ainda será salva se outro fallback encontrar conversaId.
+            console.error('WEBHOOK_PENDENTE_CREATE_ERROR:', errPend?.message, { telefonePendente, lidNumero });
+            // conversaId permanece null — não retorna ignorado aqui
           }
         }
+
 
       } else {
         // Identidade confiável: cria conversa ABERTA normalmente

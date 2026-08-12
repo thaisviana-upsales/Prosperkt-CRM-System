@@ -1,15 +1,56 @@
-/**
- * PROSPEKT CRM — whatsapp.js
- * Central de conversas: lista, chat estilo WA, envio de mensagens
- */
+// ─── Normalização de telefone — espelho do backend normalizePhoneBR() ──────────────
+// Números oficiais do CRM — NUNCA são clientes
+const _NUMEROS_OFICIAIS_WA = new Set(['5511987994910', '5511967668883']);
 
-// ─── Normalização de telefone (espelho do backend) ───────────────────────────────
 function normalizePhone(tel) {
   if (!tel) return '';
-  let t = String(tel).split('@')[0];
-  t = t.split(':')[0]; // remove sufixo de dispositivo WA
-  t = t.replace(/\D/g, '');
+  let t = String(tel).trim();
+  console.log('WHATSAPP_PHONE_NORMALIZE_INPUT', t.slice(0, 20));
+
+  // Rejeita @lid explicitamente
+  if (t.includes('@lid')) {
+    console.log('WHATSAPP_PHONE_REJECTED_LID', 'sufixo_lid');
+    return '';
+  }
+
+  // Remove sufixo @s.whatsapp.net e :0 (device suffix)
+  const username = t.split('@')[0].split(':')[0];
+
+  // Se tiver letras no username → é JID nomeado ou LID, rejeita
+  if (/[a-zA-Z]/.test(username)) {
+    console.log('WHATSAPP_PHONE_REJECTED_LID', 'letras_no_jid');
+    return '';
+  }
+
+  t = username.replace(/\D/g, '');
+  if (!t) return '';
+
+  // LID por comprimento: 14+ dígitos sem DDI 55 = identificador interno
+  if (t.length >= 14 && !t.startsWith('55')) {
+    console.log('WHATSAPP_PHONE_REJECTED_LID', 'comprimento_14_sem_55');
+    return '';
+  }
+
+  // Rejeita timestamp unix (10 ou 13 dígitos na faixa unix)
+  const numVal = Number(t);
+  if ((t.length === 10 && numVal >= 1000000000 && numVal <= 2200000000) ||
+      (t.length === 13 && numVal >= 1000000000000 && numVal <= 2200000000000)) {
+    return '';
+  }
+
+  // Adiciona DDI 55 para DDD+número (10-11 dígitos)
   if (t.length === 10 || t.length === 11) t = '55' + t;
+
+  // Valida formato brasileiro ou internacional
+  if (!/^55\d{10,11}$/.test(t) && !/^\d{10,15}$/.test(t)) return '';
+
+  // Rejeita número oficial — não é cliente
+  if (_NUMEROS_OFICIAIS_WA.has(t)) {
+    console.log('WHATSAPP_PHONE_REJECTED_OFFICIAL_AS_CLIENT', t.slice(0, 6) + '****');
+    return '';
+  }
+
+  console.log('WHATSAPP_PHONE_NORMALIZE_RESULT', t.slice(0, 6) + '****');
   return t;
 }
 
@@ -26,6 +67,7 @@ function phonesMatch(a, b) {
   const rm9s = n => (n.length === 11 && n[2] === '9') ? n.slice(0,2)+n.slice(3) : n;
   return rm9s(sa) === rm9s(sb);
 }
+
 
 // ─── Estado ───────────────────────────────────────────────────────────────────
 let _usuario   = null;

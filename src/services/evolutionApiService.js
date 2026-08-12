@@ -384,6 +384,42 @@ async function enviarAudio(telefone, audioUrl) {
   });
 }
 
+/**
+ * Baixa mídia de uma mensagem recebida via Evolution API v1.8.6.
+ * Endpoint: POST /chat/getBase64FromMediaMessage/{instance}
+ * Retorna { sucesso, dados: { base64, mimetype, ... } }
+ *
+ * Usar para persistir imagens/áudios recebidos ANTES que a mediaUrl temporária expire.
+ * NÃO loga o base64 completo — apenas tamanho e tipo.
+ *
+ * @param {string} messageId  — key.id da mensagem (do webhook)
+ * @param {string} remoteJid  — key.remoteJid da mensagem (do webhook)
+ * @param {boolean} convertToMp4 — para vídeos: converter para mp4 (default false)
+ */
+async function getBase64Media(messageId, remoteJid, convertToMp4 = false) {
+  if (!messageId || !remoteJid) {
+    return { sucesso: false, erro: 'messageId e remoteJid são obrigatórios para getBase64Media' };
+  }
+  const r = await call('POST', `/chat/getBase64FromMediaMessage/${EVOLUTION_INSTANCE}`, {
+    message: {
+      key: { id: messageId, remoteJid, fromMe: false },
+    },
+    convertToMp4,
+  });
+  if (r.sucesso && r.dados?.base64) {
+    const b64 = r.dados.base64;
+    const mime = r.dados.mimetype || r.dados.mimeType || 'application/octet-stream';
+    console.log('[EVO] getBase64Media OK', { messageId, mime, base64Length: b64.length });
+    return { sucesso: true, dados: { base64: b64, mimetype: mime } };
+  }
+  if (r.sucesso && !r.dados?.base64) {
+    console.warn('[EVO] getBase64Media: resposta OK mas sem base64', { messageId, keys: Object.keys(r.dados || {}).join(',') });
+    return { sucesso: false, erro: 'Resposta sem campo base64', dados: r.dados };
+  }
+  console.warn('[EVO] getBase64Media falhou', { messageId, status: r.status, erro: r.erro });
+  return { sucesso: false, erro: r.erro || 'Erro ao baixar mídia', status: r.status };
+}
+
 module.exports = {
   isConfigured,
   call,
@@ -399,6 +435,8 @@ module.exports = {
   enviarTexto,
   enviarMidia,
   enviarAudio,
+  getBase64Media,
   EVOLUTION_INSTANCE,
   obterWebhookUrl,
 };
+
