@@ -198,9 +198,53 @@ FROM pares_fechar_lead p
 WHERE cw.id = p.conversa_lid_id;
 
 -- =============================================================================
+-- ── 4.5. Expande constraint de status para aceitar PENDENTE_IDENTIFICACAO ────
+-- O Postgres rejeita INSERT/UPDATE se o valor não estiver na CHECK constraint.
+-- Este bloco lê a constraint atual e a recria incluindo o novo status.
+-- Se a constraint não existir, simplesmente adiciona uma nova.
+-- =============================================================================
+DO $$
+DECLARE
+  v_def TEXT;
+BEGIN
+  -- Le a definicao atual da constraint
+  SELECT pg_get_constraintdef(oid)
+    INTO v_def
+  FROM pg_constraint
+  WHERE conrelid = 'conversas_whatsapp'::regclass
+    AND conname   = 'conversas_whatsapp_status_check';
+
+  IF v_def IS NULL THEN
+    -- Constraint nao existe: cria com todos os valores conhecidos
+    ALTER TABLE conversas_whatsapp
+      ADD CONSTRAINT conversas_whatsapp_status_check
+      CHECK (status IN ('ABERTA','FECHADA','AGUARDANDO','PENDENTE_IDENTIFICACAO'));
+    RAISE NOTICE 'conversas_whatsapp_status_check criada com PENDENTE_IDENTIFICACAO';
+
+  ELSIF v_def NOT LIKE '%PENDENTE_IDENTIFICACAO%' THEN
+    -- Constraint existe mas sem PENDENTE_IDENTIFICACAO: remove e recria
+    ALTER TABLE conversas_whatsapp
+      DROP CONSTRAINT conversas_whatsapp_status_check;
+    -- Recria incluindo os valores da definicao anterior + PENDENTE_IDENTIFICACAO
+    -- Valores mais comuns do CRM: ABERTA, FECHADA, AGUARDANDO
+    ALTER TABLE conversas_whatsapp
+      ADD CONSTRAINT conversas_whatsapp_status_check
+      CHECK (status IN ('ABERTA','FECHADA','AGUARDANDO','PENDENTE_IDENTIFICACAO'));
+    RAISE NOTICE 'conversas_whatsapp_status_check atualizada: adicionado PENDENTE_IDENTIFICACAO';
+
+  ELSE
+    RAISE NOTICE 'conversas_whatsapp_status_check ja contem PENDENTE_IDENTIFICACAO — sem alteracao';
+  END IF;
+
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'Nao foi possivel alterar constraint status: %. Usando FECHADA como fallback.', SQLERRM;
+END $$;
+
+-- =============================================================================
 -- ── 5. Marca LID sem canônica como PENDENTE_IDENTIFICACAO ───────────────────
 -- Conversas LID que NÃO foram consolidadas ficam ocultas da lista principal.
 -- Sem FROM/JOIN — UPDATE simples; cw.dados_extras sem ambiguidade.
+-- Exige que a constraint acima tenha sido executada com sucesso.
 -- =============================================================================
 UPDATE conversas_whatsapp cw
 SET
@@ -238,6 +282,7 @@ WHERE c.telefone IS NOT NULL
       AND a.telefone_normalizado = c.telefone
   )
 ON CONFLICT DO NOTHING;
+
 
 -- ── 7. Índice UNIQUE em lid (previne duplicatas futuras de alias por LID) ─────
 DO $$ BEGIN
