@@ -849,10 +849,83 @@ async function enviarMensagem(req, res) {
       } catch { /* não crítico */ }
     }
 
-    // ── 2. Normaliza telefone da conversa ────────────────────────────────────
-    const telNormalizado = normalizePhone(conversa.telefone);
-    if (!telNormalizado)
-      return res.status(400).json({ sucesso: false, erro: 'Conversa sem telefone válido.' });
+    // ── 2. Resolve telefone real do cliente para envio ───────────────────────
+    // Ordem de prioridade (requisito de segurança):
+    //   1. Telefone do lead vinculado (mais confiável — sempre começa com 55)
+    //   2. telefone da conversa, se começar com 55
+    //   3. telefone da conversa normalizado via normalizePhone
+    //   4. Bloqueia se só houver LID
+    // NUNCA usa LID como destinatário de envio.
+    console.log('WHATSAPP_SEND_RESTORE_START', { conversaId: id, conversa_telefone: conversa.telefone });
+
+    let telParaEnvio = null;
+    let phoneSource  = 'none';
+
+    // 1. Tenta telefone do lead vinculado
+    if (conversa.lead_id && isSupa) {
+      try {
+        const { data: leadData } = await sb.from('leads')
+          .select('telefone').eq('id', conversa.lead_id).single();
+        const telLead = leadData?.telefone ? normalizePhone(leadData.telefone) : null;
+        if (telLead && telLead.startsWith('55')) {
+          telParaEnvio = telLead;
+          phoneSource  = 'lead_telefone';
+        }
+      } catch(eLead) {
+        console.warn('WHATSAPP_SEND_PHONE_LEAD_WARN:', eLead.message);
+      }
+    }
+
+    // 2. Tenta telefone da conversa (começa com 55)
+    if (!telParaEnvio && conversa.telefone) {
+      const telConv = normalizePhone(conversa.telefone);
+      if (telConv && telConv.startsWith('55')) {
+        telParaEnvio = telConv;
+        phoneSource  = 'conversa_telefone';
+      }
+    }
+
+    // 3. Fallback: normalizePhone sem exigir 55 (números internacionais válidos)
+    if (!telParaEnvio && conversa.telefone) {
+      const telFallback = normalizePhone(conversa.telefone);
+      if (telFallback && telFallback.length >= 10) {
+        telParaEnvio = telFallback;
+        phoneSource  = 'conversa_telefone_fallback';
+      }
+    }
+
+    // Logs obrigatórios de diagnóstico do telefone
+    console.log('WHATSAPP_SEND_PHONE_SOURCE',       { source: phoneSource, raw: conversa.telefone });
+    console.log('WHATSAPP_SEND_PHONE_FINAL',         { phone_final: telParaEnvio, starts_with_55: telParaEnvio?.startsWith('55') });
+    console.log('WHATSAPP_SEND_INSTANCE_USED',       evoSvc.EVOLUTION_INSTANCE);
+
+    // Validações obrigatórias antes de enviar
+    const telDigits = (telParaEnvio || '').replace(/\D/g, '');
+    const isLidDestination = !telParaEnvio ||
+      telDigits.length >= 14 && !telDigits.startsWith('55') ||
+      (conversa.telefone || '').startsWith('LID:') ||
+      (conversa.telefone || '').includes('@lid');
+
+    console.log('WHATSAPP_SEND_IS_LID_DESTINATION', isLidDestination);
+
+    if (isLidDestination) {
+      console.error('WHATSAPP_SEND_BLOCKED_LID', { telefone: conversa.telefone, leadId: conversa.lead_id });
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'Telefone do cliente inválido para envio. A conversa não possui telefone real — apenas identificador interno (LID). Envie uma mensagem primeiro ou atualize o telefone do lead.',
+        codigo: 'TELEFONE_LID_INVALIDO',
+      });
+    }
+
+    if (!telParaEnvio) {
+      console.error('WHATSAPP_SEND_BLOCKED_NO_PHONE', { telefone: conversa.telefone });
+      return res.status(400).json({ sucesso: false, erro: 'Conversa sem telefone válido para envio.' });
+    }
+
+    const telNormalizado = telParaEnvio;
+    console.log('WHATSAPP_SEND_PAYLOAD_TYPE', 'text');
+
+
 
     // ── 3. Monta texto com identificação do remetente ─────────────────────────
     // Formato: "Nome | PROSPEKT\n\nMensagem"
