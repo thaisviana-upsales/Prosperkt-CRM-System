@@ -281,6 +281,27 @@ console.log('WHATSAPP_CONVERSAS_COLUMNS_OK', {
   id: true, lead_id: true, telefone: true, nome_contato: true,
   status: true, ultima_msg_em: true, dados_extras: true, nao_lidas: true, visivel: true,
 });
+console.log('WHATSAPP_SCHEMA_TABLES_CONFIRMED', { conversas: CONVERSAS_TABLE, mensagens: MENSAGENS_TABLE, alias: ALIAS_TABLE });
+
+// Buffer circular em memória — últimos 20 webhooks inbound recebidos
+// Não persistido, não armazena secrets/API keys/tokens/base64
+const _inboundLog = [];
+function _logInbound(entry) {
+  _inboundLog.unshift({
+    recebido_em:    new Date().toISOString(),
+    event_type:     entry.event_type     || null,
+    remote_jid:     entry.remote_jid     || null,
+    lid:            entry.lid            || null,
+    fromMe:         entry.fromMe         ?? null,
+    texto_curto:    entry.texto_curto    || null,
+    tipo_mensagem:  entry.tipo_mensagem  || null,
+    decisao:        entry.decisao        || null,
+    conversa_id:    entry.conversa_id    || null,
+    salvo_em_tabela: entry.salvo_em_tabela || null,
+    erro:           entry.erro           || null,
+  });
+  if (_inboundLog.length > 20) _inboundLog.pop();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // registrarAlias — salva mapeamento remoteJid/LID → conversa na tabela de aliases
@@ -2319,7 +2340,31 @@ async function processarStatusMensagem(body, req, res) {
 }
 
 async function webhookReceberMensagem(req, res) {
-  // ── 0. Log de diagnóstico OBRIGATÓRIO (antes de qualquer validação) ───────
+  // ── 0. WHATSAPP_WEBHOOK_RAW_RECEIVED — antes de qualquer validação ou parser ─────
+  const _rawPayload = req.body || {};
+  const _rawEvento  = String(_rawPayload.event || _rawPayload.type || '(sem event)');
+  const _rawInstance= String(_rawPayload.instance || '(sem instance)');
+  const _rawData    = _rawPayload.data;
+  const _rawDataItem= Array.isArray(_rawData) ? _rawData[0] : (_rawData || {});
+  const _rawRemoteJid = _rawDataItem?.key?.remoteJid || '(sem jid)';
+  const _rawFromMe    = _rawDataItem?.key?.fromMe;
+  const _rawMsgId     = _rawDataItem?.key?.id || '(sem id)';
+  const _rawHasText   = !!(_rawDataItem?.message?.conversation || _rawDataItem?.message?.extendedTextMessage?.text);
+  const _rawHasMedia  = !!(_rawDataItem?.message?.imageMessage || _rawDataItem?.message?.audioMessage || _rawDataItem?.message?.videoMessage || _rawDataItem?.message?.documentMessage);
+  console.log('WHATSAPP_WEBHOOK_RAW_RECEIVED', {
+    ts:           new Date().toISOString(),
+    method:       req.method,
+    contentType:  req.headers['content-type'] || '(sem)',
+    event:        _rawEvento,
+    instance:     _rawInstance,
+    remoteJid:    _rawRemoteJid,
+    fromMe:       _rawFromMe,
+    messageId:    _rawMsgId,
+    hasText:      _rawHasText,
+    hasMedia:     _rawHasMedia,
+    payloadSize:  JSON.stringify(_rawPayload).length,
+  });
+  // Log completo do payload (para diagnóstico inicial — pode ser removido após confirmação)
   console.log('WEBHOOK_EVOLUTION_RECEBIDO_REAL', JSON.stringify(req.body, null, 2));
 
   const body = req.body;
@@ -2524,6 +2569,18 @@ async function webhookReceberMensagem(req, res) {
     pushName:          nome?.slice(0, 40) || null,
     instance:          instance       || null,
   }));
+
+  // ── WHATSAPP_INBOUND_NORMALIZED_RESULT — resultado do parser para rastreamento ──────
+  console.log('WHATSAPP_INBOUND_NORMALIZED_RESULT', {
+    remote_jid:    rawJid         || null,
+    lid:           lidNumero      || null,
+    telefone_real: telFinal       || null,
+    fromMe:        fromMe,
+    texto_curto:   conteudo       ? conteudo.slice(0, 40) : null,
+    tipo_mensagem: tipo,
+    messageId:     messageId      || null,
+    instance:      instance       || null,
+  });
 
   // ── Valida número — permissivo para não bloquear recebimento ────────────────
   // Brasil: 55 + DDD(2) + número(8-9) = 12-13 dígitos
@@ -2787,8 +2844,68 @@ async function webhookReceberMensagem(req, res) {
           }
         }
 
+        // ── FIX CRÍTICO: Fallback por último envio recente (72h) quando alias não existe ──
+        // Cenário confirmado pelos logs: LID '62972877619405@lid' responde sem participant,
+        // sem alias registrado, sem leadId. Antes desta correção → PENDENTE_IDENTIFICACAO → invisível.
+        // Agora: busca mensagens enviadas nas últimas 72h → se única conversa candidata com
+        // telefone real (não PENDENTE) → usa essa conversa + salva alias para próximas respostas.
+        if (!conversaCanonica && isLidJid && lidNumero) {
+          try {
+            const h72 = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+            console.log('WHATSAPP_RECENT_OUTBOUND_LOOKUP_START', { lidNumero, janela: '72h' });
+            const { data: recentSentMsgs } = await sb.from(MENSAGENS_TABLE)
+              .select('conversa_id')
+              .eq('direcao', 'enviada')
+              .gte('criado_em', h72)
+              .not('conversa_id', 'is', null)
+              .order('criado_em', { ascending: false })
+              .limit(20);
+            if (recentSentMsgs?.length) {
+              const convIds = [...new Set(recentSentMsgs.map(r => r.conversa_id))].slice(0, 5);
+              const { data: candidatasRecent } = await sb.from(CONVERSAS_TABLE)
+                .select('id,telefone,lead_id')
+                .in('id', convIds)
+                .neq('status', 'FECHADA')
+                .neq('status', 'PENDENTE_IDENTIFICACAO')
+                .not('telefone', 'is', null);
+              const candidatasValidas = (candidatasRecent || []).filter(r => r.telefone && r.telefone.startsWith('55'));
+              if (candidatasValidas.length === 1) {
+                conversaCanonica = candidatasValidas[0].id;
+                conversaId      = conversaCanonica;
+                if (!leadId && candidatasValidas[0].lead_id) leadId = candidatasValidas[0].lead_id;
+                console.log('WHATSAPP_RECENT_OUTBOUND_FOUND', { conversaId, lidNumero, tel: candidatasValidas[0].telefone });
+                // Salva alias: próximas respostas deste LID chegam diretamente na conversa correta
+                await registrarAlias(sb, {
+                  conversaId,
+                  tel:       candidatasValidas[0].telefone || null,
+                  rawJid:    rawJid    || null,
+                  lidNumero: lidNumero || null,
+                  nome:      !fromMe   ? nome : null,
+                }).catch(e => console.warn('WHATSAPP_ALIAS_RECENT_OUTBOUND_WARN:', e.message));
+                console.log('WHATSAPP_LID_RECOVERED_BY_RECENT_OUTBOUND', {
+                  conversaId, lidNumero,
+                  tel: candidatasValidas[0].telefone,
+                  motivo: 'alias_salvo_para_proximas_respostas',
+                });
+              } else if (candidatasValidas.length > 1) {
+                console.log('WHATSAPP_LID_AMBIGUOUS_NOT_LINKED', {
+                  lidNumero, qtd: candidatasValidas.length,
+                  motivo: 'multiplos_envios_recentes_nao_e_possivel_escolher',
+                });
+              } else {
+                console.log('WHATSAPP_RECENT_OUTBOUND_NO_CANDIDATE', { lidNumero, recentMsgs: recentSentMsgs.length });
+              }
+            } else {
+              console.log('WHATSAPP_RECENT_OUTBOUND_NO_MSGS', { lidNumero, motivo: 'sem_envios_nas_72h' });
+            }
+          } catch(eRO) {
+            console.warn('WHATSAPP_RECENT_OUTBOUND_LOOKUP_WARN:', eRO.message);
+          }
+        }
+
         if (!conversaCanonica) {
-          // Sem canônica via lead — cria conversa PENDENTE_IDENTIFICACAO
+          // Sem canônica via lead nem por envio recente — cria conversa PENDENTE_IDENTIFICACAO
+
           console.warn('WHATSAPP_BLOCK_ACTIVE_CONVERSATION_CREATION_FOR_LID', {
             telFinal, lidNumero, rawJid, isLidJid, nomeContato,
             motivo: 'identidade_nao_confiavel',
@@ -2920,10 +3037,13 @@ async function webhookReceberMensagem(req, res) {
       if (tipo === 'audio') console.log('WHATSAPP_AUDIO_RECEIVED_WEBHOOK', { msgId, mimeType, midiaUrl: midiaUrl ? '(presente)' : '(ausente)', duration: null });
       if (midiaUrl) console.log('WHATSAPP_AUDIO_MEDIA_DETECTED', { tipo, mimeType, midiaUrl: midiaUrl.slice(0,80) });
 
-      console.log('WHATSAPP_INBOUND_MESSAGE_SAVED', { msgId, conversaId, direcao, tel: telFinal, tipo });
+      console.log('WHATSAPP_MESSAGE_INSERT_START', { msgId, conversaId, direcao, telFinal, tipo, tabela: MENSAGENS_TABLE });
       const { error: errM } = await sb.from(MENSAGENS_TABLE).insert(insertPayload);
       msgSalva = !errM;
       if (!errM) {
+        console.log('WHATSAPP_MESSAGE_INSERT_SUCCESS', { mensagemId: msgId, conversaId, direcao, telFinal, tipo, evoMsgId: evoMsgIdWebhook });
+        console.log('WHATSAPP_CONVERSATION_UPDATE_SUCCESS', { conversaId });
+        console.log('WHATSAPP_MESSAGE_SAVED_IN_ORIGINAL_CONVERSATION', { mensagemId: msgId, conversaId, direcao, tabela: MENSAGENS_TABLE });
         console.log('WEBHOOK_MESSAGE_SAVED', { mensagemId: msgId, conversaId, direcao, telefone: tel });
         console.log('WHATSAPP_MESSAGE_SAVED_EXISTING_CONVERSA', { mensagemId: msgId, conversaId, telefone: tel, direcao, evoMsgId: evoMsgIdWebhook });
         // Atualiza conversa — SOMENTE colunas que existem na tabela Supabase:
@@ -3072,6 +3192,20 @@ async function webhookReceberMensagem(req, res) {
     } else {
       console.error('ERRO_AO_SALVAR_MENSAGEM_WHATSAPP:', { ...resultado, erro: erroSalvar?.message || 'Sem conversa ou erro no insert' });
     }
+
+    // ── Registra no buffer de debug (não bloqueia, sem dados sensíveis) ────────────────
+    _logInbound({
+      event_type:     evento         || null,
+      remote_jid:     rawJid         || null,
+      lid:            lidNumero      || null,
+      fromMe:         fromMe,
+      texto_curto:    conteudo       ? conteudo.slice(0, 40) : null,
+      tipo_mensagem:  tipo           || null,
+      decisao:        msgSalva       ? 'salvo' : (erroSalvar ? 'erro_insert' : 'sem_conversa'),
+      conversa_id:    conversaId     || null,
+      salvo_em_tabela: msgSalva      ? MENSAGENS_TABLE : null,
+      erro:           erroSalvar     ? erroSalvar.message : null,
+    });
 
     return res.status(201).json({ sucesso: true, ...resultado });
 
@@ -3737,4 +3871,28 @@ module.exports = {
   // dedup
   diagnosticarDuplicatas,
   executarDeduplicacao,
+  // debug inbound
+  debugLastInbound,
 };
+
+// ───────────────────────────────────────────────────────────────────────────────
+// GET /api/whatsapp/debug/last-inbound
+// Retorna os últimos 20 webhooks inbound processados (SUPER_ADMIN)
+// Não retorna payload completo, API key, token ou secret.
+// ───────────────────────────────────────────────────────────────────────────────
+async function debugLastInbound(req, res) {
+  try {
+    // Verifica SUPER_ADMIN
+    if (req.usuario?.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ sucesso: false, erro: 'Acesso restrito a SUPER_ADMIN.' });
+    }
+    return res.json({
+      sucesso: true,
+      total:   _inboundLog.length,
+      tabelas: { conversas: CONVERSAS_TABLE, mensagens: MENSAGENS_TABLE, alias: ALIAS_TABLE },
+      eventos: _inboundLog,
+    });
+  } catch(e) {
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}

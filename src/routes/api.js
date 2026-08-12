@@ -399,7 +399,9 @@ router.post('/admin/setup-historico', autenticar, exigirSuperAdmin, async (req, 
 });
 
 
+router.get  ('/whatsapp/debug/last-inbound', autenticar, exigirSuperAdmin, whatsappCtrl.debugLastInbound);
 router.get  ('/whatsapp/deduplicar',  autenticar, exigirSuperAdmin, whatsappCtrl.diagnosticarDuplicatas);
+
 router.post ('/whatsapp/deduplicar',  autenticar, exigirSuperAdmin, whatsappCtrl.executarDeduplicacao);
 
 // ─────────────────────────────────────────────────────────────────────────────
