@@ -237,7 +237,7 @@ router.get   ('/whatsapp/media/:conversaId/:msgId', autenticar, whatsappCtrl.ser
 // ── Módulo isolado de áudio (não altera fluxo de texto) ────────────────────────────
 router.post  ('/whatsapp/audio/send',                autenticar, waAudioCtrl.upload.single('audio'), waAudioCtrl.enviarAudio, waAudioCtrl.handleUploadError);
 router.post  ('/whatsapp/audio/sync-conversa/:conversaId', autenticar, waAudioCtrl.sincronizarAudios);
-router.get   ('/whatsapp/audio/play/:msgId',         autenticar, waAudioCtrl.servirAudioAssinado);
+router.get   ('/whatsapp/audio/play/:msgId',         waAudioCtrl.servirAudioAssinado);
 router.get   ('/whatsapp/audio/health',              autenticar, waAudioCtrl.health);
 console.log('[WA_AUDIO_ROUTE_READY] POST /api/whatsapp/audio/send registrado.');
 

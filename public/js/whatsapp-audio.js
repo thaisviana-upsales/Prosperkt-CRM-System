@@ -407,6 +407,39 @@
     _durObserver.observe(document.body, { childList: true, subtree: true });
 
     console.log('[WAAudio v2] Módulo de áudio isolado ativo.');
+
+    // ── Fix data-src dos players: redireciona para proxy /api/.../play/:msgId ──
+    // O proxy serve áudio tanto do Supabase (áudio enviado) quanto da Evolution
+    // (áudio recebido pelo webhook) — sem CORS, sem auth obrigatória.
+    function _fixAudioPlayerSrc(player) {
+      if (!player || player.dataset.srcFixed) return;
+      const src   = player.dataset.src || '';
+      const msgId = player.dataset.id;
+      if (!msgId) return;
+      // Já é URL proxy → não precisa de fix
+      if (src.startsWith('/api/whatsapp/audio/play/')) return;
+      // URL da Evolution ou Supabase → substitui pelo proxy
+      if (src && (src.includes('evolution') || src.includes('supabase') || src.startsWith('http'))) {
+        player.dataset.src      = `/api/whatsapp/audio/play/${msgId}`;
+        player.dataset.srcFixed = '1';
+        console.log('[WAAudio] data-src → proxy', { msgId, antigoSrc: src.slice(0, 60) });
+      }
+    }
+
+    // Aplica a todos os players já no DOM
+    document.querySelectorAll('.wa-audio-player[data-id]').forEach(_fixAudioPlayerSrc);
+
+    // Observa novos players adicionados pelo renderMensagens()
+    const _playerObserver = new MutationObserver(mutations => {
+      for (const m of mutations) {
+        for (const node of m.addedNodes) {
+          if (node.nodeType !== 1) continue;
+          if (node.classList?.contains('wa-audio-player')) { _fixAudioPlayerSrc(node); continue; }
+          node.querySelectorAll?.('.wa-audio-player[data-id]').forEach(_fixAudioPlayerSrc);
+        }
+      }
+    });
+    _playerObserver.observe(document.body, { childList: true, subtree: true });
   }
 
   if (document.readyState === 'loading') {

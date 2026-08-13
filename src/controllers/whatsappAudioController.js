@@ -224,7 +224,7 @@ async function enviarAudio(req, res) {
       direcao:      'enviada',
       status:       evoOk ? 'enviado' : 'erro',
       vendedor_id:  req.usuario.id,
-      arquivo_url:  longSignedUrl || storagePath,
+      arquivo_url:    `/api/whatsapp/audio/play/${msgId}`,
       arquivo_nome: arquivoNome,
       criado_em:    agora,
       ...(duracaoSeg ? { media_duration: duracaoSeg } : {}),
@@ -277,7 +277,7 @@ async function enviarAudio(req, res) {
         direcao:         'enviada',
         status:          evoOk ? 'enviado' : 'erro',
         vendedor_id:     req.usuario.id,
-        arquivo_url:     longSignedUrl || storagePath,
+        arquivo_url:     `/api/whatsapp/audio/play/${msgId}`,
         arquivo_nome:    arquivoNome,
         mime_type:       arquivo.mimetype,
         storage_path:    storagePath,
@@ -400,36 +400,105 @@ async function sincronizarAudios(req, res) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/whatsapp/audio/play/:msgId
-// Gera signed URL fresca e redireciona — para recarregamento de áudios vencidos
+// Serve áudio diretamente (sem redirect) — funciona sem auth para <audio> element.
+// Caso 1 — áudio enviado: busca no Supabase Storage via storage_path
+// Caso 2 — áudio recebido: baixa da Evolution API, faz upload no Supabase, serve
+// Segurança: msgId é UUID 32 hex opaco — não-adivinhável
 // ─────────────────────────────────────────────────────────────────────────────
 async function servirAudioAssinado(req, res) {
   try {
     const { sb, isSupa } = getProvider();
-    if (!isSupa) return res.status(400).json({ sucesso: false, erro: 'Storage requer Supabase.' });
+    if (!isSupa) return res.status(400).end();
 
     const { msgId } = req.params;
-    const { data: msg } = await sb
+    if (!msgId) return res.status(400).end();
+
+    const { data: msg, error: msgErr } = await sb
       .from(MENSAGENS_TABLE)
-      .select('storage_path, storage_bucket, conversa_id, direcao')
+      .select('id, storage_path, storage_bucket, arquivo_url, mime_type, direcao, conversa_id')
       .eq('id', msgId)
       .single();
 
-    if (!msg?.storage_path) {
-      return res.status(404).json({ sucesso: false, erro: 'Áudio não encontrado no Storage.' });
+    if (msgErr || !msg) {
+      console.warn('WA_AUDIO_PLAY_NOT_FOUND', { msgId });
+      return res.status(404).end();
     }
 
-    const bucket = msg.storage_bucket || BUCKET;
-    const { data: signed } = await sb.storage.from(bucket).createSignedUrl(msg.storage_path, 3600);
-    if (!signed?.signedUrl) {
-      return res.status(502).json({ sucesso: false, erro: 'Não foi possível gerar URL de acesso.' });
+    // ── Caso 1: áudio enviado — já está no Supabase Storage ─────────────────
+    if (msg.storage_path) {
+      const bucket = msg.storage_bucket || BUCKET;
+      const { data: fileBlob, error: dlErr } = await sb.storage.from(bucket).download(msg.storage_path);
+      if (dlErr || !fileBlob) {
+        console.warn('WA_AUDIO_PLAY_STORAGE_ERR', { msgId, erro: dlErr?.message });
+        return res.status(502).end();
+      }
+      const buf = Buffer.from(await fileBlob.arrayBuffer());
+      const mime = msg.mime_type || 'audio/ogg';
+      res.set('Content-Type',   mime);
+      res.set('Content-Length', buf.length);
+      res.set('Cache-Control',  'private, max-age=86400');
+      res.set('Accept-Ranges',  'bytes');
+      console.log('WA_AUDIO_PLAY_SERVED_STORAGE', { msgId, bytes: buf.length, mime });
+      return res.send(buf);
     }
 
-    res.set('Cache-Control', 'private, max-age=3540');
-    return res.redirect(302, signed.signedUrl);
+    // ── Caso 2: áudio recebido — arquivo_url é URL da Evolution ─────────────
+    const evoUrl = msg.arquivo_url;
+    if (!evoUrl || evoUrl.startsWith('/api/')) {
+      console.warn('WA_AUDIO_PLAY_NO_SOURCE', { msgId, evoUrl: evoUrl || '(null)' });
+      return res.status(404).end();
+    }
+
+    const evoKey  = process.env.EVOLUTION_API_KEY || '';
+    const fetchFn = globalThis.fetch || (await import('node-fetch').then(m => m.default).catch(() => null));
+    if (!fetchFn) return res.status(500).end();
+
+    console.log('WA_AUDIO_PLAY_FETCHING_EVOLUTION', { msgId, url: evoUrl.slice(0, 80) });
+    const evoRes = await fetchFn(evoUrl, {
+      headers: evoKey ? { apikey: evoKey } : {},
+    }).catch(e => { console.warn('WA_AUDIO_PLAY_EVO_FETCH_ERR', { err: e.message }); return null; });
+
+    if (!evoRes || !evoRes.ok) {
+      console.warn('WA_AUDIO_PLAY_EVO_FAIL', { msgId, status: evoRes?.status });
+      return res.status(502).end();
+    }
+
+    const audioBuf  = Buffer.from(await evoRes.arrayBuffer());
+    const contentType = evoRes.headers.get('content-type') || msg.mime_type || 'audio/ogg';
+
+    // ── Salva no Supabase para servir rapidamente em próximas requisições ───
+    try {
+      const ext         = contentType.includes('ogg') ? 'ogg' : contentType.includes('webm') ? 'webm' : 'ogg';
+      const storagePath = `whatsapp/conversas/${msg.conversa_id}/audios/recebidos/${Date.now()}.${ext}`;
+
+      const { error: upErr } = await sb.storage.from(BUCKET).upload(storagePath, audioBuf, {
+        contentType: contentType,
+        upsert: false,
+      });
+
+      if (!upErr) {
+        await sb.from(MENSAGENS_TABLE).update({
+          storage_path:   storagePath,
+          storage_bucket: BUCKET,
+          mime_type:      contentType,
+        }).eq('id', msgId);
+        console.log('WA_AUDIO_PLAY_CACHED_SUPABASE', { msgId, storagePath, bytes: audioBuf.length });
+      }
+    } catch (cacheErr) {
+      console.warn('WA_AUDIO_PLAY_CACHE_SKIP', { msgId, erro: cacheErr.message });
+    }
+
+    // Serve o áudio diretamente
+    res.set('Content-Type',   contentType);
+    res.set('Content-Length', audioBuf.length);
+    res.set('Cache-Control',  'private, max-age=3600');
+    res.set('Accept-Ranges',  'bytes');
+    console.log('WA_AUDIO_PLAY_SERVED_EVOLUTION', { msgId, bytes: audioBuf.length, mime: contentType });
+    return res.send(audioBuf);
 
   } catch (e) {
-    console.error('WHATSAPP_AUDIO_PLAY_ERROR', e.message);
-    return res.status(500).json({ sucesso: false, erro: 'Erro ao servir áudio.' });
+    console.error('WA_AUDIO_PLAY_ERROR', e.message);
+    return res.status(500).end();
   }
 }
 
