@@ -359,7 +359,7 @@ async function enviarTexto(telefone, texto) {
  * Envia mídia (imagem, documento, áudio, vídeo).
  * Evolution API v2: propriedades encapsuladas em mediaMessage: {}
  * @param {string} telefone
- * @param {{ mediatype, mimetype, caption, media, fileName }} opcoes
+ * @param {{ mediatype, mimetype, caption, media, fileName, ptt }} opcoes
  */
 async function enviarMidia(telefone, opcoes) {
   const number = telefone.replace(/\D/g, '');
@@ -371,22 +371,30 @@ async function enviarMidia(telefone, opcoes) {
       caption:   opcoes.caption   || '',
       media:     opcoes.media,      // URL pública ou base64
       fileName:  opcoes.fileName   || 'arquivo',
+      ...(opcoes.ptt ? { ptt: true } : {}),  // PTT = mensagem de voz (bolha de voz)
     },
   });
 }
 
 /**
- * Envia áudio (PTT — push-to-talk).
- * Evolution API v2:
- *   audioMessage = string base64 direta (NÃO um objeto)
- *   encoding = true ao nível raiz
+ * Envia áudio como mensagem de voz (PTT).
+ *
+ * HISTORICO DE FALHAS do endpoint sendWhatsAppAudio nesta Evolution:
+ *   - { audio: base64 } (flat)         → HTTP 400 'requires property audioMessage'
+ *   - audioMessage: base64 (string)    → HTTP 400 'audioMessage is not of a type(s) object'
+ *   - audioMessage: { audio: base64 }  → HTTP 500 'Cannot set properties of undefined (setting encoding)'
+ *   - audioMessage: { audio: base64 }, encoding: true (raiz) → mesmo HTTP 500
+ *
+ * SOLUCAO: usa sendMedia com ptt:true que funciona e entrega como mensagem de voz
  */
-async function enviarAudio(telefone, audioUrl) {
-  const number = telefone.replace(/\D/g, '');
-  return call('POST', `/message/sendWhatsAppAudio/${EVOLUTION_INSTANCE}`, {
-    number,
-    audioMessage: audioUrl,  // base64 puro como STRING (não objeto)
-    encoding: true,
+async function enviarAudio(telefone, audioBase64, mimeType) {
+  return enviarMidia(telefone, {
+    mediatype: 'audio',
+    mimetype:  mimeType || 'audio/ogg; codecs=opus',  // WhatsApp PTT format
+    media:     audioBase64,
+    fileName:  'audio.ogg',
+    caption:   '',
+    ptt:       true,  // entrega como bolha de voz, nao arquivo
   });
 }
 

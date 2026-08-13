@@ -157,46 +157,36 @@ async function enviarAudio(req, res) {
     const base64Audio = arquivo.buffer.toString('base64');
     console.log('WA_AUDIO_BASE64_READY', { mime: arquivo.mimetype, bytes: arquivo.size });
 
-    // ── 5. Envia pela Evolution ────────────────────────────────────────────────
+    // ── 5. Envia como mensagem de voz (PTT) via sendMedia ──────────────────────
+    // sendWhatsAppAudio foi abandonado: endpoint quebrado nesta versão da Evolution
+    //   (crashes com HTTP 500 para qualquer formato de audioMessage)
+    // sendMedia com ptt:true entrega como bolha de voz no WhatsApp do destinatário
     console.log('WA_AUDIO_EVOLUTION_SEND_START', { telefone: telNormalizado });
     let evoOk  = false;
     let evoErr = null;
 
     if (evoSvc.isConfigured()) {
-      // Tentativa 1: sendWhatsAppAudio (PTT/voz) com base64 puro
-      let evoResult = await evoSvc.enviarAudio(telNormalizado, base64Audio);
-      evoOk = !!(evoResult.sucesso || evoResult.dados?.key?.id);
-
-      if (!evoOk) {
-        const pttErr   = evoResult.erro || 'sem detalhe';
-        const pttDados = JSON.stringify(evoResult.dados || {}).slice(0, 300);
-        console.warn('WA_AUDIO_PTT_FAIL', { erro: pttErr, status: evoResult.status, dados: pttDados });
-
-        // Tentativa 2: sendMedia com mediatype=audio e base64 puro
-        console.log('WA_AUDIO_SENDMEDIA_FALLBACK_START', { telefone: telNormalizado });
-        evoResult = await evoSvc.enviarMidia(telNormalizado, {
-          mediatype: 'audio',
-          mimetype:  arquivo.mimetype,
-          media:     base64Audio,         // base64 puro — sem data URI
-          fileName:  `audio_${ts}.${ext}`,
-          caption:   '',
-        });
-        evoOk = !!(evoResult.sucesso || evoResult.dados?.key?.id);
-        if (evoOk) {
-          console.log('WA_AUDIO_SENDMEDIA_FALLBACK_SUCCESS', { msgId: evoResult.dados?.key?.id });
-        } else {
-          const mediaErr   = evoResult.erro || 'sem detalhe';
-          const mediaDados = JSON.stringify(evoResult.dados || {}).slice(0, 300);
-          console.warn('WA_AUDIO_SENDMEDIA_FALLBACK_FAIL', { erro: mediaErr, status: evoResult.status, dados: mediaDados });
-        }
-      } else {
-        console.log('WA_AUDIO_EVOLUTION_SEND_SUCCESS', { msgId: evoResult.dados?.key?.id });
-      }
-
+      const evoResult = await evoSvc.enviarAudio(telNormalizado, base64Audio, arquivo.mimetype);
+      evoOk  = !!(evoResult.sucesso || evoResult.dados?.key?.id);
       evoErr = evoOk ? null : (evoResult.erro || 'Evolution rejeitou o áudio');
+
+      if (evoOk) {
+        console.log('WA_AUDIO_EVOLUTION_SEND_SUCCESS', {
+          msgId: evoResult.dados?.key?.id,
+          method: 'sendMedia+ptt',
+        });
+      } else {
+        const errDados = JSON.stringify(evoResult.dados || {}).slice(0, 400);
+        console.warn('WA_AUDIO_EVOLUTION_SEND_FAIL', {
+          erro: evoErr,
+          status: evoResult.status,
+          dados: errDados,
+        });
+      }
     } else {
       console.warn('WA_AUDIO_EVOLUTION_NOT_CONFIGURED');
     }
+
 
 
     // ── 6. Gera signed URL longa para banco (1 ano) ───────────────────────────────────────────────────────────────────────────────
