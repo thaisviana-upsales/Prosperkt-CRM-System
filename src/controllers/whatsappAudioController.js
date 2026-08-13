@@ -332,6 +332,8 @@ async function sincronizarAudios(req, res) {
     }
 
     const resultados = [];
+    let   convCache   = null; // cache da conversa p/ evitar N queries para LID
+
     for (const msg of msgs) {
       try {
         if (!msg.evolution_message_id) {
@@ -339,12 +341,36 @@ async function sincronizarAudios(req, res) {
           continue;
         }
 
-        // Determina remoteJid a partir do telefone
-        const remoteJid = msg.telefone
-          ? (msg.telefone.includes('@') ? msg.telefone : `${msg.telefone}@s.whatsapp.net`)
+        // ── Determina remoteJid ───────────────────────────────────────────────
+        // Prioridade 1: telefone direto da mensagem
+        let remoteJid = msg.telefone
+          ? (msg.telefone.includes('@') ? msg.telefone : `${telSoDigitos(msg.telefone)}@s.whatsapp.net`)
           : null;
+
+        // Prioridade 2: dados da conversa (LID JIDs têm dados_extras.remoteJid)
         if (!remoteJid) {
-          resultados.push({ id: msg.id, status: 'sem_telefone' });
+          if (!convCache) {
+            const { data: cd } = await sb.from(CONVERSAS_TABLE)
+              .select('telefone, dados_extras').eq('id', conversaId).single();
+            convCache = cd || {};
+          }
+          if (convCache.telefone && !convCache.telefone.startsWith('LID:')) {
+            const d = telSoDigitos(convCache.telefone);
+            if (d && d.length >= 10) remoteJid = `${d}@s.whatsapp.net`;
+          }
+          if (!remoteJid && convCache.dados_extras) {
+            try {
+              const ex = typeof convCache.dados_extras === 'string'
+                ? JSON.parse(convCache.dados_extras)
+                : convCache.dados_extras;
+              remoteJid = ex?.remoteJid || null;
+            } catch (_) {}
+          }
+        }
+
+        if (!remoteJid) {
+          resultados.push({ id: msg.id, status: 'sem_remoteJid' });
+          console.warn('WA_AUDIO_SYNC_NO_JID', { msgId: msg.id, telefone: msg.telefone });
           continue;
         }
 

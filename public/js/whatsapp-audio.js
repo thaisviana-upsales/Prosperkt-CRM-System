@@ -429,6 +429,39 @@
     // Aplica a todos os players já no DOM
     document.querySelectorAll('.wa-audio-player[data-id]').forEach(_fixAudioPlayerSrc);
 
+    // ── Auto-sync: dispara sincronizarAudios quando há player sem URL (LID JIDs) ──
+    const _syncedConvIds = new Set(); // evita re-sync infinito da mesma conversa
+    let   _syncInFlight  = false;
+
+    function _autoSyncSeNecessario() {
+      if (_syncInFlight) return;
+      const conv = _getConvAtiva();
+      if (!conv?.id) return;
+      // Já tentou sincronizar esta conversa nesta sessão
+      if (_syncedConvIds.has(conv.id)) return;
+      // Verifica se existe player desabilitado (arquivo_url=null) — sem data-id
+      if (!document.querySelector('.wa-audio-player:not([data-id])')) return;
+
+      _syncedConvIds.add(conv.id);
+      _syncInFlight = true;
+      console.log('[WAAudio] Player inativo detectado — sincronizando audio recebido...', { conversaId: conv.id });
+
+      WAAudioSync.sincronizar(conv.id)
+        .then(resultado => {
+          _syncInFlight = false;
+          if (resultado?.sincronizados > 0) {
+            console.log('[WAAudio] Sync OK — mensagens atualizadas:', resultado.sincronizados);
+            // carregarMensagens já é chamado dentro de WAAudioSync.sincronizar()
+          } else {
+            console.log('[WAAudio] Sync: nenhum audio pendente ou Evolution indisponível.');
+          }
+        })
+        .catch(e => {
+          _syncInFlight = false;
+          console.warn('[WAAudio] Auto-sync erro:', e?.message);
+        });
+    }
+
     // Observa novos players adicionados pelo renderMensagens()
     const _playerObserver = new MutationObserver(mutations => {
       for (const m of mutations) {
@@ -438,6 +471,8 @@
           node.querySelectorAll?.('.wa-audio-player[data-id]').forEach(_fixAudioPlayerSrc);
         }
       }
+      // Após cada mutação, verifica se há players sem URL para sincronizar
+      _autoSyncSeNecessario();
     });
     _playerObserver.observe(document.body, { childList: true, subtree: true });
   }
