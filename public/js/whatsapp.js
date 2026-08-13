@@ -698,9 +698,10 @@ function renderMensagem(msg) {
       conteudo = `<div style="font-size:.75rem;color:var(--text-muted);padding:8px 0">Imagem não disponível.</div>`;
     }
   } else if (msg.tipo === 'audio') {
-    // URL: tenta proxy backend primeiro (esconde API key), fallback arquivo_url direto
-    const audioSrc = msg.arquivo_url
-      ? `/api/whatsapp/media/${msg.conversa_id || _convAtiva?.id}/${msg.id}`
+    // Usa /api/whatsapp/audio/play/:msgId diretamente — endpoint robusto com fallbacks completos
+    // IMPORTANTE: não usar /api/whatsapp/media/ pois servirMidia (frozen) falha com caminhos relativos Supabase
+    const audioSrc = msg.arquivo_url || msg.storage_path
+      ? `/api/whatsapp/audio/play/${msg.id}`
       : '';
     const dur = msg.media_duration ? ` · ${Math.floor(msg.media_duration/60)}:${String(msg.media_duration%60).padStart(2,'0')}` : '';
     conteudo = audioSrc
@@ -1264,11 +1265,20 @@ const WAAudio = (() => {
       : (localStorage.getItem('token') || '');
 
     fetch(src, { headers: token ? { 'Authorization': 'Bearer ' + token } : {} })
-      .then(r => r.blob())
-      .then(blob => { audioEl.src = URL.createObjectURL(blob); return audioEl.play(); })
-      .catch(() => {
+      .then(r => {
+        if (!r.ok) throw new Error('WA_AUDIO_PLAY_HTTP_' + r.status);
+        return r.blob();
+      })
+      .then(blob => {
+        const blobUrl = URL.createObjectURL(blob);
+        audioEl.src = blobUrl;
+        console.log('WA_AUDIO_PLAY_BLOB_READY', { msgId: container.dataset.id, bytes: blob.size, type: blob.type });
+        return audioEl.play();
+      })
+      .catch(err => {
+        console.warn('WA_AUDIO_PLAY_FALLBACK', { src, err: err?.message });
         audioEl.src = src;
-        audioEl.play().catch(() => Toast.show('Erro ao reproduzir áudio.', 'error'));
+        audioEl.play().catch(() => { if (typeof Toast !== 'undefined') Toast.show('Erro ao reproduzir áudio.', 'error'); });
       });
 
     _current = { el: audioEl, container };
