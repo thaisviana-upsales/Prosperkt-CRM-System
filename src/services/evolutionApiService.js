@@ -248,6 +248,9 @@ async function configurarWebhook() {
   const payload = {
     url: webhookUrl,
     webhook_by_events: false,
+    // downloadMedia: true — Evolution baixa a midia e inclui mediaUrl no payload do webhook.
+    // SEM isso: arquivo_url = null para todo audio recebido. COM isso: arquivo_url = Evolution URL.
+    downloadMedia: true,
     events: [
       'MESSAGES_UPSERT',
       'MESSAGES_UPDATE',

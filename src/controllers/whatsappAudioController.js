@@ -334,9 +334,16 @@ async function sincronizarAudios(req, res) {
     const resultados = [];
     let   convCache   = null; // cache da conversa p/ evitar N queries para LID
 
+    console.log('WA_AUDIO_SYNC_MSGS_FOUND', {
+      total: msgs.length,
+      evoIds: msgs.map(m => m.evolution_message_id ? m.evolution_message_id.slice(0,12) : 'NULL'),
+      phones: msgs.map(m => m.telefone || 'NULL'),
+    });
+
     for (const msg of msgs) {
       try {
         if (!msg.evolution_message_id) {
+          console.warn('WA_AUDIO_SYNC_SEM_EVO_ID', { msgId: msg.id });
           resultados.push({ id: msg.id, status: 'sem_evolution_id' });
           continue;
         }
@@ -369,13 +376,28 @@ async function sincronizarAudios(req, res) {
         }
 
         if (!remoteJid) {
+          console.warn('WA_AUDIO_SYNC_SEM_REMOTEJID', { msgId: msg.id, telefone: msg.telefone });
           resultados.push({ id: msg.id, status: 'sem_remoteJid' });
-          console.warn('WA_AUDIO_SYNC_NO_JID', { msgId: msg.id, telefone: msg.telefone });
           continue;
         }
 
+        console.log('WA_AUDIO_SYNC_EVO_CALL', {
+          msgId:    msg.id,
+          evoId:    msg.evolution_message_id.slice(0,16),
+          jid:      remoteJid.slice(0,20),
+        });
+
         // Baixa mídia via Evolution
         const evoMedia = await evoSvc.getBase64Media(msg.evolution_message_id, remoteJid);
+
+        console.log('WA_AUDIO_SYNC_EVO_RESULT', {
+          msgId:    msg.id,
+          sucesso:  evoMedia.sucesso,
+          hasBase64: !!evoMedia.dados?.base64,
+          erro:     evoMedia.erro || null,
+          status:   evoMedia.status || null,
+        });
+
         if (!evoMedia.sucesso || !evoMedia.dados?.base64) {
           resultados.push({ id: msg.id, status: 'evolution_falhou', erro: evoMedia.erro });
           continue;
@@ -395,6 +417,7 @@ async function sincronizarAudios(req, res) {
           contentType: mime, upsert: true,
         });
         if (upErr) {
+          console.warn('WA_AUDIO_SYNC_UPLOAD_FAIL', { msgId: msg.id, erro: upErr.message });
           resultados.push({ id: msg.id, status: 'storage_upload_falhou', erro: upErr.message });
           continue;
         }
@@ -422,6 +445,7 @@ async function sincronizarAudios(req, res) {
         resultados.push({ id: msg.id, status: 'sincronizado', storagePath });
 
       } catch (eSync) {
+        console.error('WA_AUDIO_SYNC_MSG_ERROR', { msgId: msg.id, erro: eSync.message });
         resultados.push({ id: msg.id, status: 'erro', erro: eSync.message });
       }
     }
