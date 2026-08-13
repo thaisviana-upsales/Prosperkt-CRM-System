@@ -5,8 +5,10 @@
 -- ============================================================
 
 -- 1. Colunas de Storage em mensagens_whatsapp
-ALTER TABLE public.mensagens_whatsapp ADD COLUMN IF NOT EXISTS storage_bucket TEXT;
-ALTER TABLE public.mensagens_whatsapp ADD COLUMN IF NOT EXISTS storage_path   TEXT;
+ALTER TABLE public.mensagens_whatsapp ADD COLUMN IF NOT EXISTS storage_bucket        TEXT;
+ALTER TABLE public.mensagens_whatsapp ADD COLUMN IF NOT EXISTS storage_path          TEXT;
+ALTER TABLE public.mensagens_whatsapp ADD COLUMN IF NOT EXISTS mime_type             TEXT;
+ALTER TABLE public.mensagens_whatsapp ADD COLUMN IF NOT EXISTS evolution_message_id  TEXT;
 
 -- 2. Índices
 CREATE INDEX IF NOT EXISTS idx_mw_tipo_audio

@@ -103,12 +103,14 @@ async function enviarAudio(req, res) {
   try {
     const { sb, isSupa } = getProvider();
 
+    console.log('WA_AUDIO_SEND_ENDPOINT_HIT', { hasUser: !!req.usuario, hasFile: !!req.file });
+
     if (!isSupa) return res.status(400).json({ sucesso: false, erro: 'Storage requer Supabase.' });
 
     const conversaId = req.body?.conversa_id;
     const arquivo    = req.file;
 
-    // ── Validações ──────────────────────────────────────────────────────────
+    // ── Validações ──────────────────────────────────────────────────────────────────
     if (!conversaId)
       return res.status(400).json({ sucesso: false, erro: 'conversa_id obrigatório.' });
     if (!arquivo)
@@ -118,9 +120,8 @@ async function enviarAudio(req, res) {
     if (!arquivo.mimetype.startsWith('audio/'))
       return res.status(400).json({ sucesso: false, erro: 'Formato de áudio não suportado.' });
 
-    console.log('WHATSAPP_AUDIO_SEND_ENDPOINT_RECEIVED', {
-      conversaId, size: arquivo.size, mime: arquivo.mimetype,
-    });
+    console.log('WA_AUDIO_AUTH_OK',       { usuario: req.usuario?.id });
+    console.log('WA_AUDIO_FILE_RECEIVED', { size: arquivo.size, mime: arquivo.mimetype, conversaId });
 
     // ── 1. Busca conversa ────────────────────────────────────────────────────
     const conversa = await buscarConversa(sb, conversaId, req.usuario);
@@ -132,7 +133,7 @@ async function enviarAudio(req, res) {
     if (!telNormalizado)
       return res.status(400).json({ sucesso: false, erro: 'Conversa sem telefone válido para envio.' });
 
-    // ── 3. Upload para Supabase Storage ──────────────────────────────────────
+    // ── 3. Upload para Supabase Storage ───────────────────────────────────────────────────────────────────────────
     console.log('WHATSAPP_AUDIO_FILE_VALIDATED', { size: arquivo.size, mime: arquivo.mimetype });
 
     const ext         = extFromMime(arquivo.mimetype);
@@ -146,19 +147,20 @@ async function enviarAudio(req, res) {
     });
 
     if (upErr) {
-      console.warn('WHATSAPP_AUDIO_STORAGE_UPLOAD_ERROR', { erro: upErr.message });
+      console.warn('WA_AUDIO_STORAGE_UPLOAD_ERROR', { erro: upErr.message });
       return res.status(500).json({ sucesso: false, erro: 'Falha ao salvar áudio no Storage.' });
     }
-    console.log('WHATSAPP_AUDIO_STORAGE_UPLOAD_SUCCESS', { storagePath, bucket: BUCKET, bytes: arquivo.size });
+    console.log('WA_AUDIO_STORAGE_UPLOAD_SUCCESS', { storagePath, bucket: BUCKET, bytes: arquivo.size });
 
-    // ── 4. Gera signed URL para Evolution (curta: 10 min suficiente para envio) ──
+    // ── 4. Gera signed URL curta para Evolution (10 min) ───────────────────────────────────────────────────────────────────────────
     const evoSignedUrl = await gerarSignedUrl(sb, storagePath, 600);
     if (!evoSignedUrl) {
       return res.status(500).json({ sucesso: false, erro: 'Falha ao gerar URL de áudio para envio.' });
     }
+    console.log('WA_AUDIO_SIGNED_URL_CREATED', { type: 'evo_short', expires: '10min' });
 
-    // ── 5. Envia pela Evolution ───────────────────────────────────────────────
-    console.log('WHATSAPP_AUDIO_EVOLUTION_SEND_START', { telefone: telNormalizado });
+    // ── 5. Envia pela Evolution ───────────────────────────────────────────────────────────────────────────────
+    console.log('WA_AUDIO_EVOLUTION_SEND_START', { telefone: telNormalizado });
     let evoOk  = false;
     let evoErr = null;
 
@@ -167,22 +169,22 @@ async function enviarAudio(req, res) {
       evoOk  = !!(evoResult.sucesso || evoResult.dados?.key?.id);
       evoErr = evoOk ? null : (evoResult.erro || 'Evolution retornou erro');
       if (evoOk) {
-        console.log('WHATSAPP_AUDIO_EVOLUTION_SEND_SUCCESS', { msgId: evoResult.dados?.key?.id });
+        console.log('WA_AUDIO_EVOLUTION_SEND_SUCCESS', { msgId: evoResult.dados?.key?.id });
       } else {
-        console.warn('WHATSAPP_AUDIO_EVOLUTION_SEND_FAIL', { evoErr });
+        console.warn('WA_AUDIO_EVOLUTION_SEND_FAIL', { evoErr });
       }
     } else {
-      console.warn('WHATSAPP_AUDIO_EVOLUTION_NOT_CONFIGURED');
+      console.warn('WA_AUDIO_EVOLUTION_NOT_CONFIGURED');
     }
 
-    // ── 6. Gera signed URL longa para armazenar no banco (1 ano) ─────────────
+    // ── 6. Gera signed URL longa para banco (1 ano) ───────────────────────────────────────────────────────────────────────────────
     const longSignedUrl = await gerarSignedUrl(sb, storagePath, 3600 * 24 * 365);
 
-    // ── 7. Salva mensagem no banco ────────────────────────────────────────────
-    const agora      = new Date().toISOString();
+    // ── 7a. INSERT com colunas GARANTIDAS (base schema — nunca falha por coluna ausente) ─
+    const agora       = new Date().toISOString();
     const arquivoNome = `audio_${ts}.${ext}`;
+    const coreInsert  = {
 
-    const insertPayload = {
       id:           msgId,
       conversa_id:  conversaId,
       lead_id:      conversa.lead_id || null,
@@ -197,18 +199,23 @@ async function enviarAudio(req, res) {
       criado_em:    agora,
     };
 
-    // Tenta adicionar colunas do patch v44 se existirem
-    try { insertPayload.mime_type      = arquivo.mimetype; } catch {}
-    try { insertPayload.storage_bucket = BUCKET;           } catch {}
-    try { insertPayload.storage_path   = storagePath;      } catch {}
-
-    const { error: errInsert } = await sb.from(MENSAGENS_TABLE).insert(insertPayload);
+    const { error: errInsert } = await sb.from(MENSAGENS_TABLE).insert(coreInsert);
     if (errInsert) {
-      console.warn('WHATSAPP_AUDIO_MESSAGE_DB_ERROR', { erro: errInsert.message });
-      // Não falha a request — áudio foi enviado, só log falhou
+      console.warn('WA_AUDIO_MESSAGE_DB_ERROR', { erro: errInsert.message });
+      // Não falha a request — áudio já foi enviado pela Evolution
     } else {
-      console.log('WHATSAPP_AUDIO_MESSAGE_DB_SAVED', { msgId, storagePath, evoOk });
+      console.log('WA_AUDIO_MESSAGE_DB_SAVED', { msgId, storagePath, evoOk });
+
+      // ── 7b. UPDATE colunas opcionais (patch v44+) — best-effort, falha silenciosa ─
+      await sb.from(MENSAGENS_TABLE).update({
+        mime_type:      arquivo.mimetype,
+        storage_bucket: BUCKET,
+        storage_path:   storagePath,
+      }).eq('id', msgId)
+        .then(() => console.log('WA_AUDIO_MESSAGE_DB_OPT_COLS_SAVED', { msgId }))
+        .catch(e  => console.warn('WA_AUDIO_MESSAGE_DB_OPT_COLS_SKIP', { erro: e.message }));
     }
+
 
     // ── 8. Atualiza conversa ───────────────────────────────────────────────
     await sb.from(CONVERSAS_TABLE).update({
@@ -219,9 +226,9 @@ async function enviarAudio(req, res) {
       status:          'ABERTA',
     }).eq('id', conversaId).catch(() => {});
 
-    console.log('WHATSAPP_AUDIO_SEND_DONE', { msgId, conversaId, evoOk });
+    console.log('WA_AUDIO_SEND_DONE', { msgId, conversaId, evoOk });
 
-    // ── 9. Retorna mensagem para o frontend renderizar ─────────────────────
+    // ── 9. Retorna mensagem para o frontend renderizar ───────────────────────────────────────────────────────────────────────────────
     return res.status(201).json({
       sucesso: true,
       dados: {
@@ -245,7 +252,7 @@ async function enviarAudio(req, res) {
     });
 
   } catch (e) {
-    console.error('WHATSAPP_AUDIO_SEND_ERROR', e.message);
+    console.error('WA_AUDIO_SEND_ERROR', e.message);
     return res.status(500).json({ sucesso: false, erro: 'Erro interno ao enviar áudio.' });
   }
 }
@@ -263,6 +270,8 @@ async function sincronizarAudios(req, res) {
     const conversa = await buscarConversa(sb, conversaId, req.usuario);
     if (!conversa)
       return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
+
+    console.log('WA_AUDIO_RECEIVED_SYNC_START', { conversaId, usuario: req.usuario?.id });
 
     // Busca mensagens de áudio recebidas sem storage_path
     const { data: msgs, error: errM } = await sb
@@ -323,6 +332,7 @@ async function sincronizarAudios(req, res) {
           resultados.push({ id: msg.id, status: 'storage_upload_falhou', erro: upErr.message });
           continue;
         }
+        console.log('WA_AUDIO_RECEIVED_STORAGE_SUCCESS', { msgId: msg.id, storagePath });
 
         // Gera signed URL longa
         const signedUrl = await gerarSignedUrl(sb, storagePath, 3600 * 24 * 365);
@@ -390,10 +400,11 @@ async function servirAudioAssinado(req, res) {
 // Confirma que o módulo isolado de áudio está registrado
 // ───────────────────────────────────────────────────────────────────────────────
 function health(req, res) {
+  console.log('WA_AUDIO_ROUTE_READY', { routes: 4 });
   return res.json({
     sucesso: true,
-    module: 'whatsapp-audio',
-    routes: [
+    module:  'whatsapp-audio',
+    routes:  [
       'POST /api/whatsapp/audio/send',
       'POST /api/whatsapp/audio/sync-conversa/:conversaId',
       'GET  /api/whatsapp/audio/play/:msgId',
