@@ -64,8 +64,10 @@ function telSoDigitos(tel = '') {
 // ─── Helper: gera signed URL longa (1 ano) ───────────────────────────────────
 async function gerarSignedUrl(sb, storagePath, expiresIn = 3600 * 24 * 365) {
   const { data, error } = await sb.storage.from(BUCKET).createSignedUrl(storagePath, expiresIn);
-  if (error || !data?.signedUrl) return null;
-  return data.signedUrl;
+  if (error) console.warn('WA_AUDIO_SIGNED_URL_ERROR', { storagePath, err: error.message, code: error.statusCode });
+  if (!data?.signedUrl) console.warn('WA_AUDIO_SIGNED_URL_NULL', { storagePath, hasData: !!data });
+  else console.log('WA_AUDIO_SIGNED_URL_OK', { bytes: data.signedUrl.length });
+  return data?.signedUrl || null;
 }
 
 // ─── Helper: busca conversa e valida permissão ───────────────────────────────
@@ -224,7 +226,7 @@ async function enviarAudio(req, res) {
       direcao:      'enviada',
       status:       evoOk ? 'enviado' : 'erro',
       vendedor_id:  req.usuario.id,
-      arquivo_url:    `/api/whatsapp/audio/play/${msgId}`,
+      arquivo_url:    longSignedUrl || storagePath,
       arquivo_nome: arquivoNome,
       criado_em:    agora,
       ...(duracaoSeg ? { media_duration: duracaoSeg } : {}),
@@ -277,7 +279,7 @@ async function enviarAudio(req, res) {
         direcao:         'enviada',
         status:          evoOk ? 'enviado' : 'erro',
         vendedor_id:     req.usuario.id,
-        arquivo_url:     `/api/whatsapp/audio/play/${msgId}`,
+        arquivo_url:     longSignedUrl || storagePath,
         arquivo_nome:    arquivoNome,
         mime_type:       arquivo.mimetype,
         storage_path:    storagePath,
@@ -506,6 +508,111 @@ async function servirAudioAssinado(req, res) {
 // GET /api/whatsapp/audio/health
 // Confirma que o módulo isolado de áudio está registrado
 // ───────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// MIDDLEWARE: resolverMidiaRecebida
+// Chamado ANTES de router.get('/whatsapp/media/:conversaId/:msgId', autenticar, waAudioCtrl.resolverMidiaRecebida, whatsappCtrl.servirMidia);
+// Se msg.tipo='audio' e arquivo_url=null (áudio recebido sem URL):
+//   1. Busca base64 via Evolution getBase64FromMediaMessage
+//   2. Faz upload no Supabase Storage
+//   3. Atualiza arquivo_url no banco
+//   4. Chama next() → servirMidia encontra arquivo_url e serve o áudio
+// NÃO bloqueia em caso de erro — sempre chama next().
+// ─────────────────────────────────────────────────────────────────────────────
+async function resolverMidiaRecebida(req, res, next) {
+  try {
+    const { sb, isSupa } = getProvider();
+    if (!isSupa) return next();
+
+    const { msgId, conversaId } = req.params;
+
+    // Busca a mensagem — campos mínimos para a decisão
+    const { data: msg } = await sb.from(MENSAGENS_TABLE)
+      .select('id, tipo, arquivo_url, evolution_message_id, mime_type')
+      .eq('id', msgId)
+      .eq('conversa_id', conversaId)
+      .single();
+
+    // Só age quando: tipo=audio E arquivo_url é nulo/vazio
+    if (!msg || msg.tipo !== 'audio' || msg.arquivo_url) return next();
+
+    const evoMsgId = msg.evolution_message_id;
+    console.log('WA_AUDIO_MEDIA_RESOLVER_START', { msgId, evoMsgId: evoMsgId || '(null)' });
+
+    if (!evoMsgId) {
+      console.warn('WA_AUDIO_MEDIA_RESOLVER_NO_EVOID', { msgId });
+      return next();
+    }
+
+    // Determina remoteJid a partir da conversa
+    const { data: conv } = await sb.from(CONVERSAS_TABLE)
+      .select('telefone, dados_extras')
+      .eq('id', conversaId)
+      .single();
+
+    let remoteJid = null;
+    if (conv?.telefone && !conv.telefone.startsWith('LID:')) {
+      const digits = telSoDigitos(conv.telefone);
+      if (digits && digits.length >= 10) remoteJid = `${digits}@s.whatsapp.net`;
+    }
+    if (!remoteJid && conv?.dados_extras) {
+      try {
+        const extras = typeof conv.dados_extras === 'string'
+          ? JSON.parse(conv.dados_extras)
+          : conv.dados_extras;
+        remoteJid = extras?.remoteJid || null;
+      } catch (_) {}
+    }
+
+    if (!remoteJid) {
+      console.warn('WA_AUDIO_MEDIA_RESOLVER_NO_JID', { msgId, telefone: conv?.telefone });
+      return next();
+    }
+
+    // Chama Evolution: getBase64FromMediaMessage
+    const evoResult = await evoSvc.getBase64Media(evoMsgId, remoteJid);
+    if (!evoResult?.sucesso || !evoResult?.dados?.base64) {
+      console.warn('WA_AUDIO_MEDIA_RESOLVER_EVO_FAIL', { msgId, evoMsgId, err: evoResult?.erro });
+      return next();
+    }
+
+    const base64   = evoResult.dados.base64;
+    const mimetype = evoResult.dados.mimetype || msg.mime_type || 'audio/ogg';
+    const ext      = extFromMime(mimetype);
+    const audioBuf = Buffer.from(base64, 'base64');
+
+    // Upload no Supabase Storage
+    const storagePath = `whatsapp/conversas/${conversaId}/audios/recebidos/${Date.now()}.${ext}`;
+    const { error: upErr } = await sb.storage.from(BUCKET).upload(storagePath, audioBuf, {
+      contentType: mimetype,
+      upsert: false,
+    });
+
+    let novaArquivoUrl = null;
+    const dbUpdate = { mime_type: mimetype };
+
+    if (!upErr) {
+      const signedUrl = await gerarSignedUrl(sb, storagePath, 3600 * 24 * 365);
+      novaArquivoUrl = signedUrl || storagePath;
+      dbUpdate.arquivo_url    = novaArquivoUrl;
+      dbUpdate.storage_path   = storagePath;
+      dbUpdate.storage_bucket = BUCKET;
+      console.log('WA_AUDIO_MEDIA_RESOLVER_UPLOADED', { msgId, storagePath, hasSignedUrl: !!signedUrl });
+    } else {
+      // Fallback: base64 embutido — servirMidia tem handler específico para data:
+      novaArquivoUrl         = `data:${mimetype};base64,${base64}`;
+      dbUpdate.arquivo_url   = novaArquivoUrl;
+      console.warn('WA_AUDIO_MEDIA_RESOLVER_BASE64_FALLBACK', { msgId, upErr: upErr.message });
+    }
+
+    await sb.from(MENSAGENS_TABLE).update(dbUpdate).eq('id', msgId);
+    console.log('WA_AUDIO_MEDIA_RESOLVER_OK', { msgId, urlType: novaArquivoUrl.startsWith('data:') ? 'base64' : 'signed' });
+
+  } catch (e) {
+    console.warn('WA_AUDIO_MEDIA_RESOLVER_ERR', { err: e.message });
+  }
+  return next(); // nunca bloqueia servirMidia
+}
+
 function health(req, res) {
   console.log('WA_AUDIO_ROUTE_READY', { routes: 4 });
   return res.json({
@@ -527,5 +634,6 @@ module.exports = {
   enviarAudio,
   sincronizarAudios,
   servirAudioAssinado,
+  resolverMidiaRecebida,
   health,
 };

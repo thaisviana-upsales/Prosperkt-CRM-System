@@ -233,7 +233,7 @@ router.get   ('/whatsapp/conversas/:id/mensagens',autenticar, whatsappCtrl.lista
 router.post  ('/whatsapp/conversas/:id/mensagens',autenticar, whatsappCtrl.enviarMensagem);
 router.patch ('/whatsapp/conversas/:id/status',   autenticar, whatsappCtrl.atualizarStatus);
 // ── Proxy seguro de mídia — serve áudio/imagem sem expor EVOLUTION_API_KEY ──
-router.get   ('/whatsapp/media/:conversaId/:msgId', autenticar, whatsappCtrl.servirMidia);
+router.get   ('/whatsapp/media/:conversaId/:msgId', autenticar, waAudioCtrl.resolverMidiaRecebida, whatsappCtrl.servirMidia);
 // ── Módulo isolado de áudio (não altera fluxo de texto) ────────────────────────────
 router.post  ('/whatsapp/audio/send',                autenticar, waAudioCtrl.upload.single('audio'), waAudioCtrl.enviarAudio, waAudioCtrl.handleUploadError);
 router.post  ('/whatsapp/audio/sync-conversa/:conversaId', autenticar, waAudioCtrl.sincronizarAudios);
