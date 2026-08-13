@@ -1210,7 +1210,7 @@ async function enviarMensagem(req, res) {
     const textoOrigemLog = req.body.script_id ? `script:${req.body.script_id}` : 'manual';
     console.log('SCRIPT_SEND_START', { conversaId: id, origem: textoOrigemLog, telefone: telNormalizado });
 
-    if (!textoParaCliente) {
+    if (!textoParaCliente && !(tipo === 'audio' && arquivo_url)) {
       return res.status(400).json({
         sucesso: false,
         erro: 'Não foi possível enviar. A mensagem ficou vazia após processamento.',
