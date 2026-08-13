@@ -1020,3 +1020,168 @@ body.sidebar-collapsed .main-content.wa-main {
   background: rgba(48,209,88,.15) !important;
   color: #30D158 !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   PROSPEKT CRM — Conversas: Refinamento Premium v4
+   APENAS CSS puro — zero alteração de funcionalidade.
+   Objetivo: layout mais limpo, respirável e premium.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── 1. Área de mensagens: espaçamento e padding ────────────────── */
+.wa-messages {
+  gap: 10px;              /* de 4px → 10px: muito mais respirável */
+  padding: 22px 26px 14px;
+}
+
+/* ── 2. Wrapper da mensagem: alinhamento enviada / recebida ─────── */
+/* CORRIGES O "CHAPADO": cada msg ocupa só o espaço do seu conteúdo */
+.wa-msg {
+  display: flex;
+  flex-direction: column;
+  max-width: 62%;       /* de 68% → 62%: mais confortável */
+  animation: msgIn .2s cubic-bezier(.16,1,.3,1);
+}
+.wa-msg.enviada  { align-self: flex-end;   align-items: flex-end;   }
+.wa-msg.recebida { align-self: flex-start; align-items: flex-start; }
+.wa-msg.sistema  {
+  align-self: center;
+  align-items: center;
+  max-width: 78%;
+}
+
+/* Respiro extra ao trocar de remetente */
+.wa-msg.enviada  + .wa-msg.recebida,
+.wa-msg.recebida + .wa-msg.enviada  { margin-top: 6px; }
+
+/* ── 3. Bubble: max-width controlado pelo .wa-msg pai ───────────── */
+.wa-bubble {
+  max-width: 100%;      /* constraint vem do .wa-msg acima */
+  min-width: 68px;
+  padding: 9px 13px 7px;
+  border-radius: 18px;
+}
+
+/* ── 4. Mensagem RECEBIDA — off-white suave (sem #FFF puro) ─────── */
+.wa-msg.recebida .wa-bubble {
+  background: #ECEEF0;
+  border: 1px solid rgba(0,0,0,.055);
+  border-top-left-radius: 4px;
+  box-shadow:
+    0 1px 2px rgba(0,0,0,.09),
+    0 2px 8px rgba(0,0,0,.05);
+}
+.wa-msg.recebida .wa-bubble-text  { color: #18181C; }
+.wa-msg.recebida .wa-bubble-time  { color: rgba(50,50,65,.50); }
+
+/* ── 5. Mensagem ENVIADA — verde escuro mais refinado ───────────── */
+.wa-msg.enviada .wa-bubble {
+  background: linear-gradient(155deg, #1A4C2B 0%, #1F6235 100%);
+  border: 1px solid rgba(48,209,88,.13);
+  border-bottom-right-radius: 4px;
+  box-shadow:
+    0 1px 3px rgba(0,0,0,.20),
+    0 3px 12px rgba(0,0,0,.14),
+    inset 0 1px 0 rgba(255,255,255,.05);
+}
+.wa-msg.enviada .wa-bubble-text   { color: rgba(255,255,255,.93); }
+.wa-msg.enviada .wa-bubble-time   { color: rgba(255,255,255,.36); }
+
+/* ── 6. Mensagem SISTEMA — neutro e centrada ────────────────────── */
+.wa-msg.sistema .wa-bubble {
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 20px;
+  box-shadow: none;
+  text-align: center;
+}
+.wa-msg.sistema .wa-bubble-text {
+  color: rgba(245,245,245,.48);
+  font-size: .8rem;
+}
+
+/* ── 7. Rótulo do agente [Nome do Agente] ───────────────────────── */
+.wa-msg-autor {
+  font-size: .63rem;
+  font-weight: 500;
+  color: rgba(255,255,255,.35);
+  margin-bottom: 3px;
+  padding: 0 2px;
+}
+
+/* ── 8. Ícones de status (✓ ✓✓) — tamanho e cores corretas ─────── */
+.wa-bubble-status {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.wa-bubble-status svg { width: 14px; height: 14px; }
+.wa-bubble-status.pending   svg { stroke: rgba(255,255,255,.30); }
+.wa-bubble-status.sent      svg { stroke: rgba(255,255,255,.48); }
+.wa-bubble-status.delivered svg { stroke: rgba(255,255,255,.65); }
+.wa-bubble-status.read      svg { stroke: #62D9FF; }
+.wa-bubble-status.failed    svg { stroke: #FF5555; }
+
+/* ── 9. Player de áudio em fundo claro (recebida) ───────────────── */
+.wa-msg.recebida .wa-audio-player {
+  background: rgba(0,0,0,.05);
+  border: 1px solid rgba(0,0,0,.07);
+  min-width: 190px;
+}
+.wa-msg.recebida .wa-audio-play-btn {
+  background: #22A74B;
+  color: #fff;
+}
+.wa-msg.recebida .wa-audio-progress { background: rgba(0,0,0,.12); }
+.wa-msg.recebida .wa-audio-bar-fill { background: #22A74B; }
+.wa-msg.recebida .wa-audio-time     { color: rgba(30,30,45,.50); }
+
+/* ── 10. Lista de conversas — mais legível ──────────────────────── */
+.wa-conv-name {
+  font-size: .875rem;
+  font-weight: 600;
+  color: rgba(235,235,245,.97);
+  letter-spacing: -.01em;
+}
+.wa-conv-preview {
+  font-size: .72rem;
+  color: rgba(235,235,245,.36);
+}
+.wa-conv-item.active { background: rgba(48,209,88,.12); }
+.wa-conv-item.active .wa-conv-name {
+  color: #fff;
+  font-weight: 700;
+}
+.wa-conv-time {
+  font-size: .65rem;
+  color: rgba(245,245,245,.30);
+}
+.wa-conv-item.active .wa-conv-time { color: rgba(48,209,88,.70); }
+
+/* ── 11. Header da conversa — micro-refinamentos ────────────────── */
+.wa-chat-name { letter-spacing: -.015em; }
+.wa-chat-avatar {
+  box-shadow:
+    0 0 0 2px rgba(48,209,88,.22),
+    0 4px 12px rgba(0,0,0,.22);
+}
+
+/* ── 12. Separador de data — mais discreto ──────────────────────── */
+.wa-date-sep      { margin: 16px 0 8px; }
+.wa-date-sep span {
+  background: rgba(255,255,255,.065);
+  border-color: rgba(255,255,255,.09);
+  font-size: .63rem;
+  color: rgba(245,245,245,.38);
+  letter-spacing: .055em;
+}
+
+/* ── 13. Input bar — micro-refinamento ──────────────────────────── */
+.wa-input-bar { padding: 10px 16px; }
+
+/* ── 14. Mobile: ajuste proporcional ────────────────────────────── */
+@media (max-width: 768px) {
+  .wa-msg { max-width: 76%; }
+  .wa-messages { gap: 8px; padding: 16px 14px 10px; }
+}
+
