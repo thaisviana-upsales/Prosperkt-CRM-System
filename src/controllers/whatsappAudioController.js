@@ -207,24 +207,30 @@ async function enviarAudio(req, res) {
       console.log('WA_AUDIO_MESSAGE_DB_SAVED', { msgId, storagePath, evoOk });
 
       // ── 7b. UPDATE colunas opcionais (patch v44+) — best-effort, falha silenciosa ─
-      await sb.from(MENSAGENS_TABLE).update({
+      const optCols = {
         mime_type:      arquivo.mimetype,
         storage_bucket: BUCKET,
         storage_path:   storagePath,
-      }).eq('id', msgId)
-        .then(() => console.log('WA_AUDIO_MESSAGE_DB_OPT_COLS_SAVED', { msgId }))
-        .catch(e  => console.warn('WA_AUDIO_MESSAGE_DB_OPT_COLS_SKIP', { erro: e.message }));
+      };
+      const { error: optErr } = await sb.from(MENSAGENS_TABLE).update(optCols).eq('id', msgId);
+      if (optErr) {
+        console.warn('WA_AUDIO_MESSAGE_DB_OPT_COLS_SKIP', { erro: optErr.message });
+      } else {
+        console.log('WA_AUDIO_MESSAGE_DB_OPT_COLS_SAVED', { msgId });
+      }
     }
 
 
     // ── 8. Atualiza conversa ───────────────────────────────────────────────
-    await sb.from(CONVERSAS_TABLE).update({
-      ultima_mensagem: '[Áudio]',
-      ultima_direcao:  'enviada',
-      ultima_msg_em:   agora,
-      atualizado_em:   agora,
-      status:          'ABERTA',
-    }).eq('id', conversaId).catch(() => {});
+    try {
+      await sb.from(CONVERSAS_TABLE).update({
+        ultima_mensagem: '[Áudio]',
+        ultima_direcao:  'enviada',
+        ultima_msg_em:   agora,
+        atualizado_em:   agora,
+        status:          'ABERTA',
+      }).eq('id', conversaId);
+    } catch { /* não crítico */ }
 
     console.log('WA_AUDIO_SEND_DONE', { msgId, conversaId, evoOk });
 
