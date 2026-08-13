@@ -408,23 +408,33 @@
 
     console.log('[WAAudio v2] Módulo de áudio isolado ativo.');
 
-    // ── Fix data-src dos players: redireciona para proxy /api/.../play/:msgId ──
-    // O proxy serve áudio tanto do Supabase (áudio enviado) quanto da Evolution
-    // (áudio recebido pelo webhook) — sem CORS, sem auth obrigatória.
+    // ── Fix data-src dos players: redireciona TODOS para /api/whatsapp/audio/play/:msgId ──
+    // MOTIVO: servirMidia (frozen, /api/whatsapp/media/) ao buscar Supabase signed URL
+    //   adiciona { apikey: EVOLUTION_API_KEY } — chave ERRADA — podendo causar 401/502.
+    // servirAudioAssinado (/api/whatsapp/audio/play/) usa sb.storage.download() que
+    //   autentica corretamente via cliente Supabase nativo. 100% confiavel.
     function _fixAudioPlayerSrc(player) {
       if (!player || player.dataset.srcFixed) return;
       const src   = player.dataset.src || '';
       const msgId = player.dataset.id;
       if (!msgId) return;
-      // Já é URL proxy → não precisa de fix
+      // Ja usa o proxy correto → sem alteracao
       if (src.startsWith('/api/whatsapp/audio/play/')) return;
-      // URL da Evolution ou Supabase → substitui pelo proxy
-      if (src && (src.includes('evolution') || src.includes('supabase') || src.startsWith('http'))) {
+      // Redireciona qualquer outra URL de audio para o proxy correto:
+      // - URLs externas (evolution/supabase/http)
+      // - /api/whatsapp/media/ (rota interna que usa servirMidia — problematico para Supabase URLs)
+      if (src && (
+        src.includes('evolution') ||
+        src.includes('supabase') ||
+        src.startsWith('http') ||
+        src.startsWith('/api/whatsapp/media/')
+      )) {
         player.dataset.src      = `/api/whatsapp/audio/play/${msgId}`;
         player.dataset.srcFixed = '1';
-        console.log('[WAAudio] data-src → proxy', { msgId, antigoSrc: src.slice(0, 60) });
+        console.log('[WAAudio] data-src corrigido → /audio/play/', { msgId, antigo: src.slice(0, 60) });
       }
     }
+
 
     // Aplica a todos os players já no DOM
     document.querySelectorAll('.wa-audio-player[data-id]').forEach(_fixAudioPlayerSrc);

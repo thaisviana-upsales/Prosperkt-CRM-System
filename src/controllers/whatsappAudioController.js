@@ -510,6 +510,19 @@ async function servirAudioAssinado(req, res) {
       return res.status(404).end();
     }
 
+    // Se for base64 embutido (fallback quando Supabase signed URL falhou), decodifica e serve
+    if (evoUrl.startsWith('data:')) {
+      const [header, b64data] = evoUrl.split(',');
+      const mime = header.replace('data:', '').replace(';base64', '') || msg.mime_type || 'audio/ogg';
+      const buf  = Buffer.from(b64data, 'base64');
+      res.set('Content-Type',   mime);
+      res.set('Content-Length', buf.length);
+      res.set('Cache-Control',  'private, max-age=3600');
+      res.set('Accept-Ranges',  'bytes');
+      console.log('WA_AUDIO_PLAY_SERVED_BASE64', { msgId, bytes: buf.length, mime });
+      return res.send(buf);
+    }
+
     const evoKey  = process.env.EVOLUTION_API_KEY || '';
     const fetchFn = globalThis.fetch || (await import('node-fetch').then(m => m.default).catch(() => null));
     if (!fetchFn) return res.status(500).end();
