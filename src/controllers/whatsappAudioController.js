@@ -398,26 +398,35 @@ async function sincronizarAudios(req, res) {
           resultados.push({ id: msg.id, status: 'storage_upload_falhou', erro: upErr.message });
           continue;
         }
-        console.log('WA_AUDIO_RECEIVED_STORAGE_SUCCESS', { msgId: msg.id, storagePath });
-
-        // Gera signed URL longa
+        // Gera signed URL longa — fallback para base64 se Supabase falhar
         const signedUrl = await gerarSignedUrl(sb, storagePath, 3600 * 24 * 365);
 
         // Atualiza mensagem no banco
+        // IMPORTANTE: se signedUrl=null, usa base64 embutido (servirMidia trata data: nativamente)
+        // Nunca usa storagePath relativo — quebra o fetch() do Node.js em servirMidia
+        const arquivoUrlFinal = signedUrl
+          || `data:${mime};base64,${b64Data}`;
+
         await sb.from(MENSAGENS_TABLE).update({
-          arquivo_url:    signedUrl || msg.arquivo_url,
+          arquivo_url:    arquivoUrlFinal,
           storage_path:   storagePath,
           storage_bucket: BUCKET,
+          mime_type:      mime,
         }).eq('id', msg.id);
 
-        resultados.push({ id: msg.id, status: 'ok', storagePath });
+        console.log('WA_AUDIO_RECEIVED_SYNC_SAVED', {
+          msgId: msg.id,
+          storagePath,
+          urlType: signedUrl ? 'signed_url' : 'base64_fallback',
+        });
+        resultados.push({ id: msg.id, status: 'sincronizado', storagePath });
 
       } catch (eSync) {
         resultados.push({ id: msg.id, status: 'erro', erro: eSync.message });
       }
     }
 
-    const qtdOk = resultados.filter(r => r.status === 'ok').length;
+    const qtdOk = resultados.filter(r => r.status === 'sincronizado').length;
     return res.json({ sucesso: true, sincronizados: qtdOk, total: msgs.length, resultados });
 
   } catch (e) {
@@ -551,25 +560,33 @@ async function resolverMidiaRecebida(req, res, next) {
 
     const { msgId, conversaId } = req.params;
 
-    // Busca a mensagem — campos mínimos para a decisão
+    // Busca a mensagem com campos suficientes para decidir
     const { data: msg } = await sb.from(MENSAGENS_TABLE)
-      .select('id, tipo, arquivo_url, evolution_message_id, mime_type')
+      .select('id, tipo, direcao, arquivo_url, storage_path, evolution_message_id, mime_type')
       .eq('id', msgId)
       .eq('conversa_id', conversaId)
       .single();
 
-    // Só age quando: tipo=audio E arquivo_url é nulo/vazio
-    if (!msg || msg.tipo !== 'audio' || msg.arquivo_url) return next();
+    // Skip se:
+    //  - nao e audio
+    //  - e enviado (nao recebido)
+    //  - ja esta cacheado permanentemente no Supabase Storage (storage_path preenchido)
+    if (!msg || msg.tipo !== 'audio' || msg.direcao === 'enviada' || msg.storage_path) return next();
 
     const evoMsgId = msg.evolution_message_id;
-    console.log('WA_AUDIO_MEDIA_RESOLVER_START', { msgId, evoMsgId: evoMsgId || '(null)' });
+    console.log('WA_AUDIO_MEDIA_RESOLVER_START', {
+      msgId,
+      evoMsgId: evoMsgId || '(null)',
+      temArquivoUrl: !!msg.arquivo_url,
+    });
 
     if (!evoMsgId) {
       console.warn('WA_AUDIO_MEDIA_RESOLVER_NO_EVOID', { msgId });
       return next();
     }
 
-    // Determina remoteJid a partir da conversa
+    // Determina remoteJid da conversa
+    // Prioridade: telefone normal -> dados_extras.remoteJid (LID JIDs)
     const { data: conv } = await sb.from(CONVERSAS_TABLE)
       .select('telefone, dados_extras')
       .eq('id', conversaId)
@@ -585,6 +602,7 @@ async function resolverMidiaRecebida(req, res, next) {
         const extras = typeof conv.dados_extras === 'string'
           ? JSON.parse(conv.dados_extras)
           : conv.dados_extras;
+        // dados_extras.remoteJid pode ser @lid ou @s.whatsapp.net — ambos aceitos pela Evolution
         remoteJid = extras?.remoteJid || null;
       } catch (_) {}
     }
@@ -594,49 +612,67 @@ async function resolverMidiaRecebida(req, res, next) {
       return next();
     }
 
-    // Chama Evolution: getBase64FromMediaMessage
+    // Baixa o audio da Evolution API (funciona com @lid e @s.whatsapp.net)
     const evoResult = await evoSvc.getBase64Media(evoMsgId, remoteJid);
     if (!evoResult?.sucesso || !evoResult?.dados?.base64) {
-      console.warn('WA_AUDIO_MEDIA_RESOLVER_EVO_FAIL', { msgId, evoMsgId, err: evoResult?.erro });
+      console.warn('WA_AUDIO_MEDIA_RESOLVER_EVO_FAIL', {
+        msgId, evoMsgId,
+        remoteJid: remoteJid.slice(0, 20),
+        err: evoResult?.erro,
+      });
       return next();
     }
 
-    const base64   = evoResult.dados.base64;
-    const mimetype = evoResult.dados.mimetype || msg.mime_type || 'audio/ogg';
-    const ext      = extFromMime(mimetype);
-    const audioBuf = Buffer.from(base64, 'base64');
+    const base64Raw  = evoResult.dados.base64;
+    // base64 pode vir como "data:audio/ogg;base64,XXXXX" ou so os bytes
+    const base64Data = base64Raw.includes(',') ? base64Raw.split(',')[1] : base64Raw;
+    const mimetype   = evoResult.dados.mimetype || msg.mime_type || 'audio/ogg';
+    const ext        = extFromMime(mimetype);
+    const audioBuf   = Buffer.from(base64Data, 'base64');
 
-    // Upload no Supabase Storage
+    // Upload permanente no Supabase Storage
     const storagePath = `whatsapp/conversas/${conversaId}/audios/recebidos/${Date.now()}.${ext}`;
     const { error: upErr } = await sb.storage.from(BUCKET).upload(storagePath, audioBuf, {
       contentType: mimetype,
       upsert: false,
     });
 
-    let novaArquivoUrl = null;
     const dbUpdate = { mime_type: mimetype };
 
     if (!upErr) {
       const signedUrl = await gerarSignedUrl(sb, storagePath, 3600 * 24 * 365);
-      novaArquivoUrl = signedUrl || storagePath;
-      dbUpdate.arquivo_url    = novaArquivoUrl;
-      dbUpdate.storage_path   = storagePath;
-      dbUpdate.storage_bucket = BUCKET;
-      console.log('WA_AUDIO_MEDIA_RESOLVER_UPLOADED', { msgId, storagePath, hasSignedUrl: !!signedUrl });
+
+      if (signedUrl) {
+        // URL assinada de 1 ano — servirMidia faz fetch desta URL diretamente
+        dbUpdate.arquivo_url    = signedUrl;
+        dbUpdate.storage_path   = storagePath;
+        dbUpdate.storage_bucket = BUCKET;
+        console.log('WA_AUDIO_MEDIA_RESOLVER_OK_SIGNED', { msgId, storagePath });
+      } else {
+        // Supabase nao gerou signed URL — base64 embutido como fallback permanente
+        // servirMidia trata data: nativamente (linhas 3834-3841 de whatsappController.js)
+        dbUpdate.arquivo_url    = `data:${mimetype};base64,${base64Data}`;
+        dbUpdate.storage_path   = storagePath; // ainda guarda o path pra futuras tentativas
+        dbUpdate.storage_bucket = BUCKET;
+        console.warn('WA_AUDIO_MEDIA_RESOLVER_OK_BASE64_FALLBACK', { msgId });
+      }
     } else {
-      // Fallback: base64 embutido — servirMidia tem handler específico para data:
-      novaArquivoUrl         = `data:${mimetype};base64,${base64}`;
-      dbUpdate.arquivo_url   = novaArquivoUrl;
-      console.warn('WA_AUDIO_MEDIA_RESOLVER_BASE64_FALLBACK', { msgId, upErr: upErr.message });
+      // Upload falhou — base64 embutido como unico fallback
+      dbUpdate.arquivo_url = `data:${mimetype};base64,${base64Data}`;
+      console.warn('WA_AUDIO_MEDIA_RESOLVER_UPLOAD_FAIL_BASE64', { msgId, err: upErr.message });
     }
 
     await sb.from(MENSAGENS_TABLE).update(dbUpdate).eq('id', msgId);
-    console.log('WA_AUDIO_MEDIA_RESOLVER_OK', { msgId, urlType: novaArquivoUrl.startsWith('data:') ? 'base64' : 'signed' });
+    console.log('WA_AUDIO_MEDIA_RESOLVER_DB_UPDATED', {
+      msgId,
+      urlType: dbUpdate.arquivo_url?.startsWith('data:') ? 'base64' : 'signed_url',
+      bytes: audioBuf.length,
+    });
 
   } catch (e) {
     console.warn('WA_AUDIO_MEDIA_RESOLVER_ERR', { err: e.message });
   }
-  return next(); // nunca bloqueia servirMidia
+  return next(); // NUNCA bloqueia servirMidia
 }
 
 function health(req, res) {

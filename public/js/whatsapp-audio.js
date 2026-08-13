@@ -430,19 +430,23 @@
     document.querySelectorAll('.wa-audio-player[data-id]').forEach(_fixAudioPlayerSrc);
 
     // ── Auto-sync: dispara sincronizarAudios quando há player sem URL (LID JIDs) ──
-    const _syncedConvIds = new Set(); // evita re-sync infinito da mesma conversa
+    // Usa debounce de tempo (30s) em vez de Set, para capturar novos audios na mesma conversa
+    const _syncTimestamps = new Map(); // convId → timestamp do ultimo sync
+    const SYNC_DEBOUNCE_MS = 30 * 1000;
     let   _syncInFlight  = false;
 
     function _autoSyncSeNecessario() {
       if (_syncInFlight) return;
       const conv = _getConvAtiva();
       if (!conv?.id) return;
-      // Já tentou sincronizar esta conversa nesta sessão
-      if (_syncedConvIds.has(conv.id)) return;
       // Verifica se existe player desabilitado (arquivo_url=null) — sem data-id
       if (!document.querySelector('.wa-audio-player:not([data-id])')) return;
 
-      _syncedConvIds.add(conv.id);
+      // Debounce: nao re-sincroniza a mesma conversa antes de 30s
+      const ultimo = _syncTimestamps.get(conv.id) || 0;
+      if (Date.now() - ultimo < SYNC_DEBOUNCE_MS) return;
+
+      _syncTimestamps.set(conv.id, Date.now());
       _syncInFlight = true;
       console.log('[WAAudio] Player inativo detectado — sincronizando audio recebido...', { conversaId: conv.id });
 
@@ -451,9 +455,9 @@
           _syncInFlight = false;
           if (resultado?.sincronizados > 0) {
             console.log('[WAAudio] Sync OK — mensagens atualizadas:', resultado.sincronizados);
-            // carregarMensagens já é chamado dentro de WAAudioSync.sincronizar()
+            // carregarMensagens ja e chamado dentro de WAAudioSync.sincronizar()
           } else {
-            console.log('[WAAudio] Sync: nenhum audio pendente ou Evolution indisponível.');
+            console.log('[WAAudio] Sync: nenhum audio pendente ou Evolution indisponivel.');
           }
         })
         .catch(e => {
@@ -471,10 +475,13 @@
           node.querySelectorAll?.('.wa-audio-player[data-id]').forEach(_fixAudioPlayerSrc);
         }
       }
-      // Após cada mutação, verifica se há players sem URL para sincronizar
+      // Apos cada mutacao, verifica se ha players sem URL para sincronizar
       _autoSyncSeNecessario();
     });
     _playerObserver.observe(document.body, { childList: true, subtree: true });
+
+    // Verificacao inicial: DOM ja pode ter players sem URL ao carregar a pagina
+    setTimeout(_autoSyncSeNecessario, 500);
   }
 
   if (document.readyState === 'loading') {
