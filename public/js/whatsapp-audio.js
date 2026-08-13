@@ -31,7 +31,8 @@
   </svg>`;
 
   // ─── Estado local do módulo ──────────────────────────────────────────────────
-  let _previewBlob = null; // cópia local do blob — nunca reatribui _audioBlob global
+  let _previewBlob     = null; // cópia local do blob — nunca reatribui _audioBlob global
+  let _previewDuration = 0;    // duração em segundos lida do wa-rec-timer
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
   function _isPreviewVisible() {
@@ -81,6 +82,16 @@
 
     _previewBlob = blob;
     console.log('FRONT_AUDIO_BLOB_READY', { size: blob.size, type: blob.type });
+
+    // ── Lê duração do timer de gravação (wa-rec-timer) ──────────────────
+    // O timer fica no DOM com o último valor após parar de gravar (ex: "0:15")
+    try {
+      const timerEl = document.getElementById('wa-rec-timer');
+      const txt     = timerEl?.textContent?.trim() || '0:00';
+      const parts   = txt.split(':').map(Number);
+      _previewDuration = (parts[0] || 0) * 60 + (parts[1] || 0);
+      console.log('FRONT_AUDIO_DURATION_READ', { timer: txt, segundos: _previewDuration });
+    } catch { _previewDuration = 0; }
 
     // ── Fix 1: corrigir duração 0:00 (Chrome/WebM não embute duration) ─────────
     const prevEl = document.getElementById('wa-audio-prev-el');
@@ -132,7 +143,8 @@
 
   // ─── Ações quando preview é ocultado (envio ou cancelamento) ────────────────
   function _aoOcultarPreview() {
-    _previewBlob = null;
+    _previewBlob     = null;
+    _previewDuration = 0;
     console.log('FRONT_AUDIO_CANCEL');
   }
 
@@ -190,7 +202,8 @@
     const fd   = new FormData();
     fd.append('audio',        blob, `audio_${Date.now()}.${ext}`);
     fd.append('conversa_id',  conv.id);
-    if (conv.lead_id) fd.append('lead_id', conv.lead_id);
+    if (conv.lead_id)        fd.append('lead_id', conv.lead_id);
+    if (_previewDuration > 0) fd.append('duracao', String(_previewDuration));
 
     const result = await new Promise((resolve) => {
       const xhr   = new XMLHttpRequest();
@@ -235,15 +248,16 @@
       // Injeta mensagem na conversa sem recarregar da rede
       try {
         const msg = result.dados || {
-          id:          `audio_local_${Date.now()}`,
-          conversa_id: conv.id,
-          lead_id:     conv.lead_id || null,
-          mensagem:    null,
-          tipo:        'audio',
-          direcao:     'enviada',
-          status:      'enviado',
-          arquivo_url: null,
-          criado_em:   new Date().toISOString(),
+          id:             `audio_local_${Date.now()}`,
+          conversa_id:    conv.id,
+          lead_id:        conv.lead_id || null,
+          mensagem:       null,
+          tipo:           'audio',
+          direcao:        'enviada',
+          status:         'enviado',
+          arquivo_url:    null,
+          media_duration: _previewDuration || null,
+          criado_em:      new Date().toISOString(),
         };
         if (Array.isArray(_mensagens)) {
           _mensagens.push(msg);

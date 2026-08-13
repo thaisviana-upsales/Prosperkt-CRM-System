@@ -377,24 +377,23 @@ async function enviarMidia(telefone, opcoes) {
 }
 
 /**
- * Envia áudio como mensagem de voz (PTT).
+ * Envia áudio como mensagem de áudio via sendMedia.
  *
- * HISTORICO DE FALHAS do endpoint sendWhatsAppAudio nesta Evolution:
- *   - { audio: base64 } (flat)         → HTTP 400 'requires property audioMessage'
- *   - audioMessage: base64 (string)    → HTTP 400 'audioMessage is not of a type(s) object'
- *   - audioMessage: { audio: base64 }  → HTTP 500 'Cannot set properties of undefined (setting encoding)'
- *   - audioMessage: { audio: base64 }, encoding: true (raiz) → mesmo HTTP 500
+ * HISTÓRICO DE FALHAS do endpoint sendWhatsAppAudio:
+ *   - Qualquer formato de audioMessage → HTTP 400/500 nesta versão da Evolution
  *
- * SOLUCAO: usa sendMedia com ptt:true que funciona e entrega como mensagem de voz
+ * SOLUÇÃO: usa sendMedia sem ptt:true
+ *   ptt:true causava conflito: WhatsApp espera OGG Opus para PTT,
+ *   mas o áudio gravado pelo Chrome é WebM — servidor rejeita o media
  */
 async function enviarAudio(telefone, audioBase64, mimeType) {
   return enviarMidia(telefone, {
     mediatype: 'audio',
-    mimetype:  mimeType || 'audio/ogg; codecs=opus',  // WhatsApp PTT format
+    mimetype:  mimeType || 'audio/webm;codecs=opus',
     media:     audioBase64,
-    fileName:  'audio.ogg',
+    fileName:  'audio.webm',
     caption:   '',
-    ptt:       true,  // entrega como bolha de voz, nao arquivo
+    // ptt: true removido — causava falha na entrega (formato WebM ≠ OGG PTT)
   });
 }
 

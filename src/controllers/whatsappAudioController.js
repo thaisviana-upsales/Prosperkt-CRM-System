@@ -123,6 +123,10 @@ async function enviarAudio(req, res) {
     console.log('WA_AUDIO_AUTH_OK',       { usuario: req.usuario?.id });
     console.log('WA_AUDIO_FILE_RECEIVED', { size: arquivo.size, mime: arquivo.mimetype, conversaId });
 
+    // ── Duração enviada pelo frontend (lida do wa-rec-timer) ────────────────────
+    const duracaoStr = req.body?.duracao;
+    const duracaoSeg = duracaoStr ? parseInt(duracaoStr, 10) : null;
+
     // ── 1. Busca conversa ────────────────────────────────────────────────────
     const conversa = await buscarConversa(sb, conversaId, req.usuario);
     if (!conversa)
@@ -196,7 +200,6 @@ async function enviarAudio(req, res) {
     const agora       = new Date().toISOString();
     const arquivoNome = `audio_${ts}.${ext}`;
     const coreInsert  = {
-
       id:           msgId,
       conversa_id:  conversaId,
       lead_id:      conversa.lead_id || null,
@@ -209,6 +212,7 @@ async function enviarAudio(req, res) {
       arquivo_url:  longSignedUrl || storagePath,
       arquivo_nome: arquivoNome,
       criado_em:    agora,
+      ...(duracaoSeg ? { media_duration: duracaoSeg } : {}),
     };
 
     const { error: errInsert } = await sb.from(MENSAGENS_TABLE).insert(coreInsert);
@@ -250,20 +254,21 @@ async function enviarAudio(req, res) {
     return res.status(201).json({
       sucesso: true,
       dados: {
-        id:           msgId,
-        conversa_id:  conversaId,
-        lead_id:      conversa.lead_id || null,
-        mensagem:     null,
-        tipo:         'audio',
-        direcao:      'enviada',
-        status:       evoOk ? 'enviado' : 'erro',
-        vendedor_id:  req.usuario.id,
-        arquivo_url:  longSignedUrl || storagePath,
-        arquivo_nome: arquivoNome,
-        mime_type:    arquivo.mimetype,
-        storage_path: storagePath,
-        storage_bucket: BUCKET,
-        criado_em:    agora,
+        id:              msgId,
+        conversa_id:     conversaId,
+        lead_id:         conversa.lead_id || null,
+        mensagem:        null,
+        tipo:            'audio',
+        direcao:         'enviada',
+        status:          evoOk ? 'enviado' : 'erro',
+        vendedor_id:     req.usuario.id,
+        arquivo_url:     longSignedUrl || storagePath,
+        arquivo_nome:    arquivoNome,
+        mime_type:       arquivo.mimetype,
+        storage_path:    storagePath,
+        storage_bucket:  BUCKET,
+        media_duration:  duracaoSeg || null,
+        criado_em:       agora,
       },
       _evo_ok: evoOk,
       _evo_err: evoErr,
