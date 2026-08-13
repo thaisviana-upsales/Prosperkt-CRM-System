@@ -176,6 +176,10 @@ router.delete('/leads/:id/arquivos/:arqId',                   autenticar, arquiv
 router.get   ('/whatsapp/conversas/:id/arquivos',             autenticar, arquivosWaCtrl.listarArquivos);
 router.post  ('/whatsapp/conversas/:id/arquivos',             autenticar, arquivosWaCtrl.upload.single('arquivo'), arquivosWaCtrl.enviarArquivo, arquivosWaCtrl.handleUploadError);
 router.get   ('/whatsapp/arquivos/:arqId/download',           autenticar, arquivosWaCtrl.downloadArquivo);
+// Proxy para download de arquivos RECEBIDOS — Evolution URLs exigem autenticação
+// browser não pode acessar diretamente; este endpoint faz proxy server-side com API key
+router.get   ('/whatsapp/mensagens/:msgId/arquivo',           autenticar, arquivosWaCtrl.proxyArquivoRecebido);
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ADMINISTRAÇÃO DE VENDAS (pós-venda operacional)

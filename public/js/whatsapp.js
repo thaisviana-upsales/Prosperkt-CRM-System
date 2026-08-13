@@ -781,9 +781,15 @@ function renderMensagem(msg) {
   } else if (msg.tipo === 'arquivo' || msg.tipo === 'documento') {
     const url  = msg.arquivo_url || '';
     const nome = msg.arquivo_nome || 'Arquivo';
-    // Para arquivos enviados pelo CRM: usa rota segura de download
-    // Para arquivos recebidos via webhook: usa arquivo_url diretamente (é URL da Evolution/WA)
-    const downloadUrl = url ? url : `/api/whatsapp/arquivos/${msg.id}/download`;
+    // Recebidos: usa proxy backend (/api/whatsapp/mensagens/:msgId/arquivo) — Evolution URLs
+    // podem exigir API key; browser não envia auth header em <a href> direto.
+    // Enviados: arquivo_url se disponível; caso contrário sem botão de download
+    // (arquivo foi enviado pelo WA mas não ficou salvo no CRM — by design).
+    const conversaIdMsg = msg.conversa_id || (_convAtiva?.id ?? '');
+    const downloadUrl = msg.direcao === 'recebida' && msg.id
+      ? `/api/whatsapp/mensagens/${msg.id}/arquivo`
+      : url;
+
     const mime = msg.mime_type || '';
     const icone = mime === 'application/pdf' ? '📄'
       : mime.startsWith('image/') ? '🖼️'
