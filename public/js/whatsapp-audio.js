@@ -47,7 +47,12 @@
     try { return (typeof _audioBlob !== 'undefined' && _audioBlob instanceof Blob) ? _audioBlob : null; } catch { return null; }
   }
 
-  function _getToken() { return localStorage.getItem('token') || ''; }
+  function _getToken() {
+    // Usa o helper oficial do CRM (evita hardcodar chave/storage)
+    try { if (typeof Auth !== 'undefined' && Auth.getToken) return Auth.getToken() || ''; } catch {}
+    // Fallback direto à chave oficial do sessionStorage (pkt_access_token)
+    return sessionStorage.getItem('pkt_access_token') || '';
+  }
 
   function _toast(msg, tipo) {
     try { if (typeof Toast !== 'undefined') Toast.show(msg, tipo); } catch {}
@@ -182,14 +187,28 @@
     if (conv.lead_id) fd.append('lead_id', conv.lead_id);
 
     const result = await new Promise((resolve) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', ENDPOINT_AUDIO, true); // ENDPOINT_AUDIO já contém /api — não duplicar
+      const xhr   = new XMLHttpRequest();
       const token = _getToken();
-      if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+
+      console.log('WA_AUDIO_AUTH_TOKEN_PRESENT', { present: !!token });
+
+      if (!token) {
+        // Sessão expirada — não adianta nem tentar
+        _toast('Sessão expirada. Faça login novamente.', 'error');
+        resolve({ ok: false, erro: 'Token de autenticação ausente.' });
+        return;
+      }
+
+      xhr.open('POST', ENDPOINT_AUDIO, true); // ENDPOINT_AUDIO já contém /api — não duplicar
+      xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+      // NÃO definir Content-Type — browser gera boundary do FormData automaticamente
+
+      console.log('WA_AUDIO_SEND_REQUEST_START', { conversaId: conv.id, size: blob.size, type: blob.type });
 
       xhr.addEventListener('load', () => {
         let json = {};
         try { json = JSON.parse(xhr.responseText); } catch {}
+        console.log('WA_AUDIO_SEND_RESPONSE', { status: xhr.status, ok: xhr.status >= 200 && xhr.status < 300 });
         if (xhr.status >= 200 && xhr.status < 300 && json.sucesso) {
           resolve({ ok: true, dados: json.dados, _evo_ok: json._evo_ok });
         } else {
@@ -199,6 +218,7 @@
       xhr.addEventListener('error', () => resolve({ ok: false, erro: 'Erro de rede' }));
       xhr.send(fd);
     });
+
 
     if (result.ok) {
       console.log('FRONT_AUDIO_SEND_SUCCESS', { conversaId: conv.id, evoOk: result._evo_ok });
