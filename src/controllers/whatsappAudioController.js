@@ -152,11 +152,9 @@ async function enviarAudio(req, res) {
     }
     console.log('WA_AUDIO_STORAGE_UPLOAD_SUCCESS', { storagePath, bucket: BUCKET, bytes: arquivo.size });
 
-    // ── 4. Prepara payload para Evolution: base64 data URI (igual ao fluxo de texto) ─
-    // Não usa signed URL pois o servidor da Evolution pode não ter acesso à URL
-    // O buffer ainda está em memória neste ponto
-    const base64Audio   = arquivo.buffer.toString('base64');
-    const evoAudioData  = `data:${arquivo.mimetype};base64,${base64Audio}`;
+    // ── 4. Converte buffer para base64 puro (sem prefixo data URI) ─────────────
+    // Evolution API v2 exige: URL ou base64 puro — NÃO aceita "data:...;base64,..."
+    const base64Audio = arquivo.buffer.toString('base64');
     console.log('WA_AUDIO_BASE64_READY', { mime: arquivo.mimetype, bytes: arquivo.size });
 
     // ── 5. Envia pela Evolution ────────────────────────────────────────────────
@@ -165,21 +163,21 @@ async function enviarAudio(req, res) {
     let evoErr = null;
 
     if (evoSvc.isConfigured()) {
-      // Tentativa 1: sendWhatsAppAudio (PTT/voz)
-      let evoResult = await evoSvc.enviarAudio(telNormalizado, evoAudioData);
+      // Tentativa 1: sendWhatsAppAudio (PTT/voz) com base64 puro
+      let evoResult = await evoSvc.enviarAudio(telNormalizado, base64Audio);
       evoOk = !!(evoResult.sucesso || evoResult.dados?.key?.id);
 
       if (!evoOk) {
-        const pttErr = evoResult.erro || 'sem detalhe';
+        const pttErr   = evoResult.erro || 'sem detalhe';
         const pttDados = JSON.stringify(evoResult.dados || {}).slice(0, 300);
         console.warn('WA_AUDIO_PTT_FAIL', { erro: pttErr, status: evoResult.status, dados: pttDados });
 
-        // Tentativa 2: sendMedia com mediatype=audio (mais compatível)
+        // Tentativa 2: sendMedia com mediatype=audio e base64 puro
         console.log('WA_AUDIO_SENDMEDIA_FALLBACK_START', { telefone: telNormalizado });
         evoResult = await evoSvc.enviarMidia(telNormalizado, {
           mediatype: 'audio',
           mimetype:  arquivo.mimetype,
-          media:     evoAudioData,
+          media:     base64Audio,         // base64 puro — sem data URI
           fileName:  `audio_${ts}.${ext}`,
           caption:   '',
         });
@@ -187,7 +185,7 @@ async function enviarAudio(req, res) {
         if (evoOk) {
           console.log('WA_AUDIO_SENDMEDIA_FALLBACK_SUCCESS', { msgId: evoResult.dados?.key?.id });
         } else {
-          const mediaErr  = evoResult.erro || 'sem detalhe';
+          const mediaErr   = evoResult.erro || 'sem detalhe';
           const mediaDados = JSON.stringify(evoResult.dados || {}).slice(0, 300);
           console.warn('WA_AUDIO_SENDMEDIA_FALLBACK_FAIL', { erro: mediaErr, status: evoResult.status, dados: mediaDados });
         }
