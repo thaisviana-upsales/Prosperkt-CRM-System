@@ -346,6 +346,46 @@
       document.head.appendChild(s);
     }
 
+    // ── Fix global: duração 0:00 em TODOS os players de áudio da conversa ──────
+    // Chrome/WebM não embute duration no header → browser reporta Infinity ou 0
+    // Seek hack força o browser a calcular a duração real procurando o final do arquivo
+    function _fixAudioDuration(el) {
+      if (!el || el.dataset.waDurFix) return;
+      el.dataset.waDurFix = '1';
+
+      const applyFix = () => {
+        if (!isFinite(el.duration) || el.duration === 0) {
+          el.currentTime = 1e101;
+          el.addEventListener('timeupdate', function f() {
+            el.removeEventListener('timeupdate', f);
+            el.currentTime = 0;
+          });
+        }
+      };
+
+      if (el.readyState >= 1) {
+        // Metadados já carregados
+        applyFix();
+      } else {
+        el.addEventListener('loadedmetadata', applyFix, { once: true });
+      }
+    }
+
+    // Aplica a todos os <audio> já existentes no DOM
+    document.querySelectorAll('audio').forEach(_fixAudioDuration);
+
+    // Observa novos <audio> adicionados (ex: renderMensagens() ao trocar conversa)
+    const _durObserver = new MutationObserver(mutations => {
+      for (const m of mutations) {
+        for (const node of m.addedNodes) {
+          if (node.nodeType !== 1) continue;
+          if (node.tagName === 'AUDIO') { _fixAudioDuration(node); continue; }
+          node.querySelectorAll?.('audio').forEach(_fixAudioDuration);
+        }
+      }
+    });
+    _durObserver.observe(document.body, { childList: true, subtree: true });
+
     console.log('[WAAudio v2] Módulo de áudio isolado ativo.');
   }
 

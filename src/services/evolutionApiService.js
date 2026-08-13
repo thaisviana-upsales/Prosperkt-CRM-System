@@ -377,16 +377,18 @@ async function enviarMidia(telefone, opcoes) {
 
 /**
  * Envia áudio (PTT — push-to-talk).
- * Evolution API v2: propriedades encapsuladas em audioMessage: {}
+ * Evolution API v2:
+ *   - audioMessage: { audio: base64_puro }  → objeto com o áudio
+ *   - encoding: true                         → nível RAIZ (não dentro de audioMessage)
  */
 async function enviarAudio(telefone, audioUrl) {
   const number = telefone.replace(/\D/g, '');
   return call('POST', `/message/sendWhatsAppAudio/${EVOLUTION_INSTANCE}`, {
     number,
     audioMessage: {
-      audio:    audioUrl,
-      encoding: true,
+      audio: audioUrl,   // base64 puro, sem prefixo data URI
     },
+    encoding: true,      // FORA de audioMessage — Evolution v2 lê no nível raiz
   });
 }
 
