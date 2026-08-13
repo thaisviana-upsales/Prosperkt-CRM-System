@@ -82,30 +82,36 @@
     _previewBlob = blob;
     console.log('FRONT_AUDIO_BLOB_READY', { size: blob.size, type: blob.type });
 
-    // ── Fix 1: forçar load() no player e corrigir duração 0:00 (Chrome/WebM) ─
+    // ── Fix 1: corrigir duração 0:00 (Chrome/WebM não embute duration) ─────────
     const prevEl = document.getElementById('wa-audio-prev-el');
     if (prevEl) {
       // Garante src (whatsapp.js já setou, mas cria fallback se necessário)
       if (!prevEl.src || prevEl.src === window.location.href) {
         try { prevEl.src = URL.createObjectURL(blob); } catch {}
+        prevEl.load();
       }
 
-      prevEl.load(); // força browser a processar nova source
-
-      prevEl.addEventListener('loadedmetadata', () => {
-        // Chrome com audio/webm não embute duration no header → retorna Infinity
-        // Fix: seek para posição absurda força browser a calcular duração real
+      const applySeekHack = () => {
+        // Infinity = WebM sem duration header; 0 = não carregado ainda
         if (!isFinite(prevEl.duration) || prevEl.duration === 0) {
-          prevEl.currentTime = 1e101;
+          prevEl.currentTime = 1e101; // força browser a procurar o fim do arquivo
           prevEl.addEventListener('timeupdate', function onSeek() {
             prevEl.removeEventListener('timeupdate', onSeek);
             prevEl.currentTime = 0;
-            console.log('FRONT_AUDIO_PREVIEW_READY', { duration: prevEl.duration, fixedWebM: true });
+            console.log('FRONT_AUDIO_PREVIEW_READY', { duration: prevEl.duration, seekFix: true });
           });
         } else {
           console.log('FRONT_AUDIO_PREVIEW_READY', { duration: prevEl.duration });
         }
-      }, { once: true });
+      };
+
+      // Se loadedmetadata já disparou (Observer roda depois do whatsapp.js)
+      // aplica o fix imediatamente, sem esperar pelo evento
+      if (prevEl.readyState >= 1) {
+        applySeekHack();
+      } else {
+        prevEl.addEventListener('loadedmetadata', applySeekHack, { once: true });
+      }
 
       prevEl.addEventListener('error', (e) => {
         console.warn('FRONT_AUDIO_PREVIEW_ERROR', { error: e.type });
