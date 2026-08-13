@@ -4,14 +4,15 @@
  *
  * WhatsApp aceita áudio SOMENTE em OGG/Opus (ou MP3/MP4 como arquivo).
  * Chrome grava em WebM/Opus — mesmo codec, container diferente.
- * A conversão é apenas de container (remux), não reencoda o áudio.
  *
- * Requer: ffmpeg instalado no sistema (via nixpacks.toml no Railway)
+ * Usa ffmpeg-static: binário ffmpeg pré-compilado incluído como pacote npm.
+ * Não requer instalação de sistema — funciona no Railway sem configuração extra.
  */
 
 'use strict';
 
-const { spawn } = require('child_process');
+const { spawn }    = require('child_process');
+const ffmpegPath   = require('ffmpeg-static'); // binário embutido no npm package
 
 /**
  * Converte buffer WebM/Opus → buffer OGG/Opus via ffmpeg.
@@ -21,9 +22,7 @@ const { spawn } = require('child_process');
 async function converterWebmParaOgg(webmBuffer) {
   return new Promise((resolve, reject) => {
     // ffmpeg lê de stdin (-i pipe:0) e escreve em stdout (pipe:1)
-    // -acodec copy = remux sem re-encode (mantém qualidade, muito rápido)
-    // Se -acodec copy falhar (container incompatível), usa libopus
-    const proc = spawn('ffmpeg', [
+    const proc = spawn(ffmpegPath, [
       '-loglevel', 'error',        // silencia logs informativos
       '-i', 'pipe:0',              // input: stdin
       '-vn',                       // ignora stream de vídeo (WebM pode ter)
