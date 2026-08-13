@@ -152,12 +152,12 @@ async function enviarAudio(req, res) {
     }
     console.log('WA_AUDIO_STORAGE_UPLOAD_SUCCESS', { storagePath, bucket: BUCKET, bytes: arquivo.size });
 
-    // ── 4. Gera signed URL curta para Evolution (10 min) ───────────────────────────────────────────────────────────────────────────
-    const evoSignedUrl = await gerarSignedUrl(sb, storagePath, 600);
-    if (!evoSignedUrl) {
-      return res.status(500).json({ sucesso: false, erro: 'Falha ao gerar URL de áudio para envio.' });
-    }
-    console.log('WA_AUDIO_SIGNED_URL_CREATED', { type: 'evo_short', expires: '10min' });
+    // ── 4. Prepara payload para Evolution: base64 data URI (igual ao fluxo de texto) ─
+    // Não usa signed URL pois o servidor da Evolution pode não ter acesso à URL
+    // O buffer ainda está em memória neste ponto
+    const base64Audio   = arquivo.buffer.toString('base64');
+    const evoAudioData  = `data:${arquivo.mimetype};base64,${base64Audio}`;
+    console.log('WA_AUDIO_BASE64_READY', { mime: arquivo.mimetype, bytes: arquivo.size });
 
     // ── 5. Envia pela Evolution ───────────────────────────────────────────────────────────────────────────────
     console.log('WA_AUDIO_EVOLUTION_SEND_START', { telefone: telNormalizado });
@@ -165,13 +165,13 @@ async function enviarAudio(req, res) {
     let evoErr = null;
 
     if (evoSvc.isConfigured()) {
-      const evoResult = await evoSvc.enviarAudio(telNormalizado, evoSignedUrl);
+      const evoResult = await evoSvc.enviarAudio(telNormalizado, evoAudioData);
       evoOk  = !!(evoResult.sucesso || evoResult.dados?.key?.id);
       evoErr = evoOk ? null : (evoResult.erro || 'Evolution retornou erro');
       if (evoOk) {
         console.log('WA_AUDIO_EVOLUTION_SEND_SUCCESS', { msgId: evoResult.dados?.key?.id });
       } else {
-        console.warn('WA_AUDIO_EVOLUTION_SEND_FAIL', { evoErr });
+        console.warn('WA_AUDIO_EVOLUTION_SEND_FAIL', { evoErr, status: evoResult.status });
       }
     } else {
       console.warn('WA_AUDIO_EVOLUTION_NOT_CONFIGURED');
