@@ -1,15 +1,56 @@
-/**
- * PROSPEKT CRM — whatsapp.js
- * Central de conversas: lista, chat estilo WA, envio de mensagens
- */
+// ─── Normalização de telefone — espelho do backend normalizePhoneBR() ──────────────
+// Números oficiais do CRM — NUNCA são clientes
+const _NUMEROS_OFICIAIS_WA = new Set(['5511987994910', '5511967668883']);
 
-// ─── Normalização de telefone (espelho do backend) ───────────────────────────────
 function normalizePhone(tel) {
   if (!tel) return '';
-  let t = String(tel).split('@')[0];
-  t = t.split(':')[0]; // remove sufixo de dispositivo WA
-  t = t.replace(/\D/g, '');
+  let t = String(tel).trim();
+  console.log('WHATSAPP_PHONE_NORMALIZE_INPUT', t.slice(0, 20));
+
+  // Rejeita @lid explicitamente
+  if (t.includes('@lid')) {
+    console.log('WHATSAPP_PHONE_REJECTED_LID', 'sufixo_lid');
+    return '';
+  }
+
+  // Remove sufixo @s.whatsapp.net e :0 (device suffix)
+  const username = t.split('@')[0].split(':')[0];
+
+  // Se tiver letras no username → é JID nomeado ou LID, rejeita
+  if (/[a-zA-Z]/.test(username)) {
+    console.log('WHATSAPP_PHONE_REJECTED_LID', 'letras_no_jid');
+    return '';
+  }
+
+  t = username.replace(/\D/g, '');
+  if (!t) return '';
+
+  // LID por comprimento: 14+ dígitos sem DDI 55 = identificador interno
+  if (t.length >= 14 && !t.startsWith('55')) {
+    console.log('WHATSAPP_PHONE_REJECTED_LID', 'comprimento_14_sem_55');
+    return '';
+  }
+
+  // Rejeita timestamp unix (10 ou 13 dígitos na faixa unix)
+  const numVal = Number(t);
+  if ((t.length === 10 && numVal >= 1000000000 && numVal <= 2200000000) ||
+      (t.length === 13 && numVal >= 1000000000000 && numVal <= 2200000000000)) {
+    return '';
+  }
+
+  // Adiciona DDI 55 para DDD+número (10-11 dígitos)
   if (t.length === 10 || t.length === 11) t = '55' + t;
+
+  // Valida formato brasileiro ou internacional
+  if (!/^55\d{10,11}$/.test(t) && !/^\d{10,15}$/.test(t)) return '';
+
+  // Rejeita número oficial — não é cliente
+  if (_NUMEROS_OFICIAIS_WA.has(t)) {
+    console.log('WHATSAPP_PHONE_REJECTED_OFFICIAL_AS_CLIENT', t.slice(0, 6) + '****');
+    return '';
+  }
+
+  console.log('WHATSAPP_PHONE_NORMALIZE_RESULT', t.slice(0, 6) + '****');
   return t;
 }
 
@@ -21,14 +62,15 @@ function phonesMatch(a, b) {
   const sa = na.startsWith('55') ? na.slice(2) : na;
   const sb = nb.startsWith('55') ? nb.slice(2) : nb;
   if (sa === sb) return true;
-  const rm9 = n => (n.length === 13 && n.startsWith('55') && n[4] === '9') ? n.slice(0, 4) + n.slice(5) : n;
+  const rm9 = n => (n.length === 13 && n.startsWith('55') && n[4] === '9') ? n.slice(0,4)+n.slice(5) : n;
   if (rm9(na) === rm9(nb)) return true;
-  const rm9s = n => (n.length === 11 && n[2] === '9') ? n.slice(0, 2) + n.slice(3) : n;
+  const rm9s = n => (n.length === 11 && n[2] === '9') ? n.slice(0,2)+n.slice(3) : n;
   return rm9s(sa) === rm9s(sb);
 }
 
+
 // ─── Estado ───────────────────────────────────────────────────────────────────
-let _usuario = null;
+let _usuario   = null;
 let _conversas = [];
 let _convAtiva = null;   // objeto conversa
 let _mensagens = [];
@@ -38,7 +80,7 @@ let _leads = [];
 let _refreshTimer = null;
 let _pollingTimer = null;
 
-const MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 // Contexto de abertura via URL (botão WA do card)
@@ -51,17 +93,17 @@ async function init() {
   // Lê parâmetros da URL — botão WA do card envia: ?lead_id=...&phone=...&nome=...
   const params = new URLSearchParams(location.search);
   const leadIdParam = params.get('lead_id') || params.get('leadId') || '';
-  const phoneRaw = params.get('phone') || params.get('tel') || '';
-  const phoneParam = normalizePhone(phoneRaw);
-  const nomeParam = decodeURIComponent(params.get('nome') || '');
+  const phoneRaw    = params.get('phone') || params.get('tel') || '';
+  const phoneParam  = normalizePhone(phoneRaw);
+  const nomeParam   = decodeURIComponent(params.get('nome') || '');
 
   // Log obrigatório — visível no console do browser
   console.log('PIPELINE_WHATSAPP_CLICK:', {
-    leadId: leadIdParam,
-    nomeLead: nomeParam,
-    telefoneOriginal: phoneRaw,
+    leadId:             leadIdParam,
+    nomeLead:           nomeParam,
+    telefoneOriginal:   phoneRaw,
     telefoneNormalizado: phoneParam,
-    urlDestino: location.href,
+    urlDestino:         location.href,
   });
 
   // Guarda contexto do lead para o resolverConversaLead usar
@@ -105,12 +147,12 @@ async function carregarStatusConexao() {
           <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
         </svg>
         <span>⚠️ WhatsApp sem atividade nas últimas 24h. As mensagens podem não estar chegando.
-        ${['SUPER_ADMIN', 'GESTOR'].includes(_usuario?.role) ? '<a href="/integracao-whatsapp.html" style="color:#FFB627;text-decoration:underline;margin-left:6px;font-weight:700">Ver conexão →</a>' : ''}
+        ${['SUPER_ADMIN','GESTOR'].includes(_usuario?.role) ? '<a href="/integracao-whatsapp.html" style="color:#FFB627;text-decoration:underline;margin-left:6px;font-weight:700">Ver conexão →</a>' : ''}
         </span>`;
     } else {
       banner.style.display = 'none';
     }
-  } catch (e) {
+  } catch(e) {
     // Silencioso — banner não bloqueia a página
   }
 }
@@ -119,7 +161,7 @@ async function carregarStatusConexao() {
 async function carregarConversas(silencioso = false) {
   const qs = [];
   if (_filtroStatus) qs.push('status=' + _filtroStatus);
-  if (_busca) qs.push('busca=' + encodeURIComponent(_busca));
+  if (_busca)        qs.push('busca=' + encodeURIComponent(_busca));
   qs.push('limit=100');
 
   const r = await Auth.api('GET', '/whatsapp/conversas' + (qs.length ? '?' + qs.join('&') : ''));
@@ -128,7 +170,7 @@ async function carregarConversas(silencioso = false) {
   _conversas = r.data.dados || [];
   renderListaConversas();
 
-  document.getElementById('ultima-att').textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  document.getElementById('ultima-att').textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'});
   document.getElementById('conv-count').textContent = `${_conversas.length} conversa${_conversas.length !== 1 ? 's' : ''}`;
 }
 
@@ -157,13 +199,13 @@ function renderListaConversas() {
   }
 
   el.innerHTML = _conversas.map(c => {
-    const nome = c.nome_contato || c.lead_nome || c.telefone;
-    const initials = (nome || '??').slice(0, 2).toUpperCase();
-    const preview = c.ultima_mensagem ? escHtml(c.ultima_mensagem.slice(0, 50)) : '<em>Sem mensagens</em>';
+    const nome      = c.nome_contato || c.lead_nome || c.telefone;
+    const initials  = (nome || '??').slice(0, 2).toUpperCase();
+    const preview   = c.ultima_mensagem ? escHtml(c.ultima_mensagem.slice(0, 50)) : '<em>Sem mensagens</em>';
     const isEnviada = c.ultima_direcao === 'enviada';
-    const hora = c.ultima_msg_em ? fmtHora(c.ultima_msg_em) : '';
-    const isAtiva = _convAtiva?.id === c.id;
-    const unread = (c.nao_lidas > 0) ? `<div class="wa-unread-badge">${c.nao_lidas}</div>` : '';
+    const hora      = c.ultima_msg_em ? fmtHora(c.ultima_msg_em) : '';
+    const isAtiva   = _convAtiva?.id === c.id;
+    const unread    = (c.nao_lidas > 0) ? `<div class="wa-unread-badge">${c.nao_lidas}</div>` : '';
     const temNaoLidas = c.nao_lidas > 0 && !isAtiva;
 
     return `
@@ -232,11 +274,11 @@ async function abrirConversa(id) {
   document.getElementById('chat-tel').textContent = _convAtiva.telefone;
   document.getElementById('chat-status-text').innerHTML =
     _convAtiva.status === 'ABERTA' ? '<span class="online">● Online</span>' :
-      _convAtiva.status === 'AGUARDANDO' ? '⌛ Aguardando resposta' : '✓ Fechada';
+    _convAtiva.status === 'AGUARDANDO' ? '⌛ Aguardando resposta' : '✓ Fechada';
 
   // Popula painel info
   document.getElementById('info-nome').textContent = nome;
-  document.getElementById('info-tel').textContent = _convAtiva.telefone;
+  document.getElementById('info-tel').textContent  = _convAtiva.telefone;
   document.getElementById('info-empresa').textContent = _convAtiva.lead_empresa || '—';
   document.getElementById('info-vendedor').textContent = _convAtiva.vendedor_nome || '—';
 
@@ -263,8 +305,8 @@ async function resolverConversaLead(leadId, tel, nome) {
   console.log('WHATSAPP_CONVERSA_RESOLVE_START', { leadId, tel: telNorm, nome });
   console.log('WHATSAPP_PAGE_URL_PARAMS', {
     leadId: new URLSearchParams(window.location.search).get('lead_id'),
-    phone: new URLSearchParams(window.location.search).get('phone'),
-    nome: new URLSearchParams(window.location.search).get('nome'),
+    phone:  new URLSearchParams(window.location.search).get('phone'),
+    nome:   new URLSearchParams(window.location.search).get('nome'),
   });
   console.log('WHATSAPP_TARGET_PHONE_NORMALIZED', telNorm);
   console.log('WHATSAPP_URL_PARAMS:', { leadIdParam: leadId, phoneParam: telNorm, nomeParam: nome });
@@ -314,7 +356,7 @@ async function resolverConversaLead(leadId, tel, nome) {
         console.log('WHATSAPP_CONVERSA_FOUND_BY_PHONE', { conversaId: conv.id, telefone: normalizePhone(conv.telefone), nome: conv.nome_contato });
         // Vincula lead_id se ausente
         if (leadId && !porTel.lead_id) {
-          Auth.api('POST', '/whatsapp/conversas', { telefone: telNorm, lead_id: leadId, nome_contato: nome }).catch(() => { });
+          Auth.api('POST', '/whatsapp/conversas', { telefone: telNorm, lead_id: leadId, nome_contato: nome }).catch(() => {});
         }
       } else {
         console.log('WHATSAPP_SELECTED_CONVERSATION — nenhuma conversa encontrada por telefone', telNorm, '— conversas existentes:', lista.map(c => normalizePhone(c.telefone)));
@@ -393,9 +435,9 @@ function mostrarEstadoSemConversa(leadId, tel, nome) {
         Nenhuma conversa com<br><span style="color:var(--text-primary)">${escHtml(nomeDisplay)}</span>
       </div>
       ${tel
-      ? `<div style="font-size:.82rem;color:var(--text-muted)">Telefone: <strong>${escHtml(tel)}</strong></div>`
-      : `<div style="font-size:.82rem;color:var(--pink);font-weight:600">⚠ Lead sem telefone cadastrado. Adicione um telefone no CRM para iniciar conversa.</div>`
-    }
+        ? `<div style="font-size:.82rem;color:var(--text-muted)">Telefone: <strong>${escHtml(tel)}</strong></div>`
+        : `<div style="font-size:.82rem;color:var(--pink);font-weight:600">⚠ Lead sem telefone cadastrado. Adicione um telefone no CRM para iniciar conversa.</div>`
+      }
       <div id="iniciar-erro" style="display:none;font-size:.78rem;color:var(--pink);font-weight:600;padding:8px 16px;background:rgba(225,0,152,.08);border-radius:8px"></div>
       ${tel ? `
       <button
@@ -421,7 +463,7 @@ function mostrarEstadoSemConversa(leadId, tel, nome) {
   const btnIniciar = document.getElementById('btn-iniciar-conv');
   if (btnIniciar) {
     btnIniciar.addEventListener('mouseover', () => { btnIniciar.style.boxShadow = '0 0 20px rgba(108,255,78,.4)'; btnIniciar.style.transform = 'scale(1.04)'; });
-    btnIniciar.addEventListener('mouseout', () => { btnIniciar.style.boxShadow = ''; btnIniciar.style.transform = ''; });
+    btnIniciar.addEventListener('mouseout',  () => { btnIniciar.style.boxShadow = ''; btnIniciar.style.transform = ''; });
     btnIniciar.addEventListener('click', iniciarConversaDoLead);
   }
 }
@@ -452,7 +494,7 @@ async function iniciarConversaDoLead() {
   // Cria a conversa via API
   const r = await Auth.api('POST', '/whatsapp/conversas', {
     telefone: ctx.tel,
-    lead_id: ctx.leadId || null,
+    lead_id:  ctx.leadId || null,
     nome_contato: ctx.nome || null
   });
 
@@ -475,7 +517,7 @@ async function iniciarConversaDoLead() {
 
   // Faz fetch completo da conversa para garantir TODOS os campos (vendedor_nome, lead_empresa, etc.)
   const fetchFull = await Auth.api('GET', `/whatsapp/conversas/${convId}`);
-  const convFull = fetchFull?.ok ? { ...fetchFull.data.dados, lead_nome: ctx.nome } : { ...r.data.dados, lead_nome: ctx.nome };
+  const convFull  = fetchFull?.ok ? { ...fetchFull.data.dados, lead_nome: ctx.nome } : { ...r.data.dados, lead_nome: ctx.nome };
 
   // Injeta no topo da lista (sem duplicar)
   _conversas = _conversas.filter(c => c.id !== convFull.id);
@@ -503,7 +545,7 @@ async function carregarMensagens(convId, silencioso = false) {
   const r = await Auth.api('GET', `/whatsapp/conversas/${convId}/mensagens?limit=200`);
   if (!r?.ok) {
     if (!silencioso) {
-      console.error('WHATSAPP_MESSAGES_LOAD_ERROR', r?.data?.erro || 'sem resposta', 'convId:', convId);
+      console.error('WHATSAPP_MESSAGES_LOAD_ERROR', r?.data?.erro||'sem resposta', 'convId:', convId);
       Toast.show('Erro ao carregar mensagens.', 'error');
     }
     return;
@@ -533,14 +575,14 @@ async function pollMensagens(convId) {
     const novas = r.data.dados || [];
     const qtdAntes = _mensagens.length;
     const idAnterior = _mensagens[_mensagens.length - 1]?.id;
-    const idNovo = novas[novas.length - 1]?.id;
+    const idNovo     = novas[novas.length - 1]?.id;
     if (novas.length !== qtdAntes || idAnterior !== idNovo) {
       _mensagens = novas;
       renderMensagens(); // scrollToBottom interno
       console.log('CONVERSA_MESSAGES_HAS_RECEIVED', novas.filter(m => m.direcao === 'recebida').length);
     }
     console.log('CONVERSA_MESSAGES_LOAD_COUNT', novas.length);
-  } catch (e) {
+  } catch(e) {
     // Silencioso — erro de polling não interrompe nada
   }
 }
@@ -581,7 +623,7 @@ function renderMensagens() {
 }
 
 function renderMensagem(msg) {
-  const dir = msg.direcao === 'enviada' ? 'enviada' : msg.tipo === 'sistema' ? 'sistema' : 'recebida';
+  const dir  = msg.direcao === 'enviada' ? 'enviada' : msg.tipo === 'sistema' ? 'sistema' : 'recebida';
   const hora = fmtHoraMsg(msg.criado_em);
 
   // ── Ícones de status (apenas mensagens enviadas pelo CRM) ─────────────────
@@ -660,7 +702,7 @@ function renderMensagem(msg) {
     const audioSrc = msg.arquivo_url
       ? `/api/whatsapp/media/${msg.conversa_id || _convAtiva?.id}/${msg.id}`
       : '';
-    const dur = msg.media_duration ? ` · ${Math.floor(msg.media_duration / 60)}:${String(msg.media_duration % 60).padStart(2, '0')}` : '';
+    const dur = msg.media_duration ? ` · ${Math.floor(msg.media_duration/60)}:${String(msg.media_duration%60).padStart(2,'0')}` : '';
     conteudo = audioSrc
       ? `<div class="wa-audio-player" data-src="${escHtml(audioSrc)}" data-id="${msg.id}">
            <button class="wa-audio-play-btn" onclick="WAAudio.toggle(this)" title="Play/Pause">
@@ -699,7 +741,7 @@ function renderMensagem(msg) {
          </div>`
       : `<span style="font-size:.78rem;color:var(--text-muted)">Vídeo</span>`;
   } else if (msg.tipo === 'arquivo' || msg.tipo === 'documento') {
-    const url = msg.arquivo_url || '';
+    const url  = msg.arquivo_url || '';
     const nome = msg.arquivo_nome || 'Arquivo';
     // Para arquivos enviados pelo CRM: usa rota segura de download
     // Para arquivos recebidos via webhook: usa arquivo_url diretamente (é URL da Evolution/WA)
@@ -707,10 +749,10 @@ function renderMensagem(msg) {
     const mime = msg.mime_type || '';
     const icone = mime === 'application/pdf' ? '📄'
       : mime.startsWith('image/') ? '🖼️'
-        : mime.includes('word') || mime.includes('doc') ? '📝'
-          : mime.includes('sheet') || mime.includes('excel') || mime.includes('xls') ? '📊'
-            : mime.includes('presentation') || mime.includes('powerpoint') ? '📁'
-              : '📎';
+      : mime.includes('word') || mime.includes('doc') ? '📝'
+      : mime.includes('sheet') || mime.includes('excel') || mime.includes('xls') ? '📊'
+      : mime.includes('presentation') || mime.includes('powerpoint') ? '📁'
+      : '📎';
     conteudo = `<div class="wa-file-card">
        <div style="display:flex;align-items:center;gap:10px">
          <div class="wa-file-icon">
@@ -745,26 +787,26 @@ function renderMensagem(msg) {
 async function enviarMensagem() {
   if (!_convAtiva) return;
   const input = document.getElementById('msg-input');
-  const txt = input.value.trim();
+  const txt   = input.value.trim();
   if (!txt) return;
 
   const btn = document.getElementById('btn-send');
 
   // ── Estado de loading ──────────────────────────────────────────────────────
-  btn.disabled = true;
+  btn.disabled  = true;
   btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="animation:spin 1s linear infinite"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4" stroke-dashoffset="10"/></svg>`;
   input.disabled = true;
 
   // Log diagnóstico: payload enviado
-  console.log('CRM_SEND_WHATSAPP_START', { conversaId: _convAtiva.id, leadId: _convAtiva.lead_id || null, phoneNorm: normalizePhone(_convAtiva.telefone) });
+  console.log('CRM_SEND_WHATSAPP_START', { conversaId: _convAtiva.id, leadId: _convAtiva.lead_id||null, phoneNorm: normalizePhone(_convAtiva.telefone) });
   console.log('CRM_SEND_WHATSAPP_CONVERSA_ID', _convAtiva.id);
   console.log('CRM_SEND_WHATSAPP_PHONE_NORMALIZED', normalizePhone(_convAtiva.telefone));
   console.log('FRONTEND_SEND_START', {
-    conversaId: _convAtiva.id,
-    telefone: _convAtiva.telefone,
-    textoSlice: txt.slice(0, 80),
-    endpoint: `/whatsapp/conversas/${_convAtiva.id}/mensagens`,
-    payload: { mensagem: txt, tipo: 'texto' },
+    conversaId:   _convAtiva.id,
+    telefone:     _convAtiva.telefone,
+    textoSlice:   txt.slice(0, 80),
+    endpoint:     `/whatsapp/conversas/${_convAtiva.id}/mensagens`,
+    payload:      { mensagem: txt, tipo: 'texto' },
   });
 
   let r = null;
@@ -784,22 +826,22 @@ async function enviarMensagem() {
   input.focus();
 
   // Log diagnóstico: resposta completa
-  const _hs = r?.status || (r === null ? 'NULL' : 'UNKNOWN');
+  const _hs = r?.status||(r===null?'NULL':'UNKNOWN');
   console.log('EVOLUTION_SEND_RESPONSE_STATUS', _hs, '| ok:', r?.ok, '| sucesso:', r?.data?.sucesso);
-  if (r?.ok || r?.data?.sucesso) console.log('EVOLUTION_SEND_SUCCESS');
-  else console.error('EVOLUTION_SEND_ERROR', r?.data?.erro || 'sem resposta do servidor');
+  if (r?.ok||r?.data?.sucesso) console.log('EVOLUTION_SEND_SUCCESS');
+  else console.error('EVOLUTION_SEND_ERROR', r?.data?.erro||'sem resposta do servidor');
   console.log('FRONTEND_SEND_RESPONSE', {
-    r_ok: r?.ok,
+    r_ok:     r?.ok,
     r_status: r?.status,
-    r_data: r?.data,
-    r_null: r === null,
+    r_data:   r?.data,
+    r_null:   r === null,
   });
 
   // ── Determina sucesso ──────────────────────────────────────────────────────
   // Sucesso primário: HTTP 2xx (r.ok === true)
   // Sucesso fallback: r.data.sucesso === true (para casos onde HTTP errou mas backend confirmou)
-  const httpOk = r?.ok === true;
-  const bodyOk = r?.data?.sucesso === true;
+  const httpOk    = r?.ok === true;
+  const bodyOk    = r?.data?.sucesso === true;
   const isSuccess = httpOk || bodyOk;
 
   console.log('FRONTEND_SEND_SUCCESS_CHECK', { httpOk, bodyOk, isSuccess });
@@ -841,7 +883,7 @@ async function enviarMensagem() {
 
     console.error('FRONTEND_SEND_FAIL', {
       r_status: r?.status,
-      r_data: r?.data,
+      r_data:   r?.data,
       erroMsg,
     });
 
@@ -856,7 +898,7 @@ async function enviarMensagem() {
 const WA_LIMITE_BYTES = 300 * 1024 * 1024; // 300 MB
 
 const WA_EXT_BLOQUEADAS = new Set([
-  'exe', 'bat', 'cmd', 'sh', 'bash', 'msi', 'scr', 'vbs', 'ps1', 'reg', 'lnk', 'jar', 'hta',
+  'exe','bat','cmd','sh','bash','msi','scr','vbs','ps1','reg','lnk','jar','hta',
 ]);
 
 function waExtPermitida(nome) {
@@ -867,8 +909,8 @@ function waExtPermitida(nome) {
 function waFmtBytes(b) {
   if (!b) return '–';
   if (b < 1024) return b + ' B';
-  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
-  return (b / 1048576).toFixed(1) + ' MB';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  return (b/1048576).toFixed(1) + ' MB';
 }
 
 async function waEnviarArquivo(file) {
@@ -904,7 +946,7 @@ async function waEnviarArquivo(file) {
 
     xhr.addEventListener('load', () => {
       let json = {};
-      try { json = JSON.parse(xhr.responseText); } catch { }
+      try { json = JSON.parse(xhr.responseText); } catch {}
 
       if (xhr.status >= 200 && xhr.status < 300 && json.sucesso) {
         Toast.show(`"${file.name}" enviado!`, 'success');
@@ -941,7 +983,7 @@ async function waEnviarArquivo(file) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('file-input')?.addEventListener('change', async function () {
+  document.getElementById('file-input')?.addEventListener('change', async function() {
     if (!this.files?.length) return;
     for (const f of Array.from(this.files)) {
       await waEnviarArquivo(f);
@@ -952,9 +994,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ─── Nova conversa (modal) ────────────────────────────────────────────────────
 function abrirModalNova() {
-  document.getElementById('nc-tel').value = '';
-  document.getElementById('nc-nome').value = '';
-  document.getElementById('nc-lead').value = '';
+  document.getElementById('nc-tel').value   = '';
+  document.getElementById('nc-nome').value  = '';
+  document.getElementById('nc-lead').value  = '';
   document.getElementById('modal-alert').style.display = 'none';
   document.getElementById('modal-ov').classList.add('open');
   setTimeout(() => document.getElementById('nc-tel').focus(), 50);
@@ -965,8 +1007,8 @@ function fecharModal() {
 }
 
 async function salvarNovaConversa() {
-  const tel = document.getElementById('nc-tel').value.trim();
-  const nome = document.getElementById('nc-nome').value.trim();
+  const tel   = document.getElementById('nc-tel').value.trim();
+  const nome  = document.getElementById('nc-nome').value.trim();
   const leadId = document.getElementById('nc-lead').value;
   const alertEl = document.getElementById('modal-alert');
   alertEl.style.display = 'none';
@@ -1012,7 +1054,7 @@ async function atualizarStatusConversa(novoStatus) {
 }
 
 function atualizarBotoesStatus(status) {
-  ['ABERTA', 'AGUARDANDO', 'FECHADA'].forEach(s => {
+  ['ABERTA','AGUARDANDO','FECHADA'].forEach(s => {
     const btn = document.getElementById('conv-status-' + s.toLowerCase());
     if (btn) btn.classList.toggle('active', s === status);
   });
@@ -1054,16 +1096,16 @@ function fmtData(isoStr) {
   const ontem = new Date(); ontem.setDate(ontem.getDate() - 1);
   if (d.toDateString() === hoje.toDateString()) return 'Hoje';
   if (d.toDateString() === ontem.toDateString()) return 'Ontem';
-  return `${d.getDate()} de ${['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'][d.getMonth()]}`;
+  return `${d.getDate()} de ${['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'][d.getMonth()]}`;
 }
 
 function escHtml(str) {
   if (!str) return '';
   return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
 }
 
 // ─── Bind eventos ─────────────────────────────────────────────────────────────
@@ -1100,9 +1142,9 @@ function bindEvents() {
 
   // Input mensagem
   const msgInput = document.getElementById('msg-input');
-  const sendBtn = document.getElementById('btn-send');
+  const sendBtn  = document.getElementById('btn-send');
 
-  msgInput.addEventListener('input', function () {
+  msgInput.addEventListener('input', function() {
     sendBtn.disabled = !this.value.trim();
     // Auto-resize
     this.style.height = 'auto';
@@ -1146,7 +1188,7 @@ function bindEvents() {
   document.getElementById('btn-preview-cancel')?.addEventListener('click', cancelarGravacao);
 
   // Anexo de arquivo de áudio
-  document.getElementById('audio-file-input')?.addEventListener('change', async function () {
+  document.getElementById('audio-file-input')?.addEventListener('change', async function() {
     const file = this.files?.[0];
     if (!file || !_convAtiva) { this.value = ''; return; }
     if (!file.type.startsWith('audio/')) { Toast.show('Formato de áudio não suportado.', 'error'); this.value = ''; return; }
@@ -1201,7 +1243,7 @@ const WAAudio = (() => {
     if (_current) {
       _current.el.pause();
       const c = _current.container;
-      c.querySelector('.ico-play')?.style && (c.querySelector('.ico-play').style.display = '');
+      c.querySelector('.ico-play')?.style && (c.querySelector('.ico-play').style.display  = '');
       c.querySelector('.ico-pause')?.style && (c.querySelector('.ico-pause').style.display = 'none');
       _current = null;
     }
@@ -1231,18 +1273,18 @@ const WAAudio = (() => {
 
     _current = { el: audioEl, container };
 
-    const fillEl = container.querySelector('.wa-audio-bar-fill');
-    const timeEl = container.querySelector('.wa-audio-time');
-    const btnPlay = btn.querySelector('.ico-play');
+    const fillEl   = container.querySelector('.wa-audio-bar-fill');
+    const timeEl   = container.querySelector('.wa-audio-time');
+    const btnPlay  = btn.querySelector('.ico-play');
     const btnPause = btn.querySelector('.ico-pause');
-    if (btnPlay) btnPlay.style.display = 'none';
+    if (btnPlay)  btnPlay.style.display  = 'none';
     if (btnPause) btnPause.style.display = '';
 
     audioEl.addEventListener('timeupdate', () => {
       const pct = audioEl.duration ? (audioEl.currentTime / audioEl.duration) * 100 : 0;
       if (fillEl) fillEl.style.width = pct + '%';
       const s = Math.floor(audioEl.currentTime);
-      if (timeEl) timeEl.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+      if (timeEl) timeEl.textContent = `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
     });
     audioEl.addEventListener('ended', () => { _stopAll(); if (fillEl) fillEl.style.width = '0'; });
   }
@@ -1258,23 +1300,23 @@ const WAAudio = (() => {
 
 // ─── Gravador de áudio ────────────────────────────────────────────────────────
 let _mediaRecorder = null;
-let _audioChunks = [];
-let _audioBlob = null;
+let _audioChunks   = [];
+let _audioBlob     = null;
 let _timerInterval = null;
-let _recSeconds = 0;
+let _recSeconds    = 0;
 
 function _setRecUI(modo) {
   // modo: 'idle' | 'recording' | 'preview'
   const textWrap = document.getElementById('wa-text-wrap');
-  const recWrap = document.getElementById('wa-rec-wrap');
+  const recWrap  = document.getElementById('wa-rec-wrap');
   const prevWrap = document.getElementById('wa-audio-preview');
-  const micBtn = document.getElementById('btn-mic');
-  const sendBtn = document.getElementById('btn-send');
+  const micBtn   = document.getElementById('btn-mic');
+  const sendBtn  = document.getElementById('btn-send');
 
   if (textWrap) textWrap.style.display = modo === 'idle' ? '' : 'none';
-  if (recWrap) recWrap.style.display = modo === 'recording' ? 'flex' : 'none';
-  if (prevWrap) prevWrap.style.display = modo === 'preview' ? 'flex' : 'none';
-  if (micBtn) micBtn.style.display = modo === 'preview' ? 'none' : '';
+  if (recWrap)  recWrap.style.display  = modo === 'recording' ? 'flex' : 'none';
+  if (prevWrap) prevWrap.style.display = modo === 'preview'   ? 'flex' : 'none';
+  if (micBtn)   micBtn.style.display   = modo === 'preview'   ? 'none' : '';
 
   if (sendBtn) sendBtn.disabled = (modo !== 'preview');
   if (sendBtn) {
@@ -1304,12 +1346,12 @@ async function iniciarGravacao() {
 
   console.log('WHATSAPP_AUDIO_RECORD_START');
   _audioChunks = [];
-  _audioBlob = null;
-  _recSeconds = 0;
+  _audioBlob   = null;
+  _recSeconds  = 0;
 
   const mimeType = MediaRecorder.isTypeSupported('audio/ogg;codecs=opus') ? 'audio/ogg;codecs=opus'
     : MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
-      : 'audio/webm';
+    : 'audio/webm';
 
   _mediaRecorder = new MediaRecorder(stream, { mimeType });
   _mediaRecorder.ondataavailable = e => { if (e.data.size > 0) _audioChunks.push(e.data); };
@@ -1327,7 +1369,7 @@ async function iniciarGravacao() {
   const timerEl = document.getElementById('wa-rec-timer');
   _timerInterval = setInterval(() => {
     _recSeconds++;
-    if (timerEl) timerEl.textContent = `${Math.floor(_recSeconds / 60)}:${String(_recSeconds % 60).padStart(2, '0')}`;
+    if (timerEl) timerEl.textContent = `${Math.floor(_recSeconds/60)}:${String(_recSeconds%60).padStart(2,'0')}`;
     if (_recSeconds >= 300) pararGravacao();
   }, 1000);
 }
@@ -1340,10 +1382,10 @@ function pararGravacao() {
 function cancelarGravacao() {
   clearInterval(_timerInterval);
   if (_mediaRecorder && _mediaRecorder.state !== 'inactive') {
-    try { _mediaRecorder.stream?.getTracks().forEach(t => t.stop()); } catch { }
+    try { _mediaRecorder.stream?.getTracks().forEach(t => t.stop()); } catch {}
     _mediaRecorder.stop();
   }
-  _audioBlob = null;
+  _audioBlob   = null;
   _audioChunks = [];
   _setRecUI('idle');
   const msgInput = document.getElementById('msg-input');
@@ -1365,7 +1407,7 @@ async function enviarAudio(blob) {
   const base64 = await new Promise((res, rej) => {
     const reader = new FileReader();
     reader.onloadend = () => res(reader.result);
-    reader.onerror = rej;
+    reader.onerror   = rej;
     reader.readAsDataURL(blob);
   });
 
