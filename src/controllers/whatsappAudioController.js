@@ -476,7 +476,7 @@ async function servirAudioAssinado(req, res) {
 
     const { data: msg, error: msgErr } = await sb
       .from(MENSAGENS_TABLE)
-      .select('id, storage_path, storage_bucket, arquivo_url, mime_type, direcao, conversa_id')
+      .select('id, storage_path, storage_bucket, arquivo_url, mime_type, direcao, conversa_id, evolution_message_id')
       .eq('id', msgId)
       .single();
 
@@ -503,9 +503,14 @@ async function servirAudioAssinado(req, res) {
       return res.send(buf);
     }
 
-    // ── Caso 2: áudio recebido — arquivo_url é URL da Evolution ─────────────
+    // ── Caso 2: storage_path ausente — arquivo_url é URL da Evolution ou data: ─
     const evoUrl = msg.arquivo_url;
     if (!evoUrl || evoUrl.startsWith('/api/')) {
+      // Tenta via API se tiver evolution_message_id
+      if (msg.evolution_message_id) {
+        console.warn('WA_AUDIO_PLAY_NO_URL_TRY_API', { msgId });
+        return await _servirViaApi(res, sb, msg);
+      }
       console.warn('WA_AUDIO_PLAY_NO_SOURCE', { msgId, evoUrl: evoUrl || '(null)' });
       return res.status(404).end();
     }
@@ -533,7 +538,11 @@ async function servirAudioAssinado(req, res) {
     }).catch(e => { console.warn('WA_AUDIO_PLAY_EVO_FETCH_ERR', { err: e.message }); return null; });
 
     if (!evoRes || !evoRes.ok) {
-      console.warn('WA_AUDIO_PLAY_EVO_FAIL', { msgId, status: evoRes?.status });
+      // URL expirou/inválida — fallback via getBase64FromMediaMessage (~30 dias de validade no WhatsApp)
+      console.warn('WA_AUDIO_PLAY_EVO_URL_EXPIRED', { msgId, status: evoRes?.status, evoId: msg.evolution_message_id });
+      if (msg.evolution_message_id) {
+        return await _servirViaApi(res, sb, msg);
+      }
       return res.status(502).end();
     }
 
@@ -572,6 +581,83 @@ async function servirAudioAssinado(req, res) {
 
   } catch (e) {
     console.error('WA_AUDIO_PLAY_ERROR', e.message);
+    return res.status(500).end();
+  }
+}
+
+// ── Helper: serve áudio via getBase64FromMediaMessage (fallback quando URL da Evolution expirou) ──
+// Acessa servidores WhatsApp diretamente — mídia disponível por ~30 dias após recepcao.
+async function _servirViaApi(res, sb, msg) {
+  try {
+    const msgId    = msg.id;
+    const evoMsgId = msg.evolution_message_id;
+
+    // Resolve remoteJid da conversa
+    let remoteJid = null;
+    const { data: conv } = await sb.from(CONVERSAS_TABLE)
+      .select('telefone, dados_extras')
+      .eq('id', msg.conversa_id)
+      .single();
+
+    if (conv?.telefone && !conv.telefone.startsWith('LID:')) {
+      const d = telSoDigitos(conv.telefone);
+      if (d && d.length >= 10) remoteJid = `${d}@s.whatsapp.net`;
+    }
+    if (!remoteJid && conv?.dados_extras) {
+      try {
+        const ex = typeof conv.dados_extras === 'string'
+          ? JSON.parse(conv.dados_extras) : conv.dados_extras;
+        remoteJid = ex?.remoteJid || null;
+      } catch (_) {}
+    }
+
+    if (!remoteJid) {
+      console.warn('WA_AUDIO_PLAY_API_NO_JID', { msgId });
+      return res.status(502).end();
+    }
+
+    console.log('WA_AUDIO_PLAY_API_FALLBACK', { msgId, evoMsgId, jid: remoteJid.slice(0, 20) });
+    const media = await evoSvc.getBase64Media(evoMsgId, remoteJid);
+    if (!media?.sucesso || !media?.dados?.base64) {
+      console.warn('WA_AUDIO_PLAY_API_FAIL', { msgId, erro: media?.erro });
+      return res.status(502).end();
+    }
+
+    const b64Raw   = media.dados.base64;
+    const b64Data  = b64Raw.includes(',') ? b64Raw.split(',')[1] : b64Raw;
+    const mime     = media.dados.mimetype || msg.mime_type || 'audio/ogg';
+    const audioBuf = Buffer.from(b64Data, 'base64');
+    const ext      = extFromMime(mime);
+
+    // Cache permanente no Supabase para próximas reproduções
+    try {
+      const storagePath = `whatsapp/conversas/${msg.conversa_id}/audios/recebidos/${Date.now()}.${ext}`;
+      const { error: upErr } = await sb.storage.from(BUCKET).upload(storagePath, audioBuf, {
+        contentType: mime, upsert: false,
+      });
+      if (!upErr) {
+        const signedUrl = await gerarSignedUrl(sb, storagePath, 3600 * 24 * 365);
+        await sb.from(MENSAGENS_TABLE).update({
+          arquivo_url:    signedUrl || `data:${mime};base64,${b64Data}`,
+          storage_path:   storagePath,
+          storage_bucket: BUCKET,
+          mime_type:      mime,
+        }).eq('id', msgId);
+        console.log('WA_AUDIO_PLAY_API_CACHED', { msgId, storagePath, bytes: audioBuf.length });
+      }
+    } catch (cacheErr) {
+      console.warn('WA_AUDIO_PLAY_API_CACHE_SKIP', { msgId, erro: cacheErr.message });
+    }
+
+    res.set('Content-Type',   mime);
+    res.set('Content-Length', audioBuf.length);
+    res.set('Cache-Control',  'private, max-age=3600');
+    res.set('Accept-Ranges',  'bytes');
+    console.log('WA_AUDIO_PLAY_SERVED_API', { msgId, bytes: audioBuf.length, mime });
+    return res.send(audioBuf);
+
+  } catch (e) {
+    console.warn('WA_AUDIO_PLAY_API_ERR', { err: e.message });
     return res.status(500).end();
   }
 }
