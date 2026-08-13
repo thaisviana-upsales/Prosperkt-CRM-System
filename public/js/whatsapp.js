@@ -161,13 +161,20 @@ async function carregarStatusConexao() {
 async function carregarConversas(silencioso = false) {
   const qs = [];
   if (_filtroStatus) qs.push('status=' + _filtroStatus);
-  if (_busca)        qs.push('busca=' + encodeURIComponent(_busca));
+  // IMPORTANTE: _busca NÃO vai ao servidor — aplicado client-side em renderListaConversas
+  // Isso garante que _conversas sempre tenha a lista completa do status ativo,
+  // evitando que a busca "filtre" permanentemente a lista lateral
   qs.push('limit=100');
 
   const r = await Auth.api('GET', '/whatsapp/conversas' + (qs.length ? '?' + qs.join('&') : ''));
   if (!r?.ok) { if (!silencioso) Toast.show('Erro ao carregar conversas.', 'error'); return; }
 
-  _conversas = r.data.dados || [];
+  const novas = r.data.dados || [];
+  // Proteção contra polling retornar vazio por falha de rede quando já há dados na lista
+  // Só substitui com vazio se: filtro de status ativo (resultado válido) OU lista ainda não carregada
+  if (novas.length > 0 || _filtroStatus || _conversas.length === 0) {
+    _conversas = novas;
+  }
   renderListaConversas();
 
   document.getElementById('ultima-att').textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'});
@@ -189,16 +196,37 @@ function popularSelectLeads() {
 // ─── Render lista ─────────────────────────────────────────────────────────────
 function renderListaConversas() {
   const el = document.getElementById('conv-list');
-  if (!_conversas.length) {
+
+  // Aplica filtro de busca CLIENT-SIDE sobre a lista mestra
+  // Garante que a sidebar sempre mostre todas as conversas quando não há busca ativa
+  let lista = _conversas;
+  if (_busca) {
+    const q = _busca.toLowerCase().trim();
+    lista = lista.filter(c =>
+      (c.nome_contato || '').toLowerCase().includes(q) ||
+      (c.lead_nome    || '').toLowerCase().includes(q) ||
+      (c.telefone     || '').includes(q) ||
+      (c.lead_empresa || '').toLowerCase().includes(q)
+    );
+  }
+
+  if (!lista.length) {
+    // "Nenhuma conversa encontrada" SOMENTE quando:
+    // 1) busca/filtro ativo retornou 0 resultados, OU
+    // 2) realmente não existem conversas carregadas
     el.innerHTML = `<div class="wa-empty-list">
       <div style="font-size:2rem;opacity:.3;margin-bottom:8px">💬</div>
-      Nenhuma conversa encontrada.<br>
-      <small style="opacity:.6">Crie uma nova ou aguarde mensagens.</small>
+      ${_busca
+        ? `Nenhuma conversa encontrada para "<strong>${escHtml(_busca)}</strong>".<br><small style="opacity:.6">Tente outro nome ou número.</small>`
+        : _filtroStatus
+          ? `Nenhuma conversa com status <strong>${_filtroStatus}</strong>.<br><small style="opacity:.6">Tente o filtro "Todas".</small>`
+          : 'Nenhuma conversa encontrada.<br><small style="opacity:.6">Crie uma nova ou aguarde mensagens.</small>'
+      }
     </div>`;
     return;
   }
 
-  el.innerHTML = _conversas.map(c => {
+  el.innerHTML = lista.map(c => {
     const nome      = c.nome_contato || c.lead_nome || c.telefone;
     const initials  = (nome || '??').slice(0, 2).toUpperCase();
     const preview   = c.ultima_mensagem ? escHtml(c.ultima_mensagem.slice(0, 50)) : '<em>Sem mensagens</em>';
@@ -350,6 +378,15 @@ async function resolverConversaLead(leadId, tel, nome) {
     try {
       const r2 = await Auth.api('GET', '/whatsapp/conversas?limit=200');
       const lista = r2?.ok ? (r2.data.dados || []) : [];
+
+      // CORREÇÃO: reidrata _conversas com a lista fresca buscada neste passo
+      // Garante que a sidebar não fique vazia quando a chamada inicial de carregarConversas
+      // falhou ou retornou dados parciais — abrindo via URL não pode zerar a lista lateral
+      if (lista.length > 0) {
+        _conversas = lista;
+        renderListaConversas();
+      }
+
       const porTel = lista.find(c => phonesMatch(c.telefone, telNorm));
       if (porTel) {
         conv = { ...porTel, lead_nome: nome };
