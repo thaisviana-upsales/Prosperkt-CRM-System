@@ -357,6 +357,7 @@ async function enviarTexto(telefone, texto) {
 
 /**
  * Envia mídia (imagem, documento, áudio, vídeo).
+ * Evolution API v2: propriedades encapsuladas em mediaMessage: {}
  * @param {string} telefone
  * @param {{ mediatype, mimetype, caption, media, fileName }} opcoes
  */
@@ -364,23 +365,28 @@ async function enviarMidia(telefone, opcoes) {
   const number = telefone.replace(/\D/g, '');
   return call('POST', `/message/sendMedia/${EVOLUTION_INSTANCE}`, {
     number,
-    mediatype: opcoes.mediatype || 'image',
-    mimetype:  opcoes.mimetype  || 'image/jpeg',
-    caption:   opcoes.caption   || '',
-    media:     opcoes.media,      // URL pública ou base64
-    fileName:  opcoes.fileName   || 'arquivo',
+    mediaMessage: {
+      mediatype: opcoes.mediatype || 'image',
+      mimetype:  opcoes.mimetype  || 'image/jpeg',
+      caption:   opcoes.caption   || '',
+      media:     opcoes.media,      // URL pública ou base64
+      fileName:  opcoes.fileName   || 'arquivo',
+    },
   });
 }
 
 /**
  * Envia áudio (PTT — push-to-talk).
+ * Evolution API v2: propriedades encapsuladas em audioMessage: {}
  */
 async function enviarAudio(telefone, audioUrl) {
   const number = telefone.replace(/\D/g, '');
   return call('POST', `/message/sendWhatsAppAudio/${EVOLUTION_INSTANCE}`, {
     number,
-    audio: audioUrl,
-    encoding: true,
+    audioMessage: {
+      audio:    audioUrl,
+      encoding: true,
+    },
   });
 }
 
