@@ -706,11 +706,11 @@ function renderMensagem(msg) {
     const dur = msg.media_duration ? ` · ${Math.floor(msg.media_duration/60)}:${String(msg.media_duration%60).padStart(2,'0')}` : '';
     conteudo = audioSrc
       ? `<div class="wa-audio-player" data-src="${escHtml(audioSrc)}" data-id="${msg.id}">
-           <button class="wa-audio-play-btn" onclick="WAAudio.toggle(this)" title="Play/Pause">
+           <button class="wa-audio-play-btn" title="Play/Pause">
              <svg class="ico-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
              <svg class="ico-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="display:none"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
            </button>
-           <div class="wa-audio-progress" onclick="WAAudio.seek(this, event)">
+           <div class="wa-audio-progress">
              <div class="wa-audio-bar-fill"></div>
            </div>
            <span class="wa-audio-time">0:00${dur}</span>
@@ -1111,6 +1111,25 @@ function escHtml(str) {
 
 // ─── Bind eventos ─────────────────────────────────────────────────────────────
 function bindEvents() {
+  // ── Delegação de eventos para players de áudio — CSP bloqueia onclick inline ──
+  // Único listener permanente no container de mensagens captura todos os cliques
+  const msgContainer = document.getElementById('wa-messages');
+  if (msgContainer) {
+    msgContainer.addEventListener('click', (e) => {
+      // Botão play/pause
+      const playBtn = e.target.closest('.wa-audio-play-btn');
+      if (playBtn && typeof WAAudio !== 'undefined') {
+        WAAudio.toggle(playBtn);
+        return;
+      }
+      // Barra de progresso (seek)
+      const progressBar = e.target.closest('.wa-audio-progress');
+      if (progressBar && typeof WAAudio !== 'undefined') {
+        WAAudio.seek(progressBar, e);
+        return;
+      }
+    });
+  }
   // Botões topo
   document.getElementById('btn-nova-conv').addEventListener('click', abrirModalNova);
   document.getElementById('btn-refresh').addEventListener('click', () => carregarConversas());
