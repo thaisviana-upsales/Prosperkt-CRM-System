@@ -481,26 +481,45 @@ async function servirAudioAssinado(req, res) {
       .single();
 
     if (msgErr || !msg) {
-      console.warn('WA_AUDIO_PLAY_NOT_FOUND', { msgId });
+      console.warn('WA_AUDIO_PLAY_NOT_FOUND', { msgId, erro: msgErr?.message });
       return res.status(404).end();
     }
 
-    // ── Caso 1: áudio enviado — já está no Supabase Storage ─────────────────
+    // Log de diagnóstico — visível no Railway para todo clique de play
+    const _urlType = !msg.arquivo_url ? 'null'
+      : msg.arquivo_url.startsWith('data:') ? 'base64'
+      : msg.arquivo_url.startsWith('http')  ? 'http'
+      : msg.arquivo_url.startsWith('/')     ? 'abs'
+      : 'relative_storage_path';
+    console.log('WA_AUDIO_PLAY_START', {
+      msgId, hasPath: !!msg.storage_path, urlType: _urlType, direcao: msg.direcao,
+    });
+
+    // ── Caso 1: storage_path definido → sdk download (mais rápido) ───────────
     if (msg.storage_path) {
       const bucket = msg.storage_bucket || BUCKET;
       const { data: fileBlob, error: dlErr } = await sb.storage.from(bucket).download(msg.storage_path);
       if (dlErr || !fileBlob) {
-        console.warn('WA_AUDIO_PLAY_STORAGE_ERR', { msgId, erro: dlErr?.message });
-        return res.status(502).end();
+        // SDK falhou → fallback: signed URL de 1h e redireciona
+        console.warn('WA_AUDIO_PLAY_STORAGE_SDK_FAIL', { msgId, erro: dlErr?.message });
+        const signed = await gerarSignedUrl(sb, msg.storage_path, 3600);
+        if (signed) {
+          console.log('WA_AUDIO_PLAY_REDIRECT_SIGNED', { msgId });
+          res.set('Cache-Control', 'private, max-age=3600');
+          return res.redirect(302, signed);
+        }
+        console.warn('WA_AUDIO_PLAY_STORAGE_TOTAL_FAIL', { msgId });
+        // Nao conseguiu servir pelo path — tenta arquivo_url abaixo
+      } else {
+        const buf = Buffer.from(await fileBlob.arrayBuffer());
+        const mime = msg.mime_type || 'audio/ogg';
+        res.set('Content-Type',   mime);
+        res.set('Content-Length', buf.length);
+        res.set('Cache-Control',  'private, max-age=86400');
+        res.set('Accept-Ranges',  'bytes');
+        console.log('WA_AUDIO_PLAY_SERVED_STORAGE', { msgId, bytes: buf.length, mime });
+        return res.send(buf);
       }
-      const buf = Buffer.from(await fileBlob.arrayBuffer());
-      const mime = msg.mime_type || 'audio/ogg';
-      res.set('Content-Type',   mime);
-      res.set('Content-Length', buf.length);
-      res.set('Cache-Control',  'private, max-age=86400');
-      res.set('Accept-Ranges',  'bytes');
-      console.log('WA_AUDIO_PLAY_SERVED_STORAGE', { msgId, bytes: buf.length, mime });
-      return res.send(buf);
     }
 
     // ── Caso 2: storage_path ausente — arquivo_url é URL da Evolution ou data: ─
@@ -517,7 +536,9 @@ async function servirAudioAssinado(req, res) {
 
     // Se for base64 embutido (fallback quando Supabase signed URL falhou), decodifica e serve
     if (evoUrl.startsWith('data:')) {
-      const [header, b64data] = evoUrl.split(',');
+      const commaIdx = evoUrl.indexOf(',');
+      const header   = evoUrl.slice(0, commaIdx);
+      const b64data  = evoUrl.slice(commaIdx + 1);
       const mime = header.replace('data:', '').replace(';base64', '') || msg.mime_type || 'audio/ogg';
       const buf  = Buffer.from(b64data, 'base64');
       res.set('Content-Type',   mime);
@@ -526,6 +547,35 @@ async function servirAudioAssinado(req, res) {
       res.set('Accept-Ranges',  'bytes');
       console.log('WA_AUDIO_PLAY_SERVED_BASE64', { msgId, bytes: buf.length, mime });
       return res.send(buf);
+    }
+
+    // ── Caminho relativo Supabase: createSignedUrl falhou no envio → arquivo_url = storagePath ───
+    // Detecta: nao começa com http, /, data: → é caminho relativo ('whatsapp/conversas/...')
+    if (evoUrl && !evoUrl.startsWith('http') && !evoUrl.startsWith('/') && !evoUrl.startsWith('data:')) {
+      console.log('WA_AUDIO_PLAY_RELATIVE_PATH', { msgId, url: evoUrl.slice(0, 80) });
+      const { data: blob, error: dlErr } = await sb.storage.from(BUCKET).download(evoUrl);
+      if (!dlErr && blob) {
+        const buf = Buffer.from(await blob.arrayBuffer());
+        const mime = msg.mime_type || 'audio/ogg';
+        // Fixa storage_path no banco para próximas chamadas irem pelo Caso 1
+        sb.from(MENSAGENS_TABLE).update({ storage_path: evoUrl, storage_bucket: BUCKET }).eq('id', msgId).catch(() => {});
+        res.set('Content-Type',   mime);
+        res.set('Content-Length', buf.length);
+        res.set('Cache-Control',  'private, max-age=86400');
+        res.set('Accept-Ranges',  'bytes');
+        console.log('WA_AUDIO_PLAY_SERVED_RELATIVE', { msgId, bytes: buf.length });
+        return res.send(buf);
+      }
+      // SDK falhou → tenta signed URL 1h
+      console.warn('WA_AUDIO_PLAY_RELATIVE_SDK_FAIL', { msgId, dlErr: dlErr?.message });
+      const signed = await gerarSignedUrl(sb, evoUrl, 3600);
+      if (signed) {
+        console.log('WA_AUDIO_PLAY_REDIRECT_RELATIVE_SIGNED', { msgId });
+        return res.redirect(302, signed);
+      }
+      // Falhou tudo — retorna 502
+      console.warn('WA_AUDIO_PLAY_RELATIVE_TOTAL_FAIL', { msgId });
+      return res.status(502).end();
     }
 
     const evoKey  = process.env.EVOLUTION_API_KEY || '';
