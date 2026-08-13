@@ -22,7 +22,7 @@
   'use strict';
 
   // ─── Constantes ─────────────────────────────────────────────────────────────
-  const ENDPOINT_AUDIO = '/api/whatsapp/audio/send';
+  const ENDPOINT_AUDIO = '/api/whatsapp/audio/send'; // URL completa — não prefixar novamente com /api
 
   // Ícone paper-plane (enviar) — substituirá o mic que _setRecUI('preview') coloca
   const ICON_ENVIAR_AUDIO = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0D0D0D" stroke-width="2.5">
@@ -77,18 +77,31 @@
     _previewBlob = blob;
     console.log('FRONT_AUDIO_BLOB_READY', { size: blob.size, type: blob.type });
 
-    // ── Fix 1: forçar load() no player para resolver 0:00/0:00 ──────────────
+    // ── Fix 1: forçar load() no player e corrigir duração 0:00 (Chrome/WebM) ─
     const prevEl = document.getElementById('wa-audio-prev-el');
     if (prevEl) {
-      // Garante que src está definido (whatsapp.js já setou, mas chama load() explícito)
+      // Garante src (whatsapp.js já setou, mas cria fallback se necessário)
       if (!prevEl.src || prevEl.src === window.location.href) {
-        // src não foi setado ainda — cria ObjectURL local
         try { prevEl.src = URL.createObjectURL(blob); } catch {}
       }
-      prevEl.load();
+
+      prevEl.load(); // força browser a processar nova source
+
       prevEl.addEventListener('loadedmetadata', () => {
-        console.log('FRONT_AUDIO_PREVIEW_READY', { duration: prevEl.duration });
+        // Chrome com audio/webm não embute duration no header → retorna Infinity
+        // Fix: seek para posição absurda força browser a calcular duração real
+        if (!isFinite(prevEl.duration) || prevEl.duration === 0) {
+          prevEl.currentTime = 1e101;
+          prevEl.addEventListener('timeupdate', function onSeek() {
+            prevEl.removeEventListener('timeupdate', onSeek);
+            prevEl.currentTime = 0;
+            console.log('FRONT_AUDIO_PREVIEW_READY', { duration: prevEl.duration, fixedWebM: true });
+          });
+        } else {
+          console.log('FRONT_AUDIO_PREVIEW_READY', { duration: prevEl.duration });
+        }
       }, { once: true });
+
       prevEl.addEventListener('error', (e) => {
         console.warn('FRONT_AUDIO_PREVIEW_ERROR', { error: e.type });
       }, { once: true });
@@ -170,7 +183,7 @@
 
     const result = await new Promise((resolve) => {
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', `/api${ENDPOINT_AUDIO}`, true);
+      xhr.open('POST', ENDPOINT_AUDIO, true); // ENDPOINT_AUDIO já contém /api — não duplicar
       const token = _getToken();
       if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
 

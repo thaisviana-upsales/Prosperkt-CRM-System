@@ -385,10 +385,29 @@ async function servirAudioAssinado(req, res) {
   }
 }
 
+// ───────────────────────────────────────────────────────────────────────────────
+// GET /api/whatsapp/audio/health
+// Confirma que o módulo isolado de áudio está registrado
+// ───────────────────────────────────────────────────────────────────────────────
+function health(req, res) {
+  return res.json({
+    sucesso: true,
+    module: 'whatsapp-audio',
+    routes: [
+      'POST /api/whatsapp/audio/send',
+      'POST /api/whatsapp/audio/sync-conversa/:conversaId',
+      'GET  /api/whatsapp/audio/play/:msgId',
+      'GET  /api/whatsapp/audio/health',
+    ],
+    bucket: BUCKET,
+  });
+}
+
 module.exports = {
   upload,
   handleUploadError,
   enviarAudio,
   sincronizarAudios,
   servirAudioAssinado,
+  health,
 };
