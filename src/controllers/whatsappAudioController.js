@@ -17,6 +17,7 @@ const crypto    = require('crypto');
 const multer    = require('multer');
 const { getProvider } = require('../database/dbProvider');
 const evoSvc    = require('../services/evolutionApiService');
+const { tentarConverter } = require('../utils/audioConverter');
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
 const BUCKET         = 'whatsapp-midias';
@@ -156,35 +157,49 @@ async function enviarAudio(req, res) {
     }
     console.log('WA_AUDIO_STORAGE_UPLOAD_SUCCESS', { storagePath, bucket: BUCKET, bytes: arquivo.size });
 
-    // ── 4. Converte buffer para base64 puro (sem prefixo data URI) ─────────────
-    // Evolution API v2 exige: URL ou base64 puro — NÃO aceita "data:...;base64,..."
-    const base64Audio = arquivo.buffer.toString('base64');
-    console.log('WA_AUDIO_BASE64_READY', { mime: arquivo.mimetype, bytes: arquivo.size });
-
-    // ── 5. Envia como mensagem de voz (PTT) via sendMedia ──────────────────────
-    // sendWhatsAppAudio foi abandonado: endpoint quebrado nesta versão da Evolution
-    //   (crashes com HTTP 500 para qualquer formato de audioMessage)
-    // sendMedia com ptt:true entrega como bolha de voz no WhatsApp do destinatário
+    // ── 4. Converte buffer para base64 puro (sem prefixo data URI) ──────────────
+    // Tenta converter WebM → OGG Opus (formato nativo WhatsApp)
+    // Se ffmpeg não estiver disponível, usa WebM como fallback
     console.log('WA_AUDIO_EVOLUTION_SEND_START', { telefone: telNormalizado });
+
+    let audioBuffer    = arquivo.buffer;
+    let audioMime      = arquivo.mimetype;
+    let audioConverted = false;
+
+    const oggBuffer = await tentarConverter(arquivo.buffer);
+    if (oggBuffer && oggBuffer.length > 0) {
+      audioBuffer    = oggBuffer;
+      audioMime      = 'audio/ogg; codecs=opus';
+      audioConverted = true;
+      console.log('WA_AUDIO_CONVERTED_OGG', { originalBytes: arquivo.size, oggBytes: oggBuffer.length });
+    } else {
+      console.warn('WA_AUDIO_CONVERTER_UNAVAILABLE — enviando WebM como fallback');
+    }
+
+    const base64Audio = audioBuffer.toString('base64');
+    console.log('WA_AUDIO_BASE64_READY', { mime: audioMime, bytes: audioBuffer.length, converted: audioConverted });
+
+    // ── 5. Envia como mensagem de áudio via sendMedia ───────────────────────────
     let evoOk  = false;
     let evoErr = null;
 
     if (evoSvc.isConfigured()) {
-      const evoResult = await evoSvc.enviarAudio(telNormalizado, base64Audio, arquivo.mimetype);
+      const evoResult = await evoSvc.enviarAudio(telNormalizado, base64Audio, audioMime);
       evoOk  = !!(evoResult.sucesso || evoResult.dados?.key?.id);
-      evoErr = evoOk ? null : (evoResult.erro || 'Evolution rejeitou o áudio');
+      evoErr = evoOk ? null : (evoResult.erro || 'Evolution rejeitou the áudio');
 
       if (evoOk) {
         console.log('WA_AUDIO_EVOLUTION_SEND_SUCCESS', {
-          msgId: evoResult.dados?.key?.id,
-          method: 'sendMedia+ptt',
+          msgId:     evoResult.dados?.key?.id,
+          mime:      audioMime,
+          converted: audioConverted,
         });
       } else {
         const errDados = JSON.stringify(evoResult.dados || {}).slice(0, 400);
         console.warn('WA_AUDIO_EVOLUTION_SEND_FAIL', {
-          erro: evoErr,
+          erro:   evoErr,
           status: evoResult.status,
-          dados: errDados,
+          dados:  errDados,
         });
       }
     } else {
