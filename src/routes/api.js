@@ -32,6 +32,7 @@ const arquivosWaCtrl     = require('../controllers/arquivosWhatsappController');
 const admVendasCtrl      = require('../controllers/admVendasController');
 const importacaoExcelCtrl = require('../controllers/importacaoExcelController');
 const contaAzulCtrl      = require('../controllers/contaAzulController');
+const waAudioCtrl        = require('../controllers/whatsappAudioController'); // módulo isolado de áudio
 
 // Seed funis iniciais (só roda se vazio)
 funisCtrl.seedFunis();
@@ -233,6 +234,11 @@ router.post  ('/whatsapp/conversas/:id/mensagens',autenticar, whatsappCtrl.envia
 router.patch ('/whatsapp/conversas/:id/status',   autenticar, whatsappCtrl.atualizarStatus);
 // ── Proxy seguro de mídia — serve áudio/imagem sem expor EVOLUTION_API_KEY ──
 router.get   ('/whatsapp/media/:conversaId/:msgId', autenticar, whatsappCtrl.servirMidia);
+// ── Módulo isolado de áudio (não altera fluxo de texto) ────────────────────────────
+router.post  ('/whatsapp/audio/send',                autenticar, waAudioCtrl.upload.single('audio'), waAudioCtrl.enviarAudio, waAudioCtrl.handleUploadError);
+router.post  ('/whatsapp/audio/sync-conversa/:conversaId', autenticar, waAudioCtrl.sincronizarAudios);
+router.get   ('/whatsapp/audio/play/:msgId',         autenticar, waAudioCtrl.servirAudioAssinado);
+
 router.get   ('/whatsapp/lead/:lead_id',          autenticar, whatsappCtrl.conversaPorLead);
 router.get   ('/whatsapp/pendentes',              autenticar, whatsappCtrl.listarPendentes); // somente GESTOR+
 router.post  ('/whatsapp/webhook/trafego',        whatsappCtrl.webhookTrafego); // sem auth (webhook externo)
