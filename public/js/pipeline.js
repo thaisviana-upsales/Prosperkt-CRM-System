@@ -1069,9 +1069,10 @@ async function abrirLead(id) {
   // Esconde mensagem de CEP ao recarregar lead
   const cepMsg = document.getElementById('fl-cep-msg');
   if (cepMsg) cepMsg.style.display = 'none';
-  // Layout Virtual
-  setVal('fl-layout-virtual-aprovado-em', l.layout_virtual_aprovado_em);
-  setVal('fl-layout-virtual-entrada-em',  l.layout_virtual_entrada_em);
+  // Layout Virtual — converte TIMESTAMPTZ para formato aceito por <input type="date"> (YYYY-MM-DD)
+  setVal('fl-layout-virtual-aprovado-em', l.layout_virtual_aprovado_em ? l.layout_virtual_aprovado_em.slice(0,10) : '');
+  setVal('fl-layout-virtual-entrada-em',  l.layout_virtual_entrada_em  ? l.layout_virtual_entrada_em.slice(0,10)  : '');
+  console.log('LAYOUT_APROVADO_DATA_LOADED_IN_CARD', { leadId: id, aprovado: l.layout_virtual_aprovado_em, entrada: l.layout_virtual_entrada_em });
   // Multi-produto: carrega do banco
   _leadIdAberto = id;
   await carregarProdutosLead(id, l);
@@ -1591,7 +1592,10 @@ async function salvarLead() {
     bairro_entrega:      document.getElementById('fl-bairro-entrega')?.value?.trim()||undefined,
     cidade_entrega:      document.getElementById('fl-cidade-entrega')?.value?.trim()||undefined,
     uf_entrega:          document.getElementById('fl-uf-entrega')?.value?.trim()?.toUpperCase()||undefined,
-    // Dados fiscais
+    // Campos de Layout Virtual — inclui no body para que edição manual seja salva
+    // Usa || undefined: se o input estiver vazio, NÃO envia (preserva o valor existente no banco)
+    layout_virtual_aprovado_em: document.getElementById('fl-layout-virtual-aprovado-em')?.value || undefined,
+    // dados fiscais
     cnpj: (document.getElementById('fl-cnpj')?.value||'').replace(/\D/g,'')||undefined,
     dados_extras: {
       obs_pedido:   document.getElementById('fl-obs-pedido')?.value||undefined,
