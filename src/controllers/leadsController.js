@@ -221,14 +221,29 @@ function formatarLog(l, etapaMap = {}) {
 const PRODUTO_PLACEHOLDERS = new Set(['—', '-', '--', '---', 'nenhum', 'none', 'n/a', 'n.a.', 'sem produto', 'selecione', '', null, undefined]);
 
 /**
- * Valida se o lead tem pelo menos 1 produto REAL vinculado na tabela lead_produtos.
- * Produto válido: produto_nome não é placeholder, quantidade > 0.
+ * Normaliza valor monetário (suporta formato BR "1.000,00" e EN "1000.00")
+ */
+function _parseMoeda(v) {
+  if (v === null || v === undefined || v === '') return 0;
+  const s = String(v).trim().replace(/R\$\s*/g, '').replace(/\s/g, '');
+  // Formato BR: vírgula como decimal, ponto como milhar (ex: "1.000,50")
+  if (s.includes(',')) return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
+  return parseFloat(s) || 0;
+}
+
+/**
+ * Valida se o lead tem pelo menos 1 produto vinculado em lead_produtos OU nos campos legados.
+ * Aceita produtos sem produto_id (digitados manualmente).
+ * Valida: nome não-vazio, quantidade > 0, valor > 0.
+ * Fallback: se lead_produtos vazio, aceita lead.produto_nome ou lead.produto_id.
  * @param {object} sb - Supabase client
  * @param {string} leadId
- * @returns {Promise<{valido:boolean, motivo:string}>}
+ * @param {object} [lead] - dados do lead (fallback legado)
+ * @returns {Promise<{valido:boolean, motivo:string, encontrados:number}>}
  */
-async function _validarProdutoParaGanho(sb, leadId) {
+async function _validarProdutoParaGanho(sb, leadId, lead) {
   try {
+    console.log('VENDA_VALIDACAO_PRODUTOS_BUSCA', { leadId });
     const { data: itens, error } = await sb
       .from('lead_produtos')
       .select('id, produto_id, produto_nome, quantidade, valor_unitario, valor_total')
@@ -236,28 +251,72 @@ async function _validarProdutoParaGanho(sb, leadId) {
       .is('deleted_at', null);
 
     if (error) {
-      console.error('[PRODUTO_OBRIG] Erro Supabase ao buscar lead_produtos:', error.message, '| código:', error.code, '| lead_id:', leadId);
-      return { valido: false, motivo: `Erro ao verificar produtos (${error.code || error.message}). Tente novamente.` };
+      console.error('[PRODUTO_OBRIG] Supabase erro:', error.message, '| code:', error.code, '| lead_id:', leadId);
+      // Falha na query: aceita campo legado se existir
+      if (lead?.produto_nome || lead?.produto_id) {
+        console.log('VENDA_VALIDACAO_PRODUTOS_ENCONTRADOS', { leadId, qtd: 1, fonte: 'legado_fallback_db_err' });
+        return { valido: true, motivo: null, encontrados: 1 };
+      }
+      return { valido: false, motivo: `Erro ao verificar produtos (${error.code || error.message}). Tente novamente.`, encontrados: 0 };
     }
 
-    const itensValidos = (itens || []).filter(i => {
+    const todosItens = itens || [];
+    const itensValidos = todosItens.filter(i => {
       const nomeLimpo = (i.produto_nome || '').trim().toLowerCase();
+      // Rejeita placeholders
       if (PRODUTO_PLACEHOLDERS.has(nomeLimpo) || PRODUTO_PLACEHOLDERS.has(i.produto_nome)) return false;
       if (!nomeLimpo) return false;
+      // Valida quantidade > 0
       if (Number(i.quantidade) <= 0) return false;
+      // Valida valor: unitário OR total devem ser > 0
+      // (produto com valor zero é considerado incompleto)
+      const vUnit = _parseMoeda(i.valor_unitario);
+      const vTot  = _parseMoeda(i.valor_total);
+      if (vUnit <= 0 && vTot <= 0) return false;
       return true;
     });
 
-    if (itensValidos.length === 0) {
-      return {
-        valido: false,
-        motivo: 'Para concluir a venda, selecione ao menos um produto vendido com quantidade e valor válidos.',
-      };
+    console.log('VENDA_VALIDACAO_PRODUTOS_ENCONTRADOS', {
+      leadId,
+      total: todosItens.length,
+      validos: itensValidos.length,
+      nomes: itensValidos.map(i => i.produto_nome),
+    });
+
+    if (itensValidos.length > 0) {
+      return { valido: true, motivo: null, encontrados: itensValidos.length };
     }
-    return { valido: true, motivo: null };
+
+    // lead_produtos vazio ou todos inválidos — tenta fallback para campos legados
+    const nomeLeadLegado = (lead?.produto_nome || '').trim();
+    const idLeadLegado   = lead?.produto_id || '';
+    const temLegado = nomeLeadLegado && !PRODUTO_PLACEHOLDERS.has(nomeLeadLegado.toLowerCase());
+    if (temLegado || idLeadLegado) {
+      console.log('VENDA_VALIDACAO_PRODUTOS_ENCONTRADOS', {
+        leadId, fonte: 'campo_legado', produto_nome: nomeLeadLegado, produto_id: idLeadLegado,
+      });
+      return { valido: true, motivo: null, encontrados: 1 };
+    }
+
+    // Determina motivo específico
+    if (todosItens.length > 0 && itensValidos.length === 0) {
+      const temQtdZero = todosItens.some(i => Number(i.quantidade) <= 0);
+      const temValZero = todosItens.some(i => {
+        const vU = _parseMoeda(i.valor_unitario); const vT = _parseMoeda(i.valor_total);
+        return vU <= 0 && vT <= 0;
+      });
+      if (temQtdZero) return { valido: false, motivo: 'Informe a quantidade dos produtos vendidos (deve ser maior que zero).', encontrados: 0 };
+      if (temValZero) return { valido: false, motivo: 'Informe o valor unitário dos produtos vendidos (deve ser maior que zero).', encontrados: 0 };
+    }
+    return {
+      valido: false,
+      motivo: 'Selecione ao menos um produto vendido com quantidade e valor válidos.',
+      encontrados: 0,
+    };
   } catch (e) {
     console.error('[PRODUTO_OBRIG] Exceção:', e.message);
-    return { valido: false, motivo: 'Erro interno ao validar produtos.' };
+    if (lead?.produto_nome || lead?.produto_id) return { valido: true, motivo: null, encontrados: 1 };
+    return { valido: false, motivo: 'Erro interno ao validar produtos.', encontrados: 0 };
   }
 }
 
@@ -272,6 +331,8 @@ async function _validarProdutoParaGanho(sb, leadId) {
  * @returns {Promise<{valido:boolean, erro:string|null, campos_faltando:string[]}>}
  */
 async function _validarDadosGanho(sb, leadId, lead, body) {
+  console.log('VENDA_VALIDACAO_START', { leadId });
+  console.log('VENDA_VALIDACAO_LEAD_ID', { leadId, nome: lead?.nome, funil_id: lead?.funil_id });
   const faltando = [];
 
   // 1. Campos básicos
@@ -279,8 +340,9 @@ async function _validarDadosGanho(sb, leadId, lead, body) {
   if (!(body.email || lead.email))          faltando.push('E-mail');
   if (!(body.funil_id || lead.funil_id))    faltando.push('Funil');
 
-  // 2. Valor da venda > 0
-  const vv = parseFloat(body.valor_venda ?? lead.valor_venda ?? 0);
+  // 2. Valor da venda > 0 — suporta formato BR "1.000,00" e EN "1000.00"
+  const vv = _parseMoeda(body.valor_venda ?? lead.valor_venda);
+  console.log('VENDA_VALIDACAO_VALOR_TOTAL', { leadId, valor_venda_raw: body.valor_venda ?? lead.valor_venda, valor_venda_parsed: vv });
   if (!vv || vv <= 0)                       faltando.push('Valor da Venda');
 
   // 3. Forma de pagamento
@@ -298,11 +360,16 @@ async function _validarDadosGanho(sb, leadId, lead, body) {
   if (!_e('uf_entrega'))                   faltando.push('UF');
   // complemento_entrega e referencia_entrega são opcionais — NÃO bloqueiam
 
-  // 5. Produto válido (tabela lead_produtos)
-  const { valido: prodValido, motivo: prodMotivo } = await _validarProdutoParaGanho(sb, leadId);
+  // 5. Produto válido — aceita produto_id OU produto_nome, com quantidade > 0 e valor > 0
+  //    Fallback para campos legados (produto_nome/produto_id direto na tabela leads)
+  const { valido: prodValido, motivo: prodMotivo, encontrados: prodQtd } = await _validarProdutoParaGanho(sb, leadId, lead);
+  console.log('VENDA_VALIDACAO_QUANTIDADE_TOTAL', { leadId, produtos_validos: prodQtd });
   if (!prodValido) faltando.push(prodMotivo || 'Produto válido');
 
-  if (faltando.length === 0) return { valido: true, erro: null, campos_faltando: [] };
+  if (faltando.length === 0) {
+    console.log('VENDA_VALIDACAO_APROVADA', { leadId });
+    return { valido: true, erro: null, campos_faltando: [] };
+  }
 
   // Monta mensagem amigável
   const CAMPOS_ENDERECO = ['CEP de Entrega','Logradouro/Rua','Número','Bairro','Cidade','UF'];
@@ -314,6 +381,8 @@ async function _validarDadosGanho(sb, leadId, lead, body) {
     erro = `Para concluir a venda, preencha os dados obrigatórios: ${faltando.filter(f => !CAMPOS_ENDERECO.includes(f)).join(', ') || faltando.join(', ')}.`;
   }
 
+  console.log('VENDA_VALIDACAO_BLOQUEADA', { leadId, faltando });
+  console.warn('VENDA_VALIDACAO_CAMPOS_FALTANTES', { leadId, faltando });
   console.warn('[GANHO_VALIDACAO_BLOQUEIO] campos faltando:', faltando, '| lead:', leadId);
   return { valido: false, erro, campos_faltando: faltando };
 }
@@ -2100,13 +2169,13 @@ async function adicionarProdutoLead(req, res) {
   const leadId = req.params.id;
   const { produto_id, produto_nome, produto_cor, quantidade = 1, valor_unitario = 0 } = req.body;
 
+  // Valida nome do produto
   const nomeLimpo = (produto_nome || '').trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
   if (!nomeLimpo || nomeLimpo === '—' || nomeLimpo === '-') {
-    return res.status(400).json({ sucesso: false, erro: 'produto_nome inválido. Selecione um produto do catálogo.' });
+    return res.status(400).json({ sucesso: false, erro: 'produto_nome inválido. Informe o nome do produto.' });
   }
-  if (!produto_id) {
-    return res.status(400).json({ sucesso: false, erro: 'Selecione um produto do catálogo oficial (produto_id obrigatório).' });
-  }
+  // produto_id: recomendado (produto do catálogo), mas não obrigatório
+  // Permite produtos digitados manualmente sem ID do catálogo
   if (Number(quantidade) <= 0) return res.status(400).json({ sucesso: false, erro: 'quantidade deve ser maior que zero.' });
 
   const id    = require('crypto').randomBytes(16).toString('hex');

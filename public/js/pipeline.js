@@ -732,9 +732,9 @@ async function moverLead(etapaId) {
     console.log('[DRAG_VENDAS] Produtos encontrados:', produtosPersistidos.length,
       produtosPersistidos.map(p => p.produto_nome));
 
-    // ── Valida com a mesma regra de salvarLead ────────────────────────────────
+    // ── Valida com a mesma regra de salvarLead ──────────────────────────────────
     const prodAtivos    = produtosPersistidos.filter(p => !p._removido);
-    const prodOficial   = prodAtivos.find(p => p.produto_id && p.produto_id !== '');
+    // Não exige produto_id (catálogo oficial) — nome + quantidade + valor são suficientes
     const prodIncompleto = prodAtivos.find(p => !p.produto_nome || !(p.quantidade > 0) || !(p.valor_unitario >= 0));
     const email         = (leadCompleto?.email || '').trim();
     const formaPgto     = leadCompleto?.forma_pagamento || '';
@@ -748,8 +748,8 @@ async function moverLead(etapaId) {
     const cepRaw        = (leadCompleto?.cep_entrega      || '').replace(/\D/g, '');
 
     const temProdutos    = prodAtivos.length > 0;
-    const temProdOficial = !!prodOficial;
-    const prodOk         = temProdutos && temProdOficial && !prodIncompleto;
+    const prodOk         = temProdutos && !prodIncompleto;
+
 
     const camposFaltando = [];
     if (!email)          camposFaltando.push('E-mail');
@@ -787,9 +787,8 @@ async function moverLead(etapaId) {
     if (alertEl) {
       const msgs = [];
       if (!prodOk) {
-        if (!temProdutos)         msgs.push('Selecione ao menos um produto da lista oficial.');
-        else if (!temProdOficial) msgs.push('Selecione um produto da lista oficial (busque pelo nome e clique na opção).');
-        else if (prodIncompleto)  msgs.push('Preencha nome, quantidade e valor de todos os produtos.');
+        if (!temProdutos)        msgs.push('Selecione ao menos um produto.');
+        else if (prodIncompleto) msgs.push('Preencha nome, quantidade e valor de todos os produtos.');
       }
       if (camposFaltando.length) msgs.push(`Campos obrigatórios faltando: ${camposFaltando.join(', ')}.`);
       if (msgs.length) {
@@ -1436,22 +1435,12 @@ async function salvarLead() {
       }
       return;
     }
-    // Exige que pelo menos 1 produto seja da lista oficial (produto_id preenchido)
-    const prodOficial = prodAtivos.find(p => p.produto_id && p.produto_id !== '');
-    if (!prodOficial) {
+    // Produto válido: nome preenchido + quantidade > 0
+    // Não exige produto_id (produto do catálogo oficial) — compativel com produtos digitados
+    const prodCompletoOk = prodAtivos.every(p => p.produto_nome && p.quantidade > 0);
+    if (!prodCompletoOk) {
       alertEl.className='alert alert-error';
-      alertEl.textContent='Para concluir a venda, selecione ao menos um produto da lista oficial (busque pelo nome e clique na opção da lista).';
-      alertEl.style.display='';
-      abrirSecaoComercial();
-      showTab('venda');
-      const btnAddProd = document.getElementById('btn-add-linha-produto');
-      if (btnAddProd) btnAddProd.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      return;
-    }
-    const prodIncompleto = prodAtivos.find(p => !p.produto_nome || !(p.quantidade > 0) || !(p.valor_unitario >= 0));
-    if (prodIncompleto) {
-      alertEl.className='alert alert-error';
-      alertEl.textContent='Preencha o nome do produto, a quantidade e o valor unitário antes de registrar a venda.';
+      alertEl.textContent='Preencha o nome do produto e a quantidade de todos os itens adicionados.';
       alertEl.style.display='';
       abrirSecaoComercial();
       showTab('venda');
@@ -1954,10 +1943,11 @@ async function salvarLinhaProduto(idx) {
   const p      = _leadProdutos[idx];
   const leadId = _leadIdAberto;
 
-  // Não salva linhas sem nome, sem produto oficial, removidas ou sem leadId
+  // Não salva linhas removidas ou sem leadId
   if (!leadId || !p || p._removido) return;
   const nomeLimpo = (p.produto_nome || '').trim();
-  if (!nomeLimpo || nomeLimpo === '—' || !p.produto_id) return; // exige produto oficial
+  // Exige nome válido (não exige mais produto_id do catálogo)
+  if (!nomeLimpo || nomeLimpo === '—') return;
 
   const qty   = Number(p.quantidade) || 1;
   const vunit = Number(p.valor_unitario) || 0;
@@ -1989,9 +1979,11 @@ async function salvarLinhaProduto(idx) {
 
 // Força flush de todas as linhas não salvas com produto oficial antes de validar venda
 async function _flushProdutosNaoSalvos() {
+  // Produtos pendentes: não removidos, não salvos, com nome válido
+  // Não exige produto_id — produto digitado também deve ser persistido
   const pendentes = _leadProdutos
     .map((p, idx) => ({ p, idx }))
-    .filter(({ p }) => !p._removido && !p._salvo && p.produto_id && (p.produto_nome||'').trim());
+    .filter(({ p }) => !p._removido && !p._salvo && (p.produto_nome||'').trim());
   await Promise.all(pendentes.map(({ idx }) => salvarLinhaProduto(idx)));
 }
 
