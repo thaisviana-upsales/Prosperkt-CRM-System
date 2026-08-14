@@ -268,7 +268,7 @@ async function proxyArquivoRecebido(req, res, next) {
     let msg = null;
     try {
       const { data } = await sb.from('mensagens_whatsapp')
-        .select('id, arquivo_url, arquivo_nome, mime_type, tipo, direcao, telefone, whatsapp_message_id')
+        .select('id, arquivo_url, arquivo_nome, mime_type, tipo, direcao, telefone, evolution_message_id')
         .eq('id', msgId).single();
       msg = data;
     } catch (e) { console.warn('[wha.proxy] DB:', e.message); }
@@ -317,7 +317,8 @@ async function proxyArquivoRecebido(req, res, next) {
     // ── Camada 2: Re-fetch via getBase64FromMediaMessage ───────────────────────
     // Funciona enquanto a Evolution mantém a mensagem em cache (~7 dias)
     // CRÍTICO: usa whatsapp_message_id (key.id do WhatsApp), NÃO o UUID do CRM.
-    const waKeyId = msg.whatsapp_message_id || null;
+    // CORREÇÃO: a coluna é evolution_message_id (saved pelo webhook), não whatsapp_message_id
+    const waKeyId = msg.evolution_message_id || null;
     if (!evoSvc.isConfigured()) {
       return res.status(404).json({
         sucesso: false,

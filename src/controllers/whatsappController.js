@@ -2195,8 +2195,24 @@ function normalizarPayloadWA(body) {
 
   // ── Mídia ─────────────────────────────────────────────────────────────────
   // mediaUrl: Evolution v1.8.6 fornece URL temporária em dataRaw.mediaUrl (pode expirar)
-  // mime_type e fileName ficam DENTRO do objeto de mídia específico (imageMessage etc)
-  const midiaUrl = dataRaw?.mediaUrl || body.midia_url || body.mediaUrl || body.media_url || null;
+  // Para documentos/imagens/vídeos, o URL real pode estar DENTRO do objeto de mídia
+  // (msgData.documentMessage.url, imageMessage.url etc.) — extraído aqui como fallback
+  const midiaUrl = dataRaw?.mediaUrl
+    || msgData?.documentMessage?.url
+    || msgData?.imageMessage?.url
+    || msgData?.videoMessage?.url
+    || body.midia_url || body.mediaUrl || body.media_url || null;
+  // WA_INBOUND_FILE_TYPE_DETECTED — somente para mídias não-áudio
+  if (['imagem','video','documento'].includes(
+      msgData?.imageMessage ? 'imagem' : msgData?.videoMessage ? 'video' : msgData?.documentMessage ? 'documento' : ''
+  )) {
+    console.log('WA_INBOUND_FILE_TYPE_DETECTED', {
+      tipo: msgData?.imageMessage ? 'imagem' : msgData?.videoMessage ? 'video' : 'documento',
+      hasMidiaUrl: !!midiaUrl,
+      fileName: msgData?.documentMessage?.fileName || msgData?.imageMessage?.fileName || null,
+      mimeType: msgData?.documentMessage?.mimetype || msgData?.imageMessage?.mimetype || null,
+    });
+  }
 
   // Objeto de mídia específico — prioridade para extrair mimeType e fileName
   const _imgMsg  = msgData?.imageMessage    || null;
@@ -3061,9 +3077,15 @@ async function webhookReceberMensagem(req, res) {
     if (isSupa && conversaId) {
       // Para mensagens RECEBIDAS: não enviar campo status — usa default do banco
       // Para mensagens ENVIADAS: status 'sent'
+      // CORREÇÃO CIRÚRGICA: 'documento' não está na CHECK constraint de mensagens_whatsapp.
+      // Mapeia 'documento' → 'arquivo' apenas para o campo tipo no banco.
+      // Internamente o código continua usando 'documento' para lógica e logs.
+      const tipoDb = tipo === 'documento' ? 'arquivo' : tipo;
+      if (tipo === 'documento') console.log('WA_INBOUND_FILE_WEBHOOK_RECEIVED', { msgId, tipo, tipoDb, arquivoNome, mimeType, hasMidiaUrl: !!midiaUrl });
       const insertPayload = {
         id: msgId, conversa_id: conversaId, lead_id: leadId || null,
-        telefone: telFinal, mensagem: conteudo || (tipo === 'audio' ? '[Áudio]' : tipo === 'imagem' ? '[Imagem]' : tipo === 'video' ? '[Vídeo]' : tipo === 'documento' ? '[Documento]' : null), tipo,
+        telefone: telFinal, mensagem: conteudo || (tipo === 'audio' ? '[Áudio]' : tipo === 'imagem' ? '[Imagem]' : tipo === 'video' ? '[Vídeo]' : tipo === 'documento' ? '[Documento]' : null),
+        tipo: tipoDb, // 'arquivo' para documentos (respeit a CHECK constraint)
         direcao,
         arquivo_url: midiaUrl || null, arquivo_nome: arquivoNome || null,
         criado_em: agora,
