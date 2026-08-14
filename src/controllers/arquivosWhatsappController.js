@@ -264,7 +264,7 @@ async function proxyArquivoRecebido(req, res, next) {
     const { msgId } = req.params;
     if (!isSupa) return res.status(501).json({ sucesso: false, erro: 'Não disponível em modo SQLite.' });
 
-    // Busca mensagem incluindo whatsapp_message_id (key.id) para re-fetch na Evolution
+    // 1. Busca mensagem
     let msg = null;
     try {
       const { data } = await sb.from('mensagens_whatsapp')
@@ -282,25 +282,57 @@ async function proxyArquivoRecebido(req, res, next) {
     const mimeType    = msg.mime_type || 'application/octet-stream';
     const evoKey      = process.env.EVOLUTION_API_KEY || '';
 
-    // CORREÇÃO CRÍTICA: Para mídias RECEBIDAS, Layer 1 serve conteúdo ENCRIPTADO
-    // do CDN WhatsApp (documentMessage.url, imageMessage.url etc.).
-    // O browser recebe bytes encriptados salvos como .pdf → "Falha ao carregar PDF".
-    // Layer 2 (getBase64FromMediaMessage) decripta automaticamente → conteúdo válido.
-    // Pula Layer 1 para: arquivo, imagem, vídeo recebidos com evolution_message_id.
-    const _tiposMidia = ['arquivo', 'imagem', 'video', 'documento'];
-    const _skipLayer1 = msg.direcao === 'recebida'
-      && !!msg.evolution_message_id
-      && evoSvc.isConfigured()
-      && _tiposMidia.includes(msg.tipo);
-    if (_skipLayer1) {
+    // Pré-computa remoteJid (necessário para Layer 2)
+    const telNumeros = (msg.telefone || '').replace(/\D/g, '');
+    const remoteJid  = telNumeros
+      ? (msg.telefone?.includes('@') ? msg.telefone : `${telNumeros}@s.whatsapp.net`)
+      : null;
+
+    const _tiposMidia   = ['arquivo', 'imagem', 'video', 'documento'];
+    const isReceivedMedia = msg.direcao === 'recebida' && _tiposMidia.includes(msg.tipo);
+    const waKeyId         = msg.evolution_message_id || null;
+
+    // ══ ESTRATÉGIA ══════════════════════════════════════════════════════════════
+    // Para mídias RECEBIDAS: Layer 2 primeiro (getBase64 decripta automaticamente).
+    // CDN WhatsApp (Layer 1 direto) serve conteúdo ENCRIPTADO → PDF corrompido.
+    // Layer 1 só como fallback quando evolution_message_id for null (msgs antigas).
+    // ════════════════════════════════════════════════════════════════════════════
+
+    // ── Layer 2: getBase64FromMediaMessage (sempre tenta primeiro para recebidas) ──
+    if (isReceivedMedia && waKeyId && remoteJid && evoSvc.isConfigured()) {
       console.log('WA_INBOUND_FILE_DOWNLOAD_START', {
-        msgId: msgId.slice(0,8), tipo: msg.tipo, nome: nomeArquivo,
-        strategy: 'Layer2-direto (skip Layer1 encriptado)',
+        msgId: msgId.slice(0,8), tipo: msg.tipo, nome: nomeArquivo, waKeyId: waKeyId.slice(0,8),
+        strategy: 'Layer2-first (decriptado)',
+      });
+      try {
+        const refetch = await evoSvc.getBase64Media(waKeyId, remoteJid);
+        if (refetch.sucesso && refetch.dados?.base64) {
+          const b64str  = refetch.dados.base64;
+          const pureB64 = b64str.replace(/^data:[^;]+;base64,/, '');
+          const buf     = Buffer.from(pureB64, 'base64');
+          const mime    = refetch.dados.mimetype || mimeType;
+          console.log('WA_INBOUND_FILE_DOWNLOAD_SUCCESS', { msgId: msgId.slice(0,8), mime, size: buf.length, nome: nomeArquivo });
+          res.set('Content-Type', mime);
+          res.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(nomeArquivo)}`);
+          res.set('Cache-Control', 'private, max-age=3600');
+          res.set('Content-Length', buf.length);
+          return res.send(buf);
+        }
+        // Layer 2 falhou → tenta Layer 1 como último recurso
+        console.warn('WA_INBOUND_FILE_LAYER2_FAIL', { erro: refetch.erro, waKeyId: waKeyId.slice(0,8) });
+      } catch (e2) {
+        console.warn('[wha.proxy] Layer 2 exception:', e2.message);
+      }
+    } else if (isReceivedMedia && !waKeyId) {
+      // evolution_message_id ausente — mensagem recebida antes da atualização do sistema
+      console.warn('WA_INBOUND_FILE_NO_EVOID', {
+        msgId: msgId.slice(0,8), tipo: msg.tipo,
+        info: 'evolution_message_id null — msg anterior ao fix. Tentando Layer 1 (pode ser encriptado).',
       });
     }
-    // ── Camada 1: URL direta da Evolution ──────────────────────────────────────────────
-    // Pulado para mídias recebidas com evolution_message_id (conteúdo seria encriptado)
-    if (msg.arquivo_url && !_skipLayer1) {
+
+    // ── Layer 1: URL direta (fallback para msgs antigas ou Layer 2 indisponível) ──
+    if (msg.arquivo_url) {
       let upstream = null;
       try {
         upstream = await fetch(msg.arquivo_url, {
@@ -308,15 +340,16 @@ async function proxyArquivoRecebido(req, res, next) {
         });
         if (!upstream.ok && evoKey) upstream = await fetch(msg.arquivo_url);
       } catch (e) {
-        console.warn('[wha.proxy] URL direta falhou (rede):', e.message);
+        console.warn('[wha.proxy] Layer 1 falhou (rede):', e.message);
         upstream = null;
       }
 
       if (upstream?.ok) {
-        console.log('[wha.proxy] Servindo via URL direta:', { msgId: msgId.slice(0,8), nome: nomeArquivo });
-        res.set('Content-Type', upstream.headers.get('content-type') || mimeType);
+        const ct = upstream.headers.get('content-type') || mimeType;
+        console.log('WA_INBOUND_FILE_LAYER1_SERVE', { msgId: msgId.slice(0,8), nome: nomeArquivo, ct });
+        res.set('Content-Type', ct);
         res.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(nomeArquivo)}`);
-        res.set('Cache-Control', 'private, max-age=3600');
+        res.set('Cache-Control', 'private, max-age=600');
         try {
           const { Readable } = require('stream');
           if (Readable.fromWeb && upstream.body) { Readable.fromWeb(upstream.body).pipe(res); return; }
@@ -325,67 +358,15 @@ async function proxyArquivoRecebido(req, res, next) {
         res.set('Content-Length', buf.length);
         return res.send(buf);
       }
-      // URL falhou (expirada, 404, 403) → vai para camada 2
-      console.warn('[wha.proxy] URL direta expirada/inválida, tentando re-fetch via Evolution…', {
-        status: upstream?.status, msgId: msgId.slice(0,8),
-      });
+      console.warn('[wha.proxy] Layer 1 URL expirada/inválida:', { status: upstream?.status, msgId: msgId.slice(0,8) });
     }
 
-    // ── Camada 2: Re-fetch via getBase64FromMediaMessage ───────────────────────
-    // Funciona enquanto a Evolution mantém a mensagem em cache (~7 dias)
-    // CRÍTICO: usa whatsapp_message_id (key.id do WhatsApp), NÃO o UUID do CRM.
-    // CORREÇÃO: a coluna é evolution_message_id (saved pelo webhook), não whatsapp_message_id
-    const waKeyId = msg.evolution_message_id || null;
-    if (!evoSvc.isConfigured()) {
-      return res.status(404).json({
-        sucesso: false,
-        erro: 'Evolution API não configurada para re-fetch de mídia.',
-      });
-    }
-    if (msg.direcao !== 'recebida' || !waKeyId) {
-      return res.status(404).json({
-        sucesso: false,
-        erro: msg.direcao !== 'recebida'
-          ? 'Arquivo enviado pelo CRM — sem cópia armazenada. Veja no WhatsApp.'
-          : 'ID WhatsApp ausente — não é possível recuperar esta mídia via re-fetch.',
-      });
-    }
-
-    const telNumeros = (msg.telefone || '').replace(/\D/g, '');
-    if (!telNumeros) {
-      return res.status(404).json({ sucesso: false, erro: 'Telefone não encontrado para re-fetch.' });
-    }
-
-    // remoteJid: se já tem @, usa como está; senão monta formato WA
-    const remoteJid = msg.telefone.includes('@')
-      ? msg.telefone
-      : `${telNumeros}@s.whatsapp.net`;
-
-    console.log('[wha.proxy] Layer 2 re-fetch via Evolution:', { waKeyId: waKeyId?.slice(0,8), remoteJid });
-    // Usa whatsapp_message_id (key.id) — NÃO o UUID interno do CRM
-    const refetch = await evoSvc.getBase64Media(waKeyId, remoteJid);
-
-    if (!refetch.sucesso || !refetch.dados?.base64) {
-      console.warn('[wha.proxy] Layer 2 re-fetch falhou:', refetch.erro, { waKeyId: waKeyId?.slice(0,8) });
-      return res.status(404).json({
-        sucesso: false,
-        erro: 'Mídia expirou na Evolution API (~7 dias). O arquivo ainda está no WhatsApp do usuário.',
-      });
-    }
-
-    // Decodifica base64 e serve ao browser
-    const b64str  = refetch.dados.base64;
-    const pureB64 = b64str.replace(/^data:[^;]+;base64,/, '');
-    const buf     = Buffer.from(pureB64, 'base64');
-    const mime    = refetch.dados.mimetype || mimeType;
-
-    console.log('WA_INBOUND_FILE_DOWNLOAD_SUCCESS', { msgId: msgId.slice(0,8), mime, size: buf.length, nome: nomeArquivo });
-    console.log('[wha.proxy] Layer 2 OK:', { waKeyId: waKeyId?.slice(0,8), mime, size: buf.length });
-    res.set('Content-Type', mime);
-    res.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(nomeArquivo)}`);
-    res.set('Cache-Control', 'private, max-age=3600'); // 1h — re-fetchado com sucesso
-    res.set('Content-Length', buf.length);
-    return res.send(buf);
+    // ── Ambos falharam ─────────────────────────────────────────────────────────
+    const erroFinal = isReceivedMedia && !waKeyId
+      ? 'Arquivo recebido antes da atualização do sistema. Peça ao contato para reenviar o arquivo.'
+      : 'Mídia expirou na Evolution API (~7 dias). O arquivo ainda está no WhatsApp do usuário.';
+    console.warn('WA_INBOUND_FILE_ALL_LAYERS_FAILED', { msgId: msgId.slice(0,8), waKeyId: waKeyId?.slice(0,8), hasUrl: !!msg.arquivo_url });
+    return res.status(404).json({ sucesso: false, erro: erroFinal });
 
   } catch (e) { console.error('[wha.proxy] ERRO:', e.message, e.stack); next(e); }
 }
