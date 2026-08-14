@@ -384,4 +384,20 @@ async function registrarManual(req, res) {
   }
 }
 
-module.exports = { listarDestinatarios, historico, enviar, registrarManual };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/conta-azul/smtp-status
+// Verifica se e-mail está configurado no servidor (sem revelar credenciais).
+// ─────────────────────────────────────────────────────────────────────────────
+function smtpStatus(req, res) {
+  const { emailConfigurado } = require('../services/emailService');
+  return res.json({
+    sucesso:     true,
+    configurado: emailConfigurado(),
+    modo:        (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD)
+                   ? 'gmail'
+                   : (process.env.SMTP_HOST ? 'smtp' : 'nenhum'),
+  });
+}
+
+module.exports = { listarDestinatarios, historico, enviar, registrarManual, smtpStatus };

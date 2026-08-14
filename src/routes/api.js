@@ -509,9 +509,10 @@ router.get('/health', (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // CONTA AZUL
 // ─────────────────────────────────────────────────────────────────────────────
-router.get ('/conta-azul/destinatarios',        autenticar, contaAzulCtrl.listarDestinatarios);
-router.get ('/conta-azul/historico/:leadId',     autenticar, contaAzulCtrl.historico);
-router.post('/conta-azul/enviar/:leadId',        autenticar, contaAzulCtrl.enviar);
+router.get ('/conta-azul/destinatarios',            autenticar, contaAzulCtrl.listarDestinatarios);
+router.get ('/conta-azul/smtp-status',              autenticar, contaAzulCtrl.smtpStatus);
+router.get ('/conta-azul/historico/:leadId',        autenticar, contaAzulCtrl.historico);
+router.post('/conta-azul/enviar/:leadId',           autenticar, contaAzulCtrl.enviar);
 router.post('/conta-azul/registrar-manual/:leadId', autenticar, contaAzulCtrl.registrarManual);
 
 

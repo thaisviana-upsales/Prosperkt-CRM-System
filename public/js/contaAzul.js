@@ -2,50 +2,43 @@
  * PROSPEKT CRM — Conta Azul (Frontend)
  * Aba "Conta Azul" no card/modal do lead.
  *
- * FLUXO ATUAL (sem SMTP):
- *   1. "Abrir e-mail para Conta Azul" — abre mailto: com destinatários, assunto e corpo preenchidos
- *   2. "Copiar conteúdo do e-mail"    — copia corpo para área de transferência (fallback)
- *   3. "Marcar como enviado"          — registra envio manual no histórico via API
+ * BOTÕES:
+ *   1. "Enviar para Conta Azul" (SMTP via backend — sem abrir outra janela)
+ *   2. "Copiar conteúdo do e-mail" (clipboard — fallback)
+ *   3. "Marcar como enviado manualmente" (registra no histórico sem envio)
  *
- * NÃO usa SMTP. NÃO pede senha. Envio é manual pelo usuário no próprio e-mail.
+ * CONFIGURAÇÃO NECESSÁRIA NO RAILWAY:
+ *   GMAIL_USER         = conta@prospektpersonalizados.com.br
+ *   GMAIL_APP_PASSWORD = xxxx xxxx xxxx xxxx  (Senha de App do Google)
  */
 
 const ContaAzul = (() => {
 
-  // ── Destinatários fixos Conta Azul ──────────────────────────────────────
-  const DESTINATARIOS_CONTA_AZUL = [
-    'tuane@prospektpersonalizados.com.br',
-    'ramiro@prospektpersonalizados.com.br',
-    'priscila@prospektpersonalizados.com.br',
-    'caique@prospektpersonalizados.com.br',
-    'felipe@prospektpersonalizados.com.br',
-  ];
-
-  // ── Configurações de status ──────────────────────────────────────────────
+  // ── Status visuais ────────────────────────────────────────────────────────
   const STATUS_CFG = {
-    nao_aplicavel: { icon: '💳', label: 'Conta Azul — Não aplicável',  sub: 'Lead ainda não é uma venda.',           bar: 'rgba(255,255,255,0.04)', border: 'rgba(255,255,255,0.07)' },
-    pendente:      { icon: '⏳', label: 'Conta Azul Pendente',          sub: 'Ficha pronta. Ainda não foi enviada.',  bar: 'rgba(245,166,35,0.08)', border: 'rgba(245,166,35,0.3)' },
-    enviado:       { icon: '✅', label: 'Conta Azul Enviado',            sub: 'Ficha enviada com sucesso.',            bar: 'rgba(91,222,62,0.08)',  border: 'rgba(91,222,62,0.3)' },
-    erro:          { icon: '❌', label: 'Conta Azul — Erro no envio',   sub: 'Houve falha. Tente novamente.',         bar: 'rgba(255,59,92,0.08)',  border: 'rgba(255,59,92,0.3)' },
+    nao_aplicavel: { icon: '💳', label: 'Conta Azul — Não aplicável',  sub: 'Lead ainda não é uma venda.',          bar: 'rgba(255,255,255,0.04)', border: 'rgba(255,255,255,0.07)' },
+    pendente:      { icon: '⏳', label: 'Conta Azul Pendente',          sub: 'Ficha pronta. Ainda não foi enviada.', bar: 'rgba(245,166,35,0.08)', border: 'rgba(245,166,35,0.3)' },
+    enviado:       { icon: '✅', label: 'Conta Azul Enviado',            sub: 'Ficha enviada com sucesso.',           bar: 'rgba(91,222,62,0.08)',  border: 'rgba(91,222,62,0.3)' },
+    erro:          { icon: '❌', label: 'Conta Azul — Erro no envio',   sub: 'Houve falha. Tente novamente.',        bar: 'rgba(255,59,92,0.08)',  border: 'rgba(255,59,92,0.3)' },
   };
 
-  // ── renderTab — ponto de entrada chamado pelo pipeline.js ──────────────
+  // ── renderTab — ponto de entrada ──────────────────────────────────────────
   async function renderTab(lead) {
     if (!lead) return;
 
-    const isVenda   = ['GANHO','VENDIDO','VENDA'].includes((lead.status || '').toUpperCase());
-    const caStatus  = lead.conta_azul_status || (isVenda ? 'pendente' : 'nao_aplicavel');
+    const isVenda  = ['GANHO','VENDIDO','VENDA'].includes((lead.status || '').toUpperCase());
+    const caStatus = lead.conta_azul_status || (isVenda ? 'pendente' : 'nao_aplicavel');
 
     _atualizarStatusBar(caStatus, lead);
 
     const naoVenda    = document.getElementById('ca-nao-venda');
     const vendaContent = document.getElementById('ca-venda-content');
     if (!isVenda) {
-      if (naoVenda)     naoVenda.style.display    = '';
+      if (naoVenda)    naoVenda.style.display    = '';
       if (vendaContent) vendaContent.style.display = 'none';
       return;
     }
-    if (naoVenda)     naoVenda.style.display    = 'none';
+    if (naoVenda)    naoVenda.style.display    = 'none';
     if (vendaContent) vendaContent.style.display = '';
 
     // Assunto automático
@@ -56,39 +49,101 @@ const ContaAzul = (() => {
         : `Nova venda para lancamento no Conta Azul — ${lead.nome}`;
     }
 
-    // Preview texto (async)
+    // Preview + destinatários + histórico
     _renderPreview(lead).catch(e => console.warn('[ContaAzul] preview:', e));
-
-    // Destinatários fixos e histórico
     _renderDestinatariosFixos();
     _carregarHistorico(lead.id);
 
-    // ── Botão: Abrir e-mail (mailto:) ──────────────────────────────────────
-    const btnMailto = document.getElementById('ca-btn-mailto');
-    if (btnMailto) {
-      btnMailto.onclick = () => _abrirMailto(lead);
+    // Verifica se SMTP está configurado (rota de diagnóstico)
+    _verificarSmtp();
+
+    // ── Botão principal: Enviar pelo CRM (SMTP) ───────────────────────────
+    const btnEnviar = document.getElementById('ca-btn-enviar');
+    if (btnEnviar) {
+      btnEnviar.onclick = () => _enviar(lead.id);
     }
 
-    // ── Botão: Copiar conteúdo ──────────────────────────────────────────────
+    // ── Botão: Copiar conteúdo ────────────────────────────────────────────
     const btnCopiar = document.getElementById('ca-btn-copiar');
     if (btnCopiar) {
       btnCopiar.onclick = () => _copiarConteudo(lead);
     }
 
-    // ── Botão: Marcar como enviado manualmente ──────────────────────────────
+    // ── Botão: Marcar como enviado manualmente ────────────────────────────
     const btnManual = document.getElementById('ca-btn-manual');
     if (btnManual) {
       btnManual.onclick = () => _marcarManual(lead.id);
     }
   }
 
-  // ── Monta o corpo completo do e-mail ──────────────────────────────────────
+  // ── Verifica se SMTP está configurado no backend ──────────────────────────
+  async function _verificarSmtp() {
+    const aviso = document.getElementById('ca-smtp-aviso');
+    const btn   = document.getElementById('ca-btn-enviar');
+    try {
+      const r = await Auth.api('GET', '/conta-azul/smtp-status');
+      const configurado = r?.data?.configurado;
+      if (aviso) aviso.style.display = configurado ? 'none' : '';
+      if (btn)   btn.title = configurado ? '' : 'Configure GMAIL_USER e GMAIL_APP_PASSWORD no Railway';
+    } catch(e) {
+      // Rota pode não existir ainda — ignora silenciosamente
+      if (aviso) aviso.style.display = 'none';
+    }
+  }
+
+  // ── Envio via SMTP (dentro do CRM, sem abrir outra janela) ───────────────
+  async function _enviar(leadId) {
+    const btn  = document.getElementById('ca-btn-enviar');
+    const txt  = document.getElementById('ca-btn-txt');
+    const spin = document.getElementById('ca-spinner');
+    const obs  = document.getElementById('ca-obs')?.value?.trim() || '';
+    const assunto = document.getElementById('ca-assunto')?.value?.trim() || '';
+
+    if (btn)  btn.disabled = true;
+    if (txt)  txt.textContent = 'Enviando...';
+    if (spin) spin.classList.remove('hidden');
+
+    try {
+      const r = await Auth.api('POST', `/conta-azul/enviar/${leadId}`, {
+        observacao_adicional: obs,
+        assunto_override:     assunto,
+      });
+
+      if (r?.ok) {
+        if (typeof Toast !== 'undefined') Toast.show('E-mail enviado para o Conta Azul com sucesso! ✅', 'success');
+        _atualizarStatusBar('enviado', { conta_azul_enviado_em: new Date().toISOString() });
+        _carregarHistorico(leadId);
+      } else {
+        const dados = r?.data || {};
+        if (dados.pendencias?.length) {
+          if (typeof Toast !== 'undefined') Toast.show(`Preencha os campos obrigatórios: ${dados.pendencias.join(', ')}.`, 'error');
+        } else {
+          const erro = dados.erro || 'Não foi possível enviar. Verifique a configuração de e-mail no Railway.';
+          if (typeof Toast !== 'undefined') Toast.show(erro, 'error');
+          // Mostra aviso de configuração se erro for de SMTP
+          const aviso = document.getElementById('ca-smtp-aviso');
+          if (aviso && (erro.includes('configurado') || erro.includes('SMTP') || erro.includes('GMAIL'))) {
+            aviso.style.display = '';
+          }
+        }
+        _atualizarStatusBar('erro', { conta_azul_ultimo_erro: dados.erro || '' });
+      }
+    } catch(e) {
+      if (typeof Toast !== 'undefined') Toast.show('Erro inesperado ao enviar.', 'error');
+      console.error('[ContaAzul] enviar:', e);
+    } finally {
+      if (btn)  btn.disabled = false;
+      if (txt)  txt.textContent = 'Enviar para Conta Azul';
+      if (spin) spin.classList.add('hidden');
+    }
+  }
+
+  // ── Monta corpo do e-mail (usado por copiar) ──────────────────────────────
   async function _montarCorpoEmail(lead) {
     const fmtMoney = v => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
     const fmtDate  = d => { if (!d) return 'Nao informado'; try { return new Date(d).toLocaleDateString('pt-BR'); } catch { return 'Nao informado'; } };
     const ni       = v => (v && String(v).trim()) ? String(v).trim() : 'Nao informado';
 
-    // Busca produtos via API
     let produtosLinhas = ['  - Nenhum produto registrado'];
     let totalGeral = 0;
     try {
@@ -113,107 +168,55 @@ const ContaAzul = (() => {
     const sep        = '='.repeat(52);
     const linha      = '-'.repeat(52);
 
-    const linhas = [
-      sep,
-      'NOVA VENDA - LANCAMENTO NO CONTA AZUL',
-      `Preparado por: ${preparedBy}  |  ${agora}`,
-      sep,
-      '',
+    return [
+      sep, 'NOVA VENDA - LANCAMENTO NO CONTA AZUL',
+      `Preparado por: ${preparedBy}  |  ${agora}`, sep, '',
       linha + ' DADOS DO CLIENTE',
       `Nome:               ${ni(lead.nome)}`,
       `Empresa:            ${ni(lead.empresa)}`,
       `CPF / CNPJ:         ${ni(lead.cnpj)}`,
       `Telefone:           ${ni(lead.telefone)}`,
-      `WhatsApp:           ${ni(lead.whatsapp || lead.telefone)}`,
-      `E-mail:             ${ni(lead.email)}`,
-      '',
+      `E-mail:             ${ni(lead.email)}`, '',
       linha + ' DADOS DA VENDA',
       `Vendedor:           ${ni(lead.responsavel_nome)}`,
-      `Funil de origem:    ${ni(lead.funil_nome)}`,
-      `Etapa atual:        ${ni(lead.etapa_nome || lead.etapa)}`,
+      `Funil:              ${ni(lead.funil_nome)}`,
       `Data da venda:      ${fmtDate(lead.data_fechamento || lead.ganho_em)}`,
       `Valor da venda:     ${fmtMoney(lead.valor_venda || lead.valor)}`,
       `Forma de pagamento: ${ni(lead.forma_pagamento)}`,
       `Prev. prox. compra: ${ni(lead.previsao_proxima_compra)}`,
-      `Observacoes comerc: ${ni(lead.observacoes)}`,
-      '',
+      `Observacoes:        ${ni(lead.observacoes)}`, '',
       linha + ' PRODUTOS',
-      ...produtosLinhas,
-      '',
+      ...produtosLinhas, '',
       linha + ' ENDERECO DE ENTREGA',
       `CEP:                ${ni(lead.cep_entrega)}`,
       `Endereco:           ${ni([lead.endereco_entrega, lead.numero_entrega].filter(Boolean).join(', '))}`,
       `Complemento:        ${ni(lead.complemento_entrega)}`,
       `Referencia:         ${ni(lead.referencia_entrega)}`,
       `Bairro:             ${ni(lead.bairro_entrega)}`,
-      `Cidade / UF:        ${ni([lead.cidade_entrega, lead.uf_entrega].filter(Boolean).join(' / '))}`,
-      '',
+      `Cidade / UF:        ${ni([lead.cidade_entrega, lead.uf_entrega].filter(Boolean).join(' / '))}`, '',
       linha + ' DADOS DE PRODUCAO',
       `Solic. orcamento:   ${fmtDate(lead.data_solicitacao_orcamento)}`,
       `Envio orcamento:    ${fmtDate(lead.data_envio_orcamento)}`,
       `Aprov. orcamento:   ${fmtDate(lead.data_aprovacao_orcamento)}`,
-      `Layout virtual apr: ${fmtDate(lead.layout_virtual_aprovado_em)}`,
+      `Layout virtual:     ${fmtDate(lead.layout_virtual_aprovado_em)}`,
       `Envio de amostra:   ${fmtDate(lead.data_envio_amostra)}`,
       `Aprov. de amostra:  ${fmtDate(lead.data_aprovacao_amostra)}`,
       `Data de entrega:    ${fmtDate(lead.data_entrega)}`,
-      `Obs. de producao:   ${ni(lead.obs_producao || lead.observacoes_producao)}`,
-      '',
+      `Obs. producao:      ${ni(lead.obs_producao || lead.observacoes_producao)}`, '',
       linha + ' CONTA AZUL',
       obs ? `Obs. adicional:     ${obs}` : 'Obs. adicional:     Nao informado',
       `Preparado por:      ${preparedBy}`,
-      `Data/hora:          ${agora}`,
-      sep,
-    ];
-
-    return linhas.join('\n');
+      `Data/hora:          ${agora}`, sep,
+    ].join('\n');
   }
 
-  // ── Abre cliente de e-mail com mailto: ──────────────────────────────────
-  async function _abrirMailto(lead) {
-    const btn = document.getElementById('ca-btn-mailto');
-    const txtEl = document.getElementById('ca-btn-mailto-txt');
-    if (btn) btn.disabled = true;
-    if (txtEl) txtEl.textContent = 'Preparando...';
-
-    try {
-      const corpo   = await _montarCorpoEmail(lead);
-      const assunto = document.getElementById('ca-assunto')?.value?.trim()
-        || (lead.empresa
-          ? `Nova venda para lancamento no Conta Azul — ${lead.empresa} / ${lead.nome}`
-          : `Nova venda para lancamento no Conta Azul — ${lead.nome}`);
-
-      const to      = DESTINATARIOS_CONTA_AZUL.join(',');
-      const subject = encodeURIComponent(assunto);
-      const body    = encodeURIComponent(corpo);
-      const mailto  = `mailto:${to}?subject=${subject}&body=${body}`;
-
-      if (mailto.length > 8000) {
-        if (typeof Toast !== 'undefined')
-          Toast.show('Conteudo muito grande para abrir automaticamente. Use "Copiar conteudo" e cole no seu e-mail.', 'warning');
-        await _copiarConteudo(lead, true);
-        return;
-      }
-
-      window.open(mailto, '_self');
-      if (typeof Toast !== 'undefined')
-        Toast.show('Cliente de e-mail aberto com a ficha preenchida. Revise e envie manualmente.', 'success');
-
-    } catch(e) {
-      console.error('[ContaAzul] mailto:', e);
-      if (typeof Toast !== 'undefined') Toast.show('Erro ao preparar o e-mail. Tente "Copiar conteudo".', 'error');
-    } finally {
-      if (btn) btn.disabled = false;
-      if (txtEl) txtEl.textContent = 'Abrir e-mail para Conta Azul';
-    }
-  }
-
-  // ── Copia corpo para área de transferência ───────────────────────────────
-  async function _copiarConteudo(lead, silencioso) {
+  // ── Copiar conteúdo para clipboard ────────────────────────────────────────
+  async function _copiarConteudo(lead) {
     const btn = document.getElementById('ca-btn-copiar');
     try {
       const corpo = await _montarCorpoEmail(lead);
       await navigator.clipboard.writeText(corpo);
-      if (!silencioso && typeof Toast !== 'undefined')
+      if (typeof Toast !== 'undefined')
         Toast.show('Conteudo copiado. Cole no seu e-mail para enviar ao Conta Azul.', 'success');
       if (btn) {
         const original = btn.innerHTML;
@@ -222,11 +225,11 @@ const ContaAzul = (() => {
       }
     } catch(e) {
       console.error('[ContaAzul] clipboard:', e);
-      if (typeof Toast !== 'undefined') Toast.show('Nao foi possivel copiar automaticamente. Selecione o texto no preview e copie manualmente.', 'error');
+      if (typeof Toast !== 'undefined') Toast.show('Nao foi possivel copiar. Selecione o texto no preview manualmente.', 'error');
     }
   }
 
-  // ── Registra envio manual via API ────────────────────────────────────────
+  // ── Registrar envio manual (sem SMTP) ────────────────────────────────────
   async function _marcarManual(leadId) {
     const btn = document.getElementById('ca-btn-manual');
     if (btn) btn.disabled = true;
@@ -237,26 +240,22 @@ const ContaAzul = (() => {
         const agora  = new Date().toLocaleString('pt-BR');
         const nome   = window._usuarioAtual?.nome || 'Usuario';
         const el     = document.getElementById('ca-manual-status');
-        if (el) {
-          el.textContent = `✅ E-mail Conta Azul marcado como enviado manualmente por ${nome} em ${agora}.`;
-          el.style.display = '';
-        }
+        if (el) { el.textContent = `✅ E-mail Conta Azul marcado como enviado manualmente por ${nome} em ${agora}.`; el.style.display = ''; }
         _atualizarStatusBar('enviado', { conta_azul_enviado_em: new Date().toISOString(), conta_azul_enviado_por: nome });
         _carregarHistorico(leadId);
-        if (typeof Toast !== 'undefined') Toast.show('Envio registrado manualmente com sucesso!', 'success');
+        if (typeof Toast !== 'undefined') Toast.show('Envio registrado manualmente!', 'success');
       } else {
-        const erro = r?.data?.erro || 'Erro ao registrar envio manual.';
-        if (typeof Toast !== 'undefined') Toast.show(erro, 'error');
+        if (typeof Toast !== 'undefined') Toast.show(r?.data?.erro || 'Erro ao registrar.', 'error');
       }
     } catch(e) {
-      console.error('[ContaAzul] registrarManual:', e);
+      console.error('[ContaAzul] marcarManual:', e);
       if (typeof Toast !== 'undefined') Toast.show('Erro ao registrar envio manual.', 'error');
     } finally {
       if (btn) btn.disabled = false;
     }
   }
 
-  // ── Preview da ficha (exibido no card) ──────────────────────────────────
+  // ── Preview (texto resumido no card) ─────────────────────────────────────
   async function _renderPreview(lead) {
     const el = document.getElementById('ca-preview');
     if (!el) return;
@@ -292,7 +291,7 @@ const ContaAzul = (() => {
       `Data fecham.:  ${fmtDate(lead.data_fechamento)}`,
       `Valor total:   ${fmtMoney(lead.valor_venda || lead.valor)}`,
       `Forma pagto:   ${lead.forma_pagamento || '—'}`,
-      `Prev. prox. compra: ${lead.previsao_proxima_compra || '—'}`,
+      `Prev. proxima compra: ${lead.previsao_proxima_compra || '—'}`,
       '',
       '=== PRODUTOS ===',
       produtosTexto,
@@ -310,18 +309,25 @@ const ContaAzul = (() => {
     ].join('\n');
   }
 
-  // ── Destinatários fixos (visual) ─────────────────────────────────────────
+  // ── Destinatários fixos ──────────────────────────────────────────────────
   function _renderDestinatariosFixos() {
     const el = document.getElementById('ca-destinatarios');
     if (!el) return;
-    el.innerHTML = DESTINATARIOS_CONTA_AZUL.map(email =>
+    const lista = [
+      'tuane@prospektpersonalizados.com.br',
+      'ramiro@prospektpersonalizados.com.br',
+      'priscila@prospektpersonalizados.com.br',
+      'caique@prospektpersonalizados.com.br',
+      'felipe@prospektpersonalizados.com.br',
+    ];
+    el.innerHTML = lista.map(email =>
       `<span style="display:inline-flex;align-items:center;gap:4px;margin:2px 4px 2px 0;padding:2px 8px;` +
       `background:rgba(91,222,62,0.08);border:1px solid rgba(91,222,62,0.2);border-radius:20px;font-size:.72rem">` +
       `<span style="color:var(--text-muted)">${escHtml(email)}</span></span>`
     ).join('');
   }
 
-  // ── Histórico de envios ───────────────────────────────────────────────────
+  // ── Histórico de envios ──────────────────────────────────────────────────
   async function _carregarHistorico(leadId) {
     const el = document.getElementById('ca-historico');
     if (!el) return;
@@ -330,15 +336,14 @@ const ContaAzul = (() => {
       const itens = r?.data?.dados || [];
       if (!itens.length) { el.textContent = 'Nenhum envio registrado.'; return; }
       el.innerHTML = itens.map(h => {
-        const dt     = new Date(h.enviado_em).toLocaleString('pt-BR');
-        const ok     = h.status === 'enviado' || h.status === 'manual';
-        const icone  = ok ? '✅' : '❌';
-        const cor    = ok ? 'var(--green)' : 'var(--error)';
-        const label  = h.status === 'manual' ? 'Enviado manualmente' : (ok ? 'Enviado' : 'Erro');
-        const dest   = (() => { try { const d = JSON.parse(h.destinatarios_json || '[]'); return Array.isArray(d) ? d.map(x => x.email).join(', ') : ''; } catch { return ''; } })();
+        const dt    = new Date(h.enviado_em).toLocaleString('pt-BR');
+        const ok    = h.status === 'enviado' || h.status === 'manual';
+        const label = h.status === 'manual' ? 'Enviado manualmente' : (ok ? 'Enviado' : 'Erro');
+        const cor   = ok ? 'var(--green)' : 'var(--error)';
+        const dest  = (() => { try { const d = JSON.parse(h.destinatarios_json || '[]'); return Array.isArray(d) ? d.map(x => x.email).join(', ') : ''; } catch { return ''; } })();
         return `<div style="padding:8px 10px;margin-bottom:6px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:7px">` +
           `<div style="display:flex;justify-content:space-between;margin-bottom:3px">` +
-          `<span style="font-weight:600;color:${cor}">${icone} ${label}</span>` +
+          `<span style="font-weight:600;color:${cor}">${ok ? '✅' : '❌'} ${label}</span>` +
           `<span style="color:var(--text-muted)">${dt}</span></div>` +
           `<div style="color:var(--text-secondary)">Por: ${escHtml(h.usuario_nome || '—')}</div>` +
           `${dest ? `<div style="color:var(--text-muted);font-size:.7rem;margin-top:2px">Para: ${escHtml(dest)}</div>` : ''}` +
@@ -347,7 +352,6 @@ const ContaAzul = (() => {
       }).join('');
     } catch(e) {
       el.textContent = 'Erro ao carregar historico.';
-      console.warn('[ContaAzul] historico:', e);
     }
   }
 
@@ -361,10 +365,9 @@ const ContaAzul = (() => {
     const sub   = document.getElementById('ca-status-sub');
     if (sub) {
       let t = cfg.sub;
-      if (status === 'enviado' && lead?.conta_azul_enviado_em) {
-        t += ` Em: ${new Date(lead.conta_azul_enviado_em).toLocaleString('pt-BR')}`;
-        if (lead.conta_azul_enviado_por) t += ` por ${lead.conta_azul_enviado_por}`;
-      }
+      if (status === 'enviado' && lead?.conta_azul_enviado_em)
+        t += ` Em: ${new Date(lead.conta_azul_enviado_em).toLocaleString('pt-BR')}` +
+             (lead.conta_azul_enviado_por ? ` por ${lead.conta_azul_enviado_por}` : '');
       if (status === 'erro' && lead?.conta_azul_ultimo_erro) t += ` Erro: ${lead.conta_azul_ultimo_erro}`;
       sub.textContent = t;
     }
@@ -375,10 +378,10 @@ const ContaAzul = (() => {
     const h = document.getElementById('ml-ca-badge');
     if (!h) return;
     const cfg = STATUS_CFG[status] || STATUS_CFG.nao_aplicavel;
-    h.textContent        = cfg.icon + ' ' + cfg.label;
-    h.style.display      = status === 'nao_aplicavel' ? 'none' : '';
-    h.style.borderColor  = cfg.border;
-    h.style.background   = cfg.bar;
+    h.textContent = cfg.icon + ' ' + cfg.label;
+    h.style.display = status === 'nao_aplicavel' ? 'none' : '';
+    h.style.borderColor = cfg.border;
+    h.style.background  = cfg.bar;
   }
 
   function escHtml(s) {
