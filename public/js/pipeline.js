@@ -798,7 +798,7 @@ async function moverLead(etapaId) {
       camposFaltando.push('Endereço de Entrega completo');
 
     console.log('[DRAG_VENDAS] Resultado da validação:', {
-      temProdutos, temProdOficial, prodOk, camposFaltando,
+      temProdutos, prodOk, camposFaltando,
       origemProdutos: rProd?.ok ? 'API /leads/:id/produtos' : 'nenhum',
     });
 
