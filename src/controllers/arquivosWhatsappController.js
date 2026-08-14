@@ -282,8 +282,25 @@ async function proxyArquivoRecebido(req, res, next) {
     const mimeType    = msg.mime_type || 'application/octet-stream';
     const evoKey      = process.env.EVOLUTION_API_KEY || '';
 
-    // ── Camada 1: URL direta da Evolution ──────────────────────────────────────
-    if (msg.arquivo_url) {
+    // CORREÇÃO CRÍTICA: Para mídias RECEBIDAS, Layer 1 serve conteúdo ENCRIPTADO
+    // do CDN WhatsApp (documentMessage.url, imageMessage.url etc.).
+    // O browser recebe bytes encriptados salvos como .pdf → "Falha ao carregar PDF".
+    // Layer 2 (getBase64FromMediaMessage) decripta automaticamente → conteúdo válido.
+    // Pula Layer 1 para: arquivo, imagem, vídeo recebidos com evolution_message_id.
+    const _tiposMidia = ['arquivo', 'imagem', 'video', 'documento'];
+    const _skipLayer1 = msg.direcao === 'recebida'
+      && !!msg.evolution_message_id
+      && evoSvc.isConfigured()
+      && _tiposMidia.includes(msg.tipo);
+    if (_skipLayer1) {
+      console.log('WA_INBOUND_FILE_DOWNLOAD_START', {
+        msgId: msgId.slice(0,8), tipo: msg.tipo, nome: nomeArquivo,
+        strategy: 'Layer2-direto (skip Layer1 encriptado)',
+      });
+    }
+    // ── Camada 1: URL direta da Evolution ──────────────────────────────────────────────
+    // Pulado para mídias recebidas com evolution_message_id (conteúdo seria encriptado)
+    if (msg.arquivo_url && !_skipLayer1) {
       let upstream = null;
       try {
         upstream = await fetch(msg.arquivo_url, {
@@ -362,6 +379,7 @@ async function proxyArquivoRecebido(req, res, next) {
     const buf     = Buffer.from(pureB64, 'base64');
     const mime    = refetch.dados.mimetype || mimeType;
 
+    console.log('WA_INBOUND_FILE_DOWNLOAD_SUCCESS', { msgId: msgId.slice(0,8), mime, size: buf.length, nome: nomeArquivo });
     console.log('[wha.proxy] Layer 2 OK:', { waKeyId: waKeyId?.slice(0,8), mime, size: buf.length });
     res.set('Content-Type', mime);
     res.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(nomeArquivo)}`);
