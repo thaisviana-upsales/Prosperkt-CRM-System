@@ -668,19 +668,29 @@ async function moverLead(etapaId) {
   }
 
   // ── Bloqueio de retrocesso: impede mover para etapa de ordem menor ─────────
-  // Exceção: SUPER_ADMIN pode corrigir erros (não bloqueia)
+  // Exceção: SUPER_ADMIN pode corrigir erros (não bloqueia no frontend — backend também valida)
   if (etapaDest && etapaOrigem && etapaDest.ordem < etapaOrigem.ordem) {
     if (_usuario?.role !== 'SUPER_ADMIN') {
+      console.warn('PIPELINE_BACKWARD_MOVE_BLOCKED', {
+        leadId: _dragLeadId,
+        etapaAtual: etapaOrigem?.nome, ordemAtual: etapaOrigem?.ordem,
+        etapaDest:  etapaDest?.nome,  ordemDest:  etapaDest?.ordem,
+        usuarioRole: _usuario?.role,
+        motivo: 'perfil nao autorizado para retrocesso',
+      });
       _dragLeadId = null; _dragEtapaOrigem = null;
       Toast.show(
-        '🚫 Não é permitido voltar o lead para uma etapa anterior.\n' +
-        'O funil deve avançar para preservar a conversão.',
+        'Apenas Super Admin pode mover um lead para uma etapa anterior.',
         'error'
       );
       return;
     }
-    // SUPER_ADMIN: avisa mas permite
-    console.warn('[PIPELINE_RETROCESSO] SUPER_ADMIN movendo lead para etapa anterior. Isso afeta o Funil de Conversão.');
+    // SUPER_ADMIN: avisa mas permite — backend também registra timeline
+    console.log('PIPELINE_BACKWARD_MOVE_ALLOWED_SUPER_ADMIN', {
+      leadId: _dragLeadId,
+      etapaAtual: etapaOrigem?.nome, etapaDest: etapaDest?.nome,
+      usuarioRole: _usuario?.role,
+    });
   }
 
   const isPerdido = etapaDest?.is_perdido || etapaDest?.probabilidade===0 ||

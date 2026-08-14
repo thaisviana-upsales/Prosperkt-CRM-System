@@ -847,6 +847,38 @@ async function atualizar(req, res) {
       // Cobre: campo Etapa em Dados, drag-and-drop via PATCH, automações
       if (req.body.etapa_id && req.body.etapa_id !== atual.etapa_id) {
         const { data: etDest } = await sb.from('etapas').select('*').eq('id', req.body.etapa_id).maybeSingle();
+
+        // ── Bloqueio de retrocesso (ATUALIZAR) ───────────────────────────────────
+        // Garante mesma regra que mover() — antes ausente nesta função.
+        if (etDest && atual.etapa_id) {
+          const { data: etAtualOrd } = await sb.from('etapas').select('ordem, nome').eq('id', atual.etapa_id).maybeSingle();
+          if (etAtualOrd && typeof etAtualOrd.ordem === 'number' && typeof etDest.ordem === 'number') {
+            console.log('PIPELINE_STAGE_MOVE_ORDER_CHECK', {
+              leadId: id, etapaAtual: etAtualOrd.nome, ordemAtual: etAtualOrd.ordem,
+              etapaDest: etDest.nome, ordemDest: etDest.ordem, usuario: req.usuario?.role,
+            });
+            if (etDest.ordem < etAtualOrd.ordem) {
+              console.log('PIPELINE_BACKWARD_MOVE_DETECTED', {
+                leadId: id, ordemAtual: etAtualOrd.ordem, ordemDest: etDest.ordem, role: req.usuario?.role,
+              });
+              if (req.usuario.role !== 'SUPER_ADMIN') {
+                console.warn('PIPELINE_BACKWARD_MOVE_BLOCKED', {
+                  leadId: id, etapaAtual: etAtualOrd.nome, etapaDest: etDest.nome, role: req.usuario?.role,
+                });
+                return res.status(400).json({
+                  sucesso: false,
+                  erro: 'Apenas Super Admin pode mover um lead para uma etapa anterior.',
+                  retrocesso: true,
+                  codigo: 'PIPELINE_BACKWARD_BLOCKED',
+                });
+              }
+              console.log('PIPELINE_BACKWARD_MOVE_ALLOWED_SUPER_ADMIN', {
+                leadId: id, etapaAtual: etAtualOrd.nome, etapaDest: etDest.nome,
+              });
+            }
+          }
+        }
+
         const etIsGanho = etDest?.is_ganho || etDest?.probabilidade >= 100 ||
           /venda|vendas|ganho|fechad|fechamento/i.test(etDest?.nome || '');
         if (etIsGanho) {
@@ -1291,8 +1323,6 @@ async function mover(req, res) {
       if (isLeadQualificadoSDR) {
         const agQual = new Date().toISOString();
         const sdrResponsavelId = (req.usuario.role === 'SDR') ? req.usuario.id : (lead.sdr_id || lead.responsavel_id || req.usuario.id);
-        // upd será definido mais adiante — usamos um pré-registro aqui que será mesclado
-        // via _sdrQualTracking (objeto auxiliar) e aplicado junto com o upd principal
         req._sdrQualTracking = {
           lead_qualificado_sdr_em:  agQual,
           lead_qualificado_sdr_por: req.usuario.id,
@@ -1300,6 +1330,61 @@ async function mover(req, res) {
           vendedor_destino_id:      req.body.responsavel_id || lead.responsavel_id || null,
         };
         console.log('[SDR_DEFAULT_FOUND] lead_qualificado_sdr_em salvo | lead:', id, '| sdr:', sdrResponsavelId, '| vendedor_destino:', req._sdrQualTracking.vendedor_destino_id);
+      }
+
+      // ── Bloqueio de retrocesso no backend (Supabase) ────────────────────────
+      // Garante integridade do Funil de Conversão: proíbe mover para etapa de ordem menor.
+      // Exceção: SUPER_ADMIN pode corrigir erros (avisa e permite).
+      console.log('PIPELINE_STAGE_MOVE_START', {
+        leadId: id, etapaAtualId: lead.etapa_id, etapaDestId: etapa_id,
+        usuario: req.usuario?.id, role: req.usuario?.role,
+      });
+      if (lead.etapa_id && lead.etapa_id !== etapa_id) {
+        const { data: etapaAtual } = await sb.from('etapas').select('ordem, nome').eq('id', lead.etapa_id).single();
+        if (etapaAtual && typeof etapaAtual.ordem === 'number' && typeof etapa.ordem === 'number') {
+          console.log('PIPELINE_STAGE_MOVE_ORDER_CHECK', {
+            leadId: id,
+            etapaAtual: etapaAtual.nome, ordemAtual: etapaAtual.ordem,
+            etapaDest: etapa.nome, ordemDest: etapa.ordem,
+            usuarioId: req.usuario?.id, role: req.usuario?.role,
+          });
+          if (etapa.ordem < etapaAtual.ordem) {
+            console.log('PIPELINE_BACKWARD_MOVE_DETECTED', {
+              leadId: id, ordemAtual: etapaAtual.ordem, ordemDest: etapa.ordem,
+              usuarioId: req.usuario?.id, role: req.usuario?.role,
+            });
+            if (req.usuario.role !== 'SUPER_ADMIN') {
+              console.warn('PIPELINE_BACKWARD_MOVE_BLOCKED', {
+                leadId: id, etapaAtual: etapaAtual.nome, ordemAtual: etapaAtual.ordem,
+                etapaDest: etapa.nome, ordemDest: etapa.ordem,
+                usuarioId: req.usuario?.id, role: req.usuario?.role,
+                motivo: 'perfil nao autorizado para retrocesso',
+              });
+              return res.status(400).json({
+                sucesso: false,
+                erro: 'Apenas Super Admin pode mover um lead para uma etapa anterior.',
+                retrocesso: true,
+                codigo: 'PIPELINE_BACKWARD_BLOCKED',
+              });
+            }
+            // SUPER_ADMIN: permite com log e timeline especial
+            console.log('PIPELINE_BACKWARD_MOVE_ALLOWED_SUPER_ADMIN', {
+              leadId: id, etapaAtual: etapaAtual.nome, etapaDest: etapa.nome,
+              usuarioId: req.usuario?.id,
+            });
+            // Timeline registrando que SUPER_ADMIN retrocedeu o lead
+            setImmediate(() => registrarTimeline({
+              leadId: id,
+              usuarioId:   req.usuario?.id || null,
+              usuarioNome: req.usuario?.nome || 'Super Admin',
+              tipoAcao:    'MUDANCA_ETAPA',
+              descricao:   `Lead movido para etapa anterior por Super Admin: ${etapaAtual.nome} → ${etapa.nome}.`,
+              dadosAnteriores: { etapa_id: lead.etapa_id, etapa_nome: etapaAtual.nome },
+              dadosNovos:      { etapa_id: etapa_id, etapa_nome: etapa.nome },
+              origem: 'pipeline_mover_admin',
+            }).catch(e => console.error('[TIMELINE_BACKWARD_SUPER_ADMIN]', e.message)));
+          }
+        }
       }
 
       // ── VENDEDOR não pode mover lead de outro responsável (já existia) ──
@@ -1331,26 +1416,6 @@ async function mover(req, res) {
       // Resolve funil_id e pipeline_id a partir da etapa se não vierem no body
       let funilIdUpd = req.body.funil_id || lead.funil_id || null;
       if (!funilIdUpd && etapa.funil_id) funilIdUpd = etapa.funil_id;
-
-      // ── Bloqueio de retrocesso no backend ──────────────────────────────────
-      // Garante integridade do Funil de Conversão: proíbe mover para etapa de ordem menor.
-      // Exceção: SUPER_ADMIN pode corrigir erros (avisa mas permite).
-      if (lead.etapa_id && lead.etapa_id !== etapa_id) {
-        const { data: etapaAtual } = await sb.from('etapas').select('ordem').eq('id', lead.etapa_id).single();
-        if (etapaAtual && typeof etapaAtual.ordem === 'number' && typeof etapa.ordem === 'number') {
-          if (etapa.ordem < etapaAtual.ordem) {
-            if (req.usuario.role !== 'SUPER_ADMIN') {
-              console.warn('[PIPELINE_MOVE_BACKWARD_BLOCKED] lead:', id, '| de etapa ordem', etapaAtual.ordem, '→', etapa.ordem, '| bloqueado para role:', req.usuario.role);
-              return res.status(400).json({
-                sucesso: false,
-                erro: 'Não é permitido voltar o lead para uma etapa anterior. O funil deve seguir apenas para frente para preservar a conversão.',
-                retrocesso: true,
-              });
-            }
-            console.warn('[PIPELINE_MOVE_BACKWARD_BLOCKED] SUPER_ADMIN permitido | lead:', id, '| ordem', etapaAtual.ordem, '→', etapa.ordem);
-          }
-        }
-      }
 
       const upd = { etapa_id, atualizado_em: agora, status: novoStatus, etapa_atualizada_em: agora };
 
@@ -1522,21 +1587,29 @@ async function mover(req, res) {
 
     // ── Bloqueio de retrocesso no backend (SQLite) ────────────────────────────
     if (lead.etapa_id && lead.etapa_id !== etapa_id) {
-      const etapaAtualSql = sqlite.prepare('SELECT ordem FROM etapas WHERE id=? LIMIT 1').get(lead.etapa_id);
+      const etapaAtualSql = sqlite.prepare('SELECT ordem, nome FROM etapas WHERE id=? LIMIT 1').get(lead.etapa_id);
       if (etapaAtualSql && typeof etapaAtualSql.ordem === 'number' && typeof etapa.ordem === 'number') {
+        console.log('PIPELINE_STAGE_MOVE_ORDER_CHECK', {
+          leadId: id, ordemAtual: etapaAtualSql.ordem, ordemDest: etapa.ordem, role: req.usuario?.role,
+        });
         if (etapa.ordem < etapaAtualSql.ordem) {
+          console.log('PIPELINE_BACKWARD_MOVE_DETECTED', { leadId: id, ordemAtual: etapaAtualSql.ordem, ordemDest: etapa.ordem });
           if (req.usuario.role !== 'SUPER_ADMIN') {
-            console.warn('[PIPELINE_MOVE_BACKWARD_BLOCKED] SQLite | lead:', id, '| ordem', etapaAtualSql.ordem, '→', etapa.ordem);
+            console.warn('PIPELINE_BACKWARD_MOVE_BLOCKED', {
+              leadId: id, ordemAtual: etapaAtualSql.ordem, ordemDest: etapa.ordem, role: req.usuario?.role,
+            });
             return res.status(400).json({
               sucesso: false,
-              erro: 'Não é permitido voltar o lead para uma etapa anterior. O funil deve seguir apenas para frente para preservar a conversão.',
+              erro: 'Apenas Super Admin pode mover um lead para uma etapa anterior.',
               retrocesso: true,
+              codigo: 'PIPELINE_BACKWARD_BLOCKED',
             });
           }
-          console.warn('[PIPELINE_MOVE_BACKWARD_BLOCKED] SQLite | SUPER_ADMIN permitido | lead:', id);
+          console.log('PIPELINE_BACKWARD_MOVE_ALLOWED_SUPER_ADMIN', { leadId: id, ordemDest: etapa.ordem });
         }
       }
     }
+
 
     const novoStatus = etapa.is_ganho ? 'GANHO' : etapa.is_perdido ? 'PERDIDO' : 'ABERTO';
     const agora = new Date().toISOString();
