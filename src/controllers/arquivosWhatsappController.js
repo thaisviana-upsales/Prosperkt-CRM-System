@@ -51,20 +51,44 @@ function resolveMediatype(mime) {
 }
 
 // ── POST /api/whatsapp/conversas/:id/arquivos ─────────────────────────────────
-// Converte o arquivo para base64 e envia DIRETAMENTE à Evolution API.
-// Não depende de Supabase Storage.
-// O arquivo não precisa ficar salvo — apenas enviado pelo WhatsApp.
+// Aceita DOIS formatos de entrada (ambos enviados para Evolution API como base64):
+//   1. JSON body: { arquivo_base64, arquivo_nome, mime_type }  ← novo (Auth.api, igual áudio)
+//   2. multipart/form-data com field 'arquivo'                 ← legado (XHR FormData)
 async function enviarArquivo(req, res, next) {   // <-- next OBRIGATÓRIO
   try {
     const { sb, isSupa } = getProvider();
     const conversaId = req.params.id;
-    const arquivo    = req.file;
 
-    if (!arquivo) {
+    // ── Detecta formato de entrada ────────────────────────────────────────────
+    let arqBuffer, arqNome, arqMime;
+
+    if (req.file) {
+      // Formato 1: multipart (multer)
+      arqBuffer = req.file.buffer;
+      arqNome   = req.file.originalname;
+      arqMime   = req.file.mimetype;
+    } else if (req.body?.arquivo_base64) {
+      // Formato 2: JSON base64 (Auth.api — mesmo que áudio)
+      const b64str = req.body.arquivo_base64; // "data:mime;base64,..." ou puro base64
+      arqNome = req.body.arquivo_nome || 'arquivo';
+      arqMime = req.body.mime_type    || 'application/octet-stream';
+
+      // Remove data URI prefix se presente
+      const pureB64 = b64str.replace(/^data:[^;]+;base64,/, '');
+      try {
+        arqBuffer = Buffer.from(pureB64, 'base64');
+      } catch {
+        return res.status(400).json({ sucesso: false, erro: 'Base64 inválido.' });
+      }
+    } else {
       return res.status(400).json({ sucesso: false, erro: 'Nenhum arquivo enviado.' });
     }
-    if (!extPermitida(arquivo.originalname)) {
+
+    if (!extPermitida(arqNome)) {
       return res.status(400).json({ sucesso: false, erro: 'Tipo de arquivo não permitido.' });
+    }
+    if (arqBuffer.length > LIMITE_WA_BYTES) {
+      return res.status(413).json({ sucesso: false, erro: `Arquivo excede ${LIMITE_WA_MB} MB.` });
     }
     if (!evoSvc.isConfigured()) {
       return res.status(503).json({ sucesso: false, erro: 'Evolution API não configurada. Contate o administrador.' });
@@ -92,20 +116,20 @@ async function enviarArquivo(req, res, next) {   // <-- next OBRIGATÓRIO
     }
 
     const agora      = new Date().toISOString();
-    const nomeSeguro = sanitizarNome(arquivo.originalname);
+    const nomeSeguro = sanitizarNome(arqNome);
     const msgId      = crypto.randomBytes(16).toString('hex');
-    const mediatype  = resolveMediatype(arquivo.mimetype);
+    const mediatype  = resolveMediatype(arqMime);
 
     // 2. Converte buffer para base64 com prefixo data URI
-    //    Evolution API aceita base64 diretamente no campo `media`
-    const base64 = `data:${arquivo.mimetype};base64,${arquivo.buffer.toString('base64')}`;
+    //    Evolution API aceita base64 no campo `media` (confirmado para áudio — funciona)
+    const base64 = `data:${arqMime};base64,${arqBuffer.toString('base64')}`;
 
-    console.log('[wha.enviarArquivo] Enviando via base64 →', {
+    console.log('[wha.enviarArquivo] Enviando →', {
       nomeSeguro,
-      tamanho:   fmtTamanho(arquivo.size),
+      tamanho:   fmtTamanho(arqBuffer.length),
       mediatype,
       telefone:  telNorm,
-      b64Len:    base64.length,
+      formato:   req.file ? 'multipart' : 'json-base64',
     });
 
     // 3. Envia à Evolution API
@@ -116,7 +140,7 @@ async function enviarArquivo(req, res, next) {   // <-- next OBRIGATÓRIO
     try {
       const evoRes = await evoSvc.enviarMidia(telNorm, {
         mediatype,
-        mimetype: arquivo.mimetype,
+        mimetype: arqMime,
         caption:  req.body?.caption || nomeSeguro,
         media:    base64,
         fileName: nomeSeguro,
@@ -142,7 +166,7 @@ async function enviarArquivo(req, res, next) {   // <-- next OBRIGATÓRIO
       });
     }
 
-    // 4. Salva histórico em mensagens_whatsapp (arquivo_url = null — não fica no Storage)
+    // 4. Salva histórico em mensagens_whatsapp (arquivo_url = null — sem Storage)
     let mensagemSalva = null;
     if (isSupa) {
       try {
@@ -162,7 +186,7 @@ async function enviarArquivo(req, res, next) {   // <-- next OBRIGATÓRIO
           vendedor_id:  req.usuario?.id || null,
           arquivo_url:  null,   // sem Storage — arquivo não fica salvo no CRM
           arquivo_nome: nomeSeguro,
-          mime_type:    arquivo.mimetype,
+          mime_type:    arqMime,
           criado_em:    agora,
         }).select().single();
 
@@ -190,7 +214,7 @@ async function enviarArquivo(req, res, next) {   // <-- next OBRIGATÓRIO
         tipo:         mediatype === 'image' ? 'imagem' : mediatype === 'video' ? 'video' : 'arquivo',
         arquivo_url:  null,
         arquivo_nome: nomeSeguro,
-        mime_type:    arquivo.mimetype,
+        mime_type:    arqMime,
         mensagem:     nomeSeguro,
         direcao:      'enviada',
         status:       'enviado',

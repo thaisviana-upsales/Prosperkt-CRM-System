@@ -957,7 +957,8 @@ async function enviarMensagem() {
 
 
 // ─── Upload de arquivo (WhatsApp) ────────────────────────────────────────────
-const WA_LIMITE_BYTES = 300 * 1024 * 1024; // 300 MB
+const WA_LIMITE_BYTES = 64 * 1024 * 1024; // 64 MB (máximo prático WhatsApp/Evolution)
+const WA_LIMITE_MB    = 64;
 
 const WA_EXT_BLOQUEADAS = new Set([
   'exe','bat','cmd','sh','bash','msi','scr','vbs','ps1','reg','lnk','jar','hta',
@@ -975,6 +976,24 @@ function waFmtBytes(b) {
   return (b/1048576).toFixed(1) + ' MB';
 }
 
+// Converte File para Data URI base64 (igual ao áudio — método comprovado)
+function _waFileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (reader.result) resolve(reader.result); // "data:mime;base64,..."
+      else reject(new Error('FileReader retornou resultado vazio.'));
+    };
+    reader.onerror = () => reject(reader.error || new Error('Erro ao ler arquivo.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Envia arquivo WhatsApp via Auth.api() + JSON base64.
+ * MESMO padrão do áudio: FileReader → base64 → Auth.api() → backend → Evolution.
+ * Não usa XHR + multipart (que tinha problemas de autenticação e CSP).
+ */
 async function waEnviarArquivo(file) {
   if (!_convAtiva) { Toast.show('Selecione uma conversa primeiro.', 'error'); return; }
 
@@ -983,65 +1002,68 @@ async function waEnviarArquivo(file) {
     Toast.show('Tipo de arquivo não permitido por segurança.', 'error'); return;
   }
   if (file.size > WA_LIMITE_BYTES) {
-    Toast.show('O arquivo excede o limite máximo de 300MB.', 'error'); return;
+    Toast.show(`O arquivo excede o limite de ${WA_LIMITE_MB} MB.`, 'error'); return;
   }
 
-  Toast.show(`Enviando "${file.name}" (${waFmtBytes(file.size)})...`, 'info');
+  // Estágio 1: lendo arquivo (igual ao áudio que já funciona)
+  Toast.show(`📂 Lendo "${file.name}" (${waFmtBytes(file.size)})…`, 'info');
 
-  const formData = new FormData();
-  formData.append('arquivo', file);
+  let base64;
+  try {
+    base64 = await _waFileToBase64(file); // → "data:mime;base64,..."
+  } catch (e) {
+    console.error('[waEnviarArquivo] Falha ao ler arquivo:', e);
+    Toast.show(`Erro ao ler arquivo: ${e.message}`, 'error');
+    return;
+  }
 
-  const token = localStorage.getItem('token') || '';
+  // Estágio 2: enviando via Auth.api() + JSON (mesmo que áudio — token auto-renovado)
+  Toast.show(`📤 Enviando "${file.name}"…`, 'info');
 
-  return new Promise((resolve) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', `/api/whatsapp/conversas/${_convAtiva.id}/arquivos`, true);
-    if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
-
-    // Progresso (não mostramos barra separada para não sobrepor o chat)
-    xhr.upload.addEventListener('progress', e => {
-      if (e.lengthComputable) {
-        const pct = Math.round((e.loaded / e.total) * 100);
-        console.log('WA_UPLOAD_PROGRESS', pct + '%');
-      }
+  let r;
+  try {
+    r = await Auth.api('POST', `/whatsapp/conversas/${_convAtiva.id}/arquivos`, {
+      arquivo_base64: base64,       // "data:mime;base64,..."
+      arquivo_nome:   file.name,
+      mime_type:      file.type || 'application/octet-stream',
     });
+  } catch (e) {
+    console.error('[waEnviarArquivo] Exceção na requisição:', e);
+    Toast.show(`Erro de rede ao enviar: ${e.message}`, 'error');
+    return;
+  }
 
-    xhr.addEventListener('load', () => {
-      let json = {};
-      try { json = JSON.parse(xhr.responseText); } catch {}
+  if (r?.ok && r.data?.sucesso) {
+    Toast.show(`✅ "${file.name}" enviado!`, 'success');
+    if (r.data.aviso) Toast.show(r.data.aviso, 'info');
 
-      if (xhr.status >= 200 && xhr.status < 300 && json.sucesso) {
-        Toast.show(`"${file.name}" enviado!`, 'success');
-        if (json.aviso) Toast.show(json.aviso, 'info');
+    const msgData = r.data.dados || {
+      id:           Date.now().toString(),
+      conversa_id:  _convAtiva.id,
+      mensagem:     file.name,
+      tipo:         file.type.startsWith('image/') ? 'imagem'
+                  : file.type.startsWith('video/') ? 'video'
+                  : 'arquivo',
+      arquivo_url:  null,
+      arquivo_nome: file.name,
+      mime_type:    file.type,
+      direcao:      'enviada',
+      status:       'enviado',
+      criado_em:    new Date().toISOString(),
+    };
+    _mensagens.push(msgData);
+    renderMensagens();
+    _conversas = _conversas.map(c => c.id === _convAtiva.id
+      ? { ...c, ultima_mensagem: `📎 ${file.name}`, ultima_msg_em: new Date().toISOString() }
+      : c);
+    renderListaConversas();
+    document.getElementById('conv-item-' + _convAtiva.id)?.classList.add('active');
 
-        const msgData = json.dados || {
-          id: Date.now().toString(), conversa_id: _convAtiva.id,
-          mensagem: file.name,
-          tipo: file.type.startsWith('image/') ? 'imagem' : file.type.startsWith('video/') ? 'video' : 'arquivo',
-          arquivo_url: null, arquivo_nome: file.name, mime_type: file.type,
-          direcao: 'enviada', status: 'enviado', criado_em: new Date().toISOString(),
-        };
-        _mensagens.push(msgData);
-        renderMensagens();
-        _conversas = _conversas.map(c => c.id === _convAtiva.id
-          ? { ...c, ultima_mensagem: `📎 ${file.name}`, ultima_msg_em: new Date().toISOString() }
-          : c);
-        renderListaConversas();
-        document.getElementById('conv-item-' + _convAtiva.id)?.classList.add('active');
-      } else {
-        const erro = json.erro || `Erro HTTP ${xhr.status}`;
-        Toast.show(`Erro ao enviar "${file.name}": ${erro}`, 'error');
-      }
-      resolve();
-    });
-
-    xhr.addEventListener('error', () => {
-      Toast.show('Erro de rede ao enviar o arquivo.', 'error');
-      resolve();
-    });
-
-    xhr.send(formData);
-  });
+  } else {
+    const erro = r?.data?.erro || `Erro HTTP ${r?.status || 'desconhecido'}`;
+    console.error('[waEnviarArquivo] Falha:', { status: r?.status, erro, data: r?.data });
+    Toast.show(`❌ Erro ao enviar "${file.name}": ${erro}`, 'error');
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {

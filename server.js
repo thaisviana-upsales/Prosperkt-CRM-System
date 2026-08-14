@@ -44,7 +44,10 @@ app.use(cors({
 // ─────────────────────────────────────────────────────────────────────────────
 // Request parsing
 // ─────────────────────────────────────────────────────────────────────────────
-app.use(express.json({ limit: '10mb' }));
+// Limite 100 MB — suporta base64 de arquivos de até ~75 MB (WhatsApp doc: 100 MB max)
+// Audio gravado no CRM (~2 MB base64) fica bem dentro do limite.
+// Multer (multipart) tem seu próprio limite separado de 64 MB.
+app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser(process.env.COOKIE_SECRET));
 
