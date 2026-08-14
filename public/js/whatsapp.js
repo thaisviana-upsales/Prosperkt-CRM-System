@@ -713,26 +713,49 @@ function renderMensagem(msg) {
   if (msg.tipo === 'texto' || msg.tipo === 'sistema') {
     conteudo = `<div class="wa-bubble-text">${escHtml(msg.mensagem || '')}</div>`;
   } else if (msg.tipo === 'imagem') {
-    // Preview com onerror — se URL não carregar, mostra placeholder
-    const imgSrc = msg.arquivo_url || '';
-    const imgAlt = escHtml(msg.arquivo_nome || 'Imagem');
-    if (imgSrc) {
+    const nome   = msg.arquivo_nome || 'Imagem';
+    if (msg.direcao === 'recebida' && msg.id) {
+      // Recebida: lazy load via proxy autenticado (MutationObserver + fetch Bearer)
+      // inline onclick/onerror violam CSP script-src-attr:none — usa event delegation
+      const svgPH = encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><rect fill="#252525" width="200" height="120"/><text x="50%" y="50%" fill="#666" text-anchor="middle" dy=".3em" font-size="11" font-family="sans-serif">Carregando...</text></svg>');
       conteudo = `
         <div class="wa-img-wrap">
-          <img class="wa-img" src="${escHtml(imgSrc)}" alt="${imgAlt}"
-            loading="lazy"
-            onclick="window.open('${escHtml(imgSrc)}','_blank')"
-            onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
-          >
-          <div class="wa-img-error" style="display:none;align-items:center;gap:6px;padding:12px;background:var(--surface-2);border-radius:8px;font-size:.72rem;color:var(--text-muted)">
+          <img class="wa-img wa-img-lazy" data-wa-imgmsgid="${msg.id}"
+            src="data:image/svg+xml,${svgPH}"
+            alt="${escHtml(nome)}" loading="lazy"
+            style="border-radius:6px;cursor:zoom-in;display:block;max-width:100%;min-height:80px">
+          <div class="wa-img-error" style="display:none;align-items:center;gap:6px;padding:10px;background:var(--surface-2);border-radius:8px;font-size:.72rem;color:var(--text-muted)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-            Não foi possível carregar esta mídia.
-            ${imgSrc ? `<a href="${escHtml(imgSrc)}" target="_blank" style="color:var(--green);text-decoration:underline;font-size:.7rem">Abrir link</a>` : ''}
+            Mídia indisponível.
+            <button class="wa-file-dl-btn" data-wa-dl-msgid="${msg.id}" data-wa-dl-nome="${escHtml(nome)}" title="Baixar imagem" style="margin-left:4px;padding:2px 6px;font-size:.68rem">⬇ Baixar</button>
+          </div>
+        </div>
+        ${msg.mensagem && msg.mensagem !== nome ? `<div class="wa-bubble-text" style="margin-top:4px">${escHtml(msg.mensagem)}</div>` : ''}`;
+    } else if (msg.arquivo_url) {
+      // Enviada com URL pública disponível (Supabase Storage público)
+      const imgSrc = msg.arquivo_url;
+      conteudo = `
+        <div class="wa-img-wrap">
+          <img class="wa-img" src="${escHtml(imgSrc)}" alt="${escHtml(nome)}" loading="lazy"
+            data-wa-imgopen="${escHtml(imgSrc)}"
+            style="border-radius:6px;cursor:zoom-in;display:block;max-width:100%">
+          <div class="wa-img-error" style="display:none;align-items:center;gap:6px;padding:10px;background:var(--surface-2);border-radius:8px;font-size:.72rem;color:var(--text-muted)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            Imagem indisponível.
           </div>
         </div>
         ${msg.mensagem ? `<div class="wa-bubble-text" style="margin-top:4px">${escHtml(msg.mensagem)}</div>` : ''}`;
     } else {
-      conteudo = `<div style="font-size:.75rem;color:var(--text-muted);padding:8px 0">Imagem não disponível.</div>`;
+      // Enviada sem URL — mostra como card de arquivo (arquivo não ficou salvo no CRM)
+      conteudo = `<div class="wa-file-card">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="wa-file-icon"><span style="font-size:1.2rem;line-height:1">🖼️</span></div>
+          <div style="flex:1;min-width:0">
+            <p style="font-size:.78rem;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0" title="${escHtml(nome)}">${escHtml(nome)}</p>
+            <p style="font-size:.67rem;color:var(--text-muted);margin:2px 0 0">Imagem enviada</p>
+          </div>
+        </div>
+      </div>`;
     }
   } else if (msg.tipo === 'audio') {
     // Usa /api/whatsapp/audio/play/:msgId diretamente — endpoint robusto com fallbacks completos
@@ -759,44 +782,41 @@ function renderMensagem(msg) {
          </div>`;
     console.log('WHATSAPP_AUDIO_RENDERED', { msgId: msg.id, hasSrc: !!audioSrc, dur });
   } else if (msg.tipo === 'video') {
-    const url = msg.arquivo_url || '';
-    const nome = msg.arquivo_nome || 'Vídeo';
-    const downloadUrl = `/api/whatsapp/arquivos/${msg.id}/download`;
-    conteudo = url
-      ? `<div class="wa-file-card">
-           <div style="display:flex;align-items:center;gap:10px">
-             <div class="wa-file-icon" style="background:rgba(255,184,0,.12);border-color:rgba(255,184,0,.2)">
-               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FFB800" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-             </div>
-             <div style="flex:1;min-width:0">
-               <p style="font-size:.78rem;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0" title="${escHtml(nome)}">${escHtml(nome)}</p>
-               <p style="font-size:.67rem;color:var(--text-muted);margin:2px 0 0">Vídeo</p>
-             </div>
-             <a href="${escHtml(downloadUrl)}" download="${escHtml(nome)}" class="wa-file-dl-btn" title="Baixar">
-               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 13 7 8"/><line x1="12" y1="3" x2="12" y2="13"/></svg>
-             </a>
-           </div>
-         </div>`
-      : `<span style="font-size:.78rem;color:var(--text-muted)">Vídeo</span>`;
+    const nome  = msg.arquivo_nome || 'Vídeo';
+    // Recebidos: botão JS com Bearer token. Enviados: sem download (não ficou salvo).
+    const dlBtn = msg.direcao === 'recebida' && msg.id
+      ? `<button class="wa-file-dl-btn" data-wa-dl-msgid="${msg.id}" data-wa-dl-nome="${escHtml(nome)}" title="Baixar vídeo">
+           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 13 7 8"/><line x1="12" y1="3" x2="12" y2="13"/></svg>
+         </button>`
+      : '';
+    conteudo = `<div class="wa-file-card">
+       <div style="display:flex;align-items:center;gap:10px">
+         <div class="wa-file-icon" style="background:rgba(255,184,0,.12);border-color:rgba(255,184,0,.2)">
+           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FFB800" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+         </div>
+         <div style="flex:1;min-width:0">
+           <p style="font-size:.78rem;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0" title="${escHtml(nome)}">${escHtml(nome)}</p>
+           <p style="font-size:.67rem;color:var(--text-muted);margin:2px 0 0">Vídeo${msg.direcao === 'enviada' ? ' enviado' : ''}</p>
+         </div>
+         ${dlBtn}
+       </div>
+     </div>`;
   } else if (msg.tipo === 'arquivo' || msg.tipo === 'documento') {
-    const url  = msg.arquivo_url || '';
-    const nome = msg.arquivo_nome || 'Arquivo';
-    // Recebidos: usa proxy backend (/api/whatsapp/mensagens/:msgId/arquivo) — Evolution URLs
-    // podem exigir API key; browser não envia auth header em <a href> direto.
-    // Enviados: arquivo_url se disponível; caso contrário sem botão de download
-    // (arquivo foi enviado pelo WA mas não ficou salvo no CRM — by design).
-    const conversaIdMsg = msg.conversa_id || (_convAtiva?.id ?? '');
-    const downloadUrl = msg.direcao === 'recebida' && msg.id
-      ? `/api/whatsapp/mensagens/${msg.id}/arquivo`
-      : url;
-
-    const mime = msg.mime_type || '';
+    const nome  = msg.arquivo_nome || 'Arquivo';
+    const mime  = msg.mime_type || '';
     const icone = mime === 'application/pdf' ? '📄'
       : mime.startsWith('image/') ? '🖼️'
       : mime.includes('word') || mime.includes('doc') ? '📝'
       : mime.includes('sheet') || mime.includes('excel') || mime.includes('xls') ? '📊'
       : mime.includes('presentation') || mime.includes('powerpoint') ? '📁'
       : '📎';
+    // Recebidos: botão com data-wa-dl-msgid → fetch autenticado (Bearer) no backend
+    // Enviados: sem download — arquivo não ficou salvo no CRM (by design)
+    const dlBtn = msg.direcao === 'recebida' && msg.id
+      ? `<button class="wa-file-dl-btn" data-wa-dl-msgid="${msg.id}" data-wa-dl-nome="${escHtml(nome)}" title="Baixar">
+           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 13 7 8"/><line x1="12" y1="3" x2="12" y2="13"/></svg>
+         </button>`
+      : '';
     conteudo = `<div class="wa-file-card">
        <div style="display:flex;align-items:center;gap:10px">
          <div class="wa-file-icon">
@@ -804,11 +824,9 @@ function renderMensagem(msg) {
          </div>
          <div style="flex:1;min-width:0">
            <p style="font-size:.78rem;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0" title="${escHtml(nome)}">${escHtml(nome)}</p>
-           <p style="font-size:.67rem;color:var(--text-muted);margin:2px 0 0">Documento</p>
+           <p style="font-size:.67rem;color:var(--text-muted);margin:2px 0 0">Documento${msg.direcao === 'enviada' ? ' enviado' : ''}</p>
          </div>
-         ${downloadUrl ? `<a href="${escHtml(downloadUrl)}" target="_blank" download="${escHtml(nome)}" class="wa-file-dl-btn" title="Baixar">
-           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 13 7 8"/><line x1="12" y1="3" x2="12" y2="13"/></svg>
-         </a>` : ''}
+         ${dlBtn}
        </div>
        ${msg.mensagem && msg.mensagem !== nome ? `<div class="wa-bubble-text" style="margin-top:6px">${escHtml(msg.mensagem)}</div>` : ''}
      </div>`;
@@ -1159,16 +1177,33 @@ function bindEvents() {
   const msgContainer = document.getElementById('wa-messages');
   if (msgContainer) {
     msgContainer.addEventListener('click', (e) => {
-      // Botão play/pause
+      // ── Áudio: play/pause (FROZEN — não alterar) ─────────────────────────
       const playBtn = e.target.closest('.wa-audio-play-btn');
       if (playBtn && typeof WAAudio !== 'undefined') {
         WAAudio.toggle(playBtn);
         return;
       }
-      // Barra de progresso (seek)
+      // ── Áudio: seek (FROZEN — não alterar) ────────────────────────────────
       const progressBar = e.target.closest('.wa-audio-progress');
       if (progressBar && typeof WAAudio !== 'undefined') {
         WAAudio.seek(progressBar, e);
+        return;
+      }
+      // ── Download autenticado (arquivos/imagens/vídeos recebidos) ──────────
+      const dlBtn = e.target.closest('[data-wa-dl-msgid]');
+      if (dlBtn) {
+        e.preventDefault();
+        waDownloadArquivo(dlBtn.dataset.waDlMsgid, dlBtn.dataset.waDlNome);
+        return;
+      }
+      // ── Abrir imagem em nova aba (clique na img carregada) ────────────────
+      const imgEl = e.target.closest('.wa-img');
+      if (imgEl && imgEl.src && imgEl.src.startsWith('blob:')) {
+        window.open(imgEl.src, '_blank');
+        return;
+      }
+      if (imgEl && imgEl.dataset.waImgopen) {
+        window.open(imgEl.dataset.waImgopen, '_blank');
         return;
       }
     });
@@ -1294,6 +1329,23 @@ function bindEvents() {
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && document.getElementById('modal-ov').classList.contains('open')) fecharModal();
   });
+
+  // ── MutationObserver: lazy load de imagens recebidas ──────────────────────
+  // Imagens recebidas são carregadas via fetch autenticado (Bearer token)
+  // para contornar a restrição de auth das Evolution URLs
+  const _waMsgsEl = document.getElementById('wa-messages');
+  if (_waMsgsEl) {
+    new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        m.addedNodes.forEach(n => {
+          if (n.nodeType !== 1) return;
+          const lazies = n.querySelectorAll ? n.querySelectorAll('.wa-img-lazy[data-wa-imgmsgid]') : [];
+          lazies.forEach(_waLoadImg);
+          if (n.classList?.contains('wa-img-lazy') && n.dataset?.waImgmsgid) _waLoadImg(n);
+        });
+      }
+    }).observe(_waMsgsEl, { childList: true, subtree: true });
+  }
 }
 
 // ─── Áudio: player premium + gravador MediaRecorder ──────────────────────────
@@ -1517,6 +1569,62 @@ async function enviarAudio(blob) {
   }
 
   cancelarGravacao();
+}
+
+// ─── Download autenticado de arquivos WhatsApp recebidos ──────────────────────
+// Usa fetch com Bearer token para contornar a limitação de <a href> sem auth.
+async function waDownloadArquivo(msgId, nome) {
+  const token = (typeof Auth !== 'undefined' && Auth.getToken)
+    ? Auth.getToken()
+    : (localStorage.getItem('token') || '');
+  try {
+    Toast.show('Baixando...', 'info');
+    const resp = await fetch(`/api/whatsapp/mensagens/${msgId}/arquivo`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = nome || 'arquivo';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    Toast.show(`"${nome || 'arquivo'}" baixado!`, 'success');
+  } catch (e) {
+    Toast.show('Erro ao baixar: ' + e.message, 'error');
+  }
+}
+
+// ─── Lazy loading de imagens recebidas ─────────────────────────────────────────
+// Chamado pelo MutationObserver quando uma .wa-img-lazy entra no DOM.
+async function _waLoadImg(imgEl) {
+  if (!imgEl || imgEl.dataset.loaded) return;
+  imgEl.dataset.loaded = '1';
+  const msgId = imgEl.dataset.waImgmsgid;
+  if (!msgId) return;
+  const token = (typeof Auth !== 'undefined' && Auth.getToken)
+    ? Auth.getToken()
+    : (localStorage.getItem('token') || '');
+  try {
+    const resp = await fetch(`/api/whatsapp/mensagens/${msgId}/arquivo`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const blob  = await resp.blob();
+    imgEl.src   = URL.createObjectURL(blob);
+    imgEl.style.minHeight  = '';
+    imgEl.style.background = '';
+    imgEl.style.cursor     = 'zoom-in';
+  } catch {
+    imgEl.style.display = 'none';
+    const errEl = imgEl.nextElementSibling;
+    if (errEl && errEl.classList.contains('wa-img-error')) {
+      errEl.style.display = 'flex';
+    }
+  }
 }
 
 // ─── Kick-off ─────────────────────────────────────────────────────────────────
