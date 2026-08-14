@@ -512,6 +512,7 @@ router.get('/health', (req, res) => {
 router.get ('/conta-azul/destinatarios',        autenticar, contaAzulCtrl.listarDestinatarios);
 router.get ('/conta-azul/historico/:leadId',     autenticar, contaAzulCtrl.historico);
 router.post('/conta-azul/enviar/:leadId',        autenticar, contaAzulCtrl.enviar);
+router.post('/conta-azul/registrar-manual/:leadId', autenticar, contaAzulCtrl.registrarManual);
 
 
 module.exports = router;

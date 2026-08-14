@@ -309,4 +309,79 @@ function gerarHtmlEmail({ lead, dadosExtras, produtosList, observacao_adicional,
 </html>`;
 }
 
-module.exports = { listarDestinatarios, historico, enviar };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/conta-azul/registrar-manual/:leadId
+// Registra envio manual sem SMTP — apenas salva histórico e atualiza status.
+// ─────────────────────────────────────────────────────────────────────────────
+async function registrarManual(req, res) {
+  const { sb, isSupa, sqlite } = getProvider();
+  const { leadId } = req.params;
+  const usuario = req.usuario;
+  const { observacao_adicional } = req.body || {};
+
+  try {
+    const agr      = new Date().toISOString();
+    const hId      = require('crypto').randomBytes(16).toString('hex');
+    const destJson = JSON.stringify(
+      ['tuane@prospektpersonalizados.com.br','ramiro@prospektpersonalizados.com.br',
+       'priscila@prospektpersonalizados.com.br','caique@prospektpersonalizados.com.br',
+       'felipe@prospektpersonalizados.com.br'].map(e => ({ email: e }))
+    );
+
+    if (isSupa) {
+      // Registra no histórico
+      await sb.from('conta_azul_emails_enviados').insert({
+        id:                  hId,
+        lead_id:             leadId,
+        usuario_id:          usuario?.id || null,
+        usuario_nome:        usuario?.nome || 'Usuário',
+        status:              'manual',
+        assunto:             observacao_adicional ? `Envio manual — ${observacao_adicional}` : 'Envio manual registrado',
+        destinatarios_json:  destJson,
+        enviado_em:          agr,
+        erro:                null,
+      }).catch(() => {}); // Ignora se tabela não existir ainda
+
+      // Atualiza status do lead
+      await sb.from('leads').update({
+        conta_azul_status:    'enviado',
+        conta_azul_enviado_em: agr,
+        conta_azul_enviado_por: usuario?.nome || 'Usuário',
+        atualizado_em:        agr,
+      }).eq('id', leadId).catch(() => {});
+
+      // Timeline
+      try {
+        await registrarTimeline({
+          leadId,
+          tipo:      'CONTA_AZUL_MANUAL',
+          descricao: `Ficha Conta Azul marcada como enviada manualmente por ${usuario?.nome || 'Usuário'}.`,
+          usuarioId: usuario?.id,
+          sb,
+        });
+      } catch(eTl) { /* não crítico */ }
+
+    } else {
+      try {
+        sqlite.prepare(`
+          INSERT OR IGNORE INTO conta_azul_emails_enviados
+            (id,lead_id,usuario_id,usuario_nome,status,assunto,destinatarios_json,enviado_em)
+          VALUES (?,?,?,?,?,?,?,?)
+        `).run(hId, leadId, usuario?.id||null, usuario?.nome||'Usuário', 'manual',
+               'Envio manual registrado', destJson, agr);
+        sqlite.prepare(`UPDATE leads SET conta_azul_status='enviado',conta_azul_enviado_em=?,conta_azul_enviado_por=? WHERE id=?`)
+          .run(agr, usuario?.nome||'Usuário', leadId);
+      } catch(eSq) { /* SQLite opcional */ }
+    }
+
+    console.log('[ContaAzul] Envio manual registrado', { leadId, usuario: usuario?.nome });
+    return res.json({ sucesso: true, dados: { id: hId, enviado_em: agr, status: 'manual' } });
+
+  } catch(e) {
+    console.error('[contaAzul.registrarManual]', e.message);
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}
+
+module.exports = { listarDestinatarios, historico, enviar, registrarManual };

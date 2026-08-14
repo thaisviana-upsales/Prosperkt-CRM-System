@@ -481,12 +481,26 @@
         <textarea id="ca-obs" class="input input-sm" rows="3" placeholder="Informações extras que devem constar no e-mail..." style="font-size:.78rem;resize:vertical"></textarea>
       </div>
 
-      <!-- Botão enviar -->
-      <button id="ca-btn-enviar" class="btn btn-primary" style="width:100%;margin-bottom:18px">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-        <span id="ca-btn-txt">Enviar para Conta Azul</span>
-        <div class="spinner hidden" id="ca-spinner"></div>
+      <!-- Botão: Abrir e-mail para Conta Azul (mailto:) -->
+      <button id="ca-btn-mailto" class="btn btn-primary" style="width:100%;margin-bottom:8px">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 7l10 7 10-7"/></svg>
+        <span id="ca-btn-mailto-txt">Abrir e-mail para Conta Azul</span>
       </button>
+
+      <!-- Botão: Copiar conteúdo do e-mail -->
+      <button id="ca-btn-copiar" class="btn btn-secondary" style="width:100%;margin-bottom:8px;font-size:.8rem">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        Copiar conteúdo do e-mail
+      </button>
+
+      <!-- Botão: Marcar como enviado manualmente -->
+      <button id="ca-btn-manual" class="btn btn-secondary" style="width:100%;margin-bottom:16px;font-size:.78rem;opacity:.85">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+        Marcar como enviado manualmente
+      </button>
+
+      <!-- Status do envio manual -->
+      <div id="ca-manual-status" style="display:none;font-size:.74rem;color:var(--green);background:rgba(91,222,62,0.07);border:1px solid rgba(91,222,62,0.2);border-radius:7px;padding:8px 12px;margin-bottom:14px"></div>
 
       <!-- Histórico de envios -->
       <div>
