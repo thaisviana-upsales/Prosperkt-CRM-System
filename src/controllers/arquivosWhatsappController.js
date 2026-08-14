@@ -264,11 +264,11 @@ async function proxyArquivoRecebido(req, res, next) {
     const { msgId } = req.params;
     if (!isSupa) return res.status(501).json({ sucesso: false, erro: 'Não disponível em modo SQLite.' });
 
-    // Busca mensagem incluindo telefone (necessário para remoteJid no re-fetch)
+    // Busca mensagem incluindo whatsapp_message_id (key.id) para re-fetch na Evolution
     let msg = null;
     try {
       const { data } = await sb.from('mensagens_whatsapp')
-        .select('id, arquivo_url, arquivo_nome, mime_type, tipo, direcao, telefone')
+        .select('id, arquivo_url, arquivo_nome, mime_type, tipo, direcao, telefone, whatsapp_message_id')
         .eq('id', msgId).single();
       msg = data;
     } catch (e) { console.warn('[wha.proxy] DB:', e.message); }
@@ -316,13 +316,20 @@ async function proxyArquivoRecebido(req, res, next) {
 
     // ── Camada 2: Re-fetch via getBase64FromMediaMessage ───────────────────────
     // Funciona enquanto a Evolution mantém a mensagem em cache (~7 dias)
-    // Para mensagens recebidas: msgId = WhatsApp key.id, remoteJid = telefone@s.whatsapp.net
-    if (msg.direcao !== 'recebida' || !evoSvc.isConfigured()) {
+    // CRÍTICO: usa whatsapp_message_id (key.id do WhatsApp), NÃO o UUID do CRM.
+    const waKeyId = msg.whatsapp_message_id || null;
+    if (!evoSvc.isConfigured()) {
       return res.status(404).json({
         sucesso: false,
-        erro: msg.arquivo_url
-          ? 'URL da mídia expirou e re-fetch não disponível para mensagens enviadas.'
-          : 'Arquivo não disponível.',
+        erro: 'Evolution API não configurada para re-fetch de mídia.',
+      });
+    }
+    if (msg.direcao !== 'recebida' || !waKeyId) {
+      return res.status(404).json({
+        sucesso: false,
+        erro: msg.direcao !== 'recebida'
+          ? 'Arquivo enviado pelo CRM — sem cópia armazenada. Veja no WhatsApp.'
+          : 'ID WhatsApp ausente — não é possível recuperar esta mídia via re-fetch.',
       });
     }
 
@@ -336,14 +343,15 @@ async function proxyArquivoRecebido(req, res, next) {
       ? msg.telefone
       : `${telNumeros}@s.whatsapp.net`;
 
-    console.log('[wha.proxy] Re-fetch via Evolution:', { msgId: msgId.slice(0,8), remoteJid });
-    const refetch = await evoSvc.getBase64Media(msgId, remoteJid);
+    console.log('[wha.proxy] Layer 2 re-fetch via Evolution:', { waKeyId: waKeyId?.slice(0,8), remoteJid });
+    // Usa whatsapp_message_id (key.id) — NÃO o UUID interno do CRM
+    const refetch = await evoSvc.getBase64Media(waKeyId, remoteJid);
 
     if (!refetch.sucesso || !refetch.dados?.base64) {
-      console.warn('[wha.proxy] Re-fetch falhou:', refetch.erro);
+      console.warn('[wha.proxy] Layer 2 re-fetch falhou:', refetch.erro, { waKeyId: waKeyId?.slice(0,8) });
       return res.status(404).json({
         sucesso: false,
-        erro: 'Mídia expirou na Evolution API. O arquivo ainda está no WhatsApp do usuário.',
+        erro: 'Mídia expirou na Evolution API (~7 dias). O arquivo ainda está no WhatsApp do usuário.',
       });
     }
 
@@ -353,10 +361,10 @@ async function proxyArquivoRecebido(req, res, next) {
     const buf     = Buffer.from(pureB64, 'base64');
     const mime    = refetch.dados.mimetype || mimeType;
 
-    console.log('[wha.proxy] Re-fetch OK via Evolution:', { msgId: msgId.slice(0,8), mime, size: buf.length });
+    console.log('[wha.proxy] Layer 2 OK:', { waKeyId: waKeyId?.slice(0,8), mime, size: buf.length });
     res.set('Content-Type', mime);
     res.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(nomeArquivo)}`);
-    res.set('Cache-Control', 'private, max-age=300'); // 5 min (re-fetchado, não URL estável)
+    res.set('Cache-Control', 'private, max-age=3600'); // 1h — re-fetchado com sucesso
     res.set('Content-Length', buf.length);
     return res.send(buf);
 
