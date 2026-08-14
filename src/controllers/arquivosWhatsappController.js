@@ -254,22 +254,27 @@ async function listarArquivos(req, res, next) {
 }
 
 // ── GET /api/whatsapp/mensagens/:msgId/arquivo ────────────────────────────────
+// Proxy autenticado para arquivos RECEBIDOS via Evolution/WhatsApp.
+// Estratégia em duas camadas:
+//   1. Tenta URL direta (arquivo_url no DB) — rápido, mas expira em ~5-15 min
+//   2. Fallback: getBase64FromMediaMessage via Evolution — funciona por ~7 dias
 async function proxyArquivoRecebido(req, res, next) {
   try {
     const { sb, isSupa } = getProvider();
     const { msgId } = req.params;
     if (!isSupa) return res.status(501).json({ sucesso: false, erro: 'Não disponível em modo SQLite.' });
 
+    // Busca mensagem incluindo telefone (necessário para remoteJid no re-fetch)
     let msg = null;
     try {
       const { data } = await sb.from('mensagens_whatsapp')
-        .select('arquivo_url, arquivo_nome, mime_type, tipo, direcao')
+        .select('id, arquivo_url, arquivo_nome, mime_type, tipo, direcao, telefone')
         .eq('id', msgId).single();
       msg = data;
-    } catch (e) { console.warn('[wha.proxyArquivoRecebido] DB:', e.message); }
+    } catch (e) { console.warn('[wha.proxy] DB:', e.message); }
 
     if (!msg) return res.status(404).json({ sucesso: false, erro: 'Mensagem não encontrada.' });
-    if (!msg.arquivo_url) {
+    if (!msg.arquivo_url && msg.direcao !== 'recebida') {
       return res.status(404).json({ sucesso: false, erro: 'Arquivo enviado pelo CRM — sem cópia armazenada. Veja no WhatsApp.' });
     }
 
@@ -277,36 +282,87 @@ async function proxyArquivoRecebido(req, res, next) {
     const mimeType    = msg.mime_type || 'application/octet-stream';
     const evoKey      = process.env.EVOLUTION_API_KEY || '';
 
-    let upstream = null;
-    try {
-      upstream = await fetch(msg.arquivo_url, {
-        headers: evoKey ? { apikey: evoKey, 'x-api-key': evoKey } : {},
+    // ── Camada 1: URL direta da Evolution ──────────────────────────────────────
+    if (msg.arquivo_url) {
+      let upstream = null;
+      try {
+        upstream = await fetch(msg.arquivo_url, {
+          headers: evoKey ? { apikey: evoKey, 'x-api-key': evoKey } : {},
+        });
+        if (!upstream.ok && evoKey) upstream = await fetch(msg.arquivo_url);
+      } catch (e) {
+        console.warn('[wha.proxy] URL direta falhou (rede):', e.message);
+        upstream = null;
+      }
+
+      if (upstream?.ok) {
+        console.log('[wha.proxy] Servindo via URL direta:', { msgId: msgId.slice(0,8), nome: nomeArquivo });
+        res.set('Content-Type', upstream.headers.get('content-type') || mimeType);
+        res.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(nomeArquivo)}`);
+        res.set('Cache-Control', 'private, max-age=3600');
+        try {
+          const { Readable } = require('stream');
+          if (Readable.fromWeb && upstream.body) { Readable.fromWeb(upstream.body).pipe(res); return; }
+        } catch {}
+        const buf = Buffer.from(await upstream.arrayBuffer());
+        res.set('Content-Length', buf.length);
+        return res.send(buf);
+      }
+      // URL falhou (expirada, 404, 403) → vai para camada 2
+      console.warn('[wha.proxy] URL direta expirada/inválida, tentando re-fetch via Evolution…', {
+        status: upstream?.status, msgId: msgId.slice(0,8),
       });
-      if (!upstream.ok && evoKey) upstream = await fetch(msg.arquivo_url);
-    } catch (e) {
-      return res.status(502).json({ sucesso: false, erro: 'Não foi possível buscar o arquivo: ' + e.message });
     }
 
-    if (!upstream.ok) {
-      return res.status(upstream.status).json({
-        sucesso: false, erro: `Arquivo indisponível (HTTP ${upstream.status}). URL pode ter expirado.`,
+    // ── Camada 2: Re-fetch via getBase64FromMediaMessage ───────────────────────
+    // Funciona enquanto a Evolution mantém a mensagem em cache (~7 dias)
+    // Para mensagens recebidas: msgId = WhatsApp key.id, remoteJid = telefone@s.whatsapp.net
+    if (msg.direcao !== 'recebida' || !evoSvc.isConfigured()) {
+      return res.status(404).json({
+        sucesso: false,
+        erro: msg.arquivo_url
+          ? 'URL da mídia expirou e re-fetch não disponível para mensagens enviadas.'
+          : 'Arquivo não disponível.',
       });
     }
 
-    res.set('Content-Type', upstream.headers.get('content-type') || mimeType);
+    const telNumeros = (msg.telefone || '').replace(/\D/g, '');
+    if (!telNumeros) {
+      return res.status(404).json({ sucesso: false, erro: 'Telefone não encontrado para re-fetch.' });
+    }
+
+    // remoteJid: se já tem @, usa como está; senão monta formato WA
+    const remoteJid = msg.telefone.includes('@')
+      ? msg.telefone
+      : `${telNumeros}@s.whatsapp.net`;
+
+    console.log('[wha.proxy] Re-fetch via Evolution:', { msgId: msgId.slice(0,8), remoteJid });
+    const refetch = await evoSvc.getBase64Media(msgId, remoteJid);
+
+    if (!refetch.sucesso || !refetch.dados?.base64) {
+      console.warn('[wha.proxy] Re-fetch falhou:', refetch.erro);
+      return res.status(404).json({
+        sucesso: false,
+        erro: 'Mídia expirou na Evolution API. O arquivo ainda está no WhatsApp do usuário.',
+      });
+    }
+
+    // Decodifica base64 e serve ao browser
+    const b64str  = refetch.dados.base64;
+    const pureB64 = b64str.replace(/^data:[^;]+;base64,/, '');
+    const buf     = Buffer.from(pureB64, 'base64');
+    const mime    = refetch.dados.mimetype || mimeType;
+
+    console.log('[wha.proxy] Re-fetch OK via Evolution:', { msgId: msgId.slice(0,8), mime, size: buf.length });
+    res.set('Content-Type', mime);
     res.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(nomeArquivo)}`);
-    res.set('Cache-Control', 'private, max-age=3600');
+    res.set('Cache-Control', 'private, max-age=300'); // 5 min (re-fetchado, não URL estável)
+    res.set('Content-Length', buf.length);
+    return res.send(buf);
 
-    try {
-      const { Readable } = require('stream');
-      if (Readable.fromWeb && upstream.body) { Readable.fromWeb(upstream.body).pipe(res); }
-      else { const buf = Buffer.from(await upstream.arrayBuffer()); res.set('Content-Length', buf.length); res.send(buf); }
-    } catch {
-      const buf = Buffer.from(await upstream.arrayBuffer()); res.set('Content-Length', buf.length); res.send(buf);
-    }
-
-  } catch (e) { console.error('[wha.proxyArquivoRecebido] ERRO:', e.message, e.stack); next(e); }
+  } catch (e) { console.error('[wha.proxy] ERRO:', e.message, e.stack); next(e); }
 }
+
 
 // ── GET /api/whatsapp/arquivos/:arqId/download ────────────────────────────────
 async function downloadArquivo(req, res, next) {
