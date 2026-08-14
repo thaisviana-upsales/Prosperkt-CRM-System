@@ -893,6 +893,33 @@ async function atualizar(req, res) {
             });
           }
         }
+
+        // ── Layout Virtual Aprovado: data automática (ATUALIZAR) ─────────────
+        // Mesma regra que mover() — quando etapa muda para 'Layout Virtual Aprovado'
+        // dentro do card, a data é preenchida automaticamente se ainda estiver vazia.
+        const etNomeDestAtualizar = (etDest?.nome || '').toLowerCase();
+        const isLVAprovadoAtualizar = /layout.?virtual\s+aprovado/i.test(etDest?.nome || '');
+        const isLVEntryAtualizar    = /layout.?virtual/i.test(etDest?.nome || '') && !isLVAprovadoAtualizar;
+
+        if (isLVEntryAtualizar) {
+          // Voltou para revisão: registra entrada e reseta aprovação
+          upd.layout_virtual_entrada_em  = new Date().toISOString();
+          upd.layout_virtual_aprovado_em = null;
+          console.log('LAYOUT_VIRTUAL_APROVADO_DATE_CHECK_START', { leadId: id, etapa: etDest?.nome });
+        }
+        if (isLVAprovadoAtualizar) {
+          console.log('LAYOUT_VIRTUAL_APROVADO_DATE_CHECK_START', { leadId: id, etapa: etDest?.nome });
+          console.log('LAYOUT_VIRTUAL_APROVADO_STAGE_DETECTED', { leadId: id, etapaNome: etDest?.nome });
+          const dataAtualUpd = atual.layout_virtual_aprovado_em;
+          if (!dataAtualUpd) {
+            upd.layout_virtual_aprovado_em = new Date().toISOString();
+            console.log('LAYOUT_VIRTUAL_APROVADO_DATE_SET', {
+              leadId: id, data: upd.layout_virtual_aprovado_em, origem: 'atualizar_card',
+            });
+          } else {
+            console.log('LAYOUT_VIRTUAL_APROVADO_DATE_ALREADY_EXISTS', { leadId: id, dataExistente: dataAtualUpd });
+          }
+        }
       }
 
       const { data, error } = await sb.from('leads').update(upd).eq('id', id).select().single();
@@ -1430,16 +1457,38 @@ async function mover(req, res) {
       if (isPerdido && !lead.perdido_em) upd.perdido_em = agora; // salva sempre — independente de motivo
       if (isPerdido && motivo_perda)    { upd.perdido_motivo = motivo_perda; upd.motivo_perda = motivo_perda; }
       // ── Layout Virtual: entrada e saída ────────────────────────────────────
-      const isLayoutVirtual = /layout.?virtual/i.test(etapa.nome||'');
-      const isAmostrafisica  = /amostra.?física/i.test(etapa.nome||'');
+      // Distingue duas etapas distintas:
+      //   'Layout Virtual'          — etapa de entrada (revisaóo ativa)
+      //   'Layout Virtual Aprovado' — etapa de aprovação (libera para Amostra Física)
+      const isLayoutVirtual         = /layout.?virtual/i.test(etapa.nome||'');
+      const isLayoutVirtualAprovado = /layout.?virtual\s+aprovado/i.test(etapa.nome||'');
+      const isLayoutVirtualEntry    = isLayoutVirtual && !isLayoutVirtualAprovado;
+      const isAmostrafisica  = /amostra.?física|amostra.?fisica/i.test(etapa.nome||'');
       const etapaAnterior   = lead.etapa_id ? ((await sb.from('etapas').select('nome').eq('id', lead.etapa_id).single())?.data?.nome||'') : '';
       const vemDeLayoutVirtual = /layout.?virtual/i.test(etapaAnterior);
 
-      if (isLayoutVirtual) {
-        // Registra entrada na etapa Layout Virtual
-        upd.layout_virtual_entrada_em = agora;
-        // Limpa aprovação de execução anterior se o lead voltar para esta etapa
+      if (isLayoutVirtualEntry) {
+        // Etapa de entrada: registra entrada e RESETA aprovação (lead retornou para revisão)
+        upd.layout_virtual_entrada_em  = agora;
         upd.layout_virtual_aprovado_em = null;
+        console.log('LAYOUT_VIRTUAL_APROVADO_DATE_CHECK_START', { leadId: id, etapa: etapa.nome });
+      }
+
+      if (isLayoutVirtualAprovado) {
+        // Etapa de aprovação: preenche data APENAS se ainda não existir (não sobrescreve edição manual)
+        console.log('LAYOUT_VIRTUAL_APROVADO_DATE_CHECK_START', { leadId: id, etapa: etapa.nome });
+        console.log('LAYOUT_VIRTUAL_APROVADO_STAGE_DETECTED', { leadId: id, etapaNome: etapa.nome });
+        const dataAtual = lead.layout_virtual_aprovado_em;
+        if (!dataAtual) {
+          upd.layout_virtual_aprovado_em = agora;
+          console.log('LAYOUT_VIRTUAL_APROVADO_DATE_SET', {
+            leadId: id, data: agora, origem: 'movimentacao_etapa',
+          });
+        } else {
+          console.log('LAYOUT_VIRTUAL_APROVADO_DATE_ALREADY_EXISTS', {
+            leadId: id, dataExistente: dataAtual,
+          });
+        }
       }
 
       if (isAmostrafisica && vemDeLayoutVirtual) {
@@ -1455,9 +1504,12 @@ async function mover(req, res) {
         upd.layout_virtual_aprovado_em = aprovadoEm;
       }
 
-      // Salva data de aprovação se enviada manualmente
+      // Salva data de aprovação se enviada manualmente (via card, fora das etapas de layout)
       if (req.body.layout_virtual_aprovado_em && !isLayoutVirtual) {
         upd.layout_virtual_aprovado_em = req.body.layout_virtual_aprovado_em;
+        console.log('LAYOUT_VIRTUAL_APROVADO_DATE_MANUAL_EDIT_SAVED', {
+          leadId: id, data: req.body.layout_virtual_aprovado_em,
+        });
       }
 
       // Salva campos comerciais ao mover para ganho
@@ -1502,8 +1554,9 @@ async function mover(req, res) {
       req.log({ acao:'MOVER', entidade:'leads', entidade_id:id,
         antes:{ etapa_id:lead.etapa_id, status:lead.status, etapa_nome:etapaAnterior },
         depois:{ etapa_id, status:novoStatus, etapa_nome:etapa.nome,
-          layout_virtual_entrada_em: isLayoutVirtual ? agora : undefined,
+          layout_virtual_entrada_em: isLayoutVirtualEntry ? agora : undefined,
           layout_virtual_aprovado_em: upd.layout_virtual_aprovado_em || undefined } });
+
 
       // ── TIMELINE VISUAL DO CARD (lead_timeline) ────────────────────────────
       // CAUSA RAIZ DO BUG: o caminho Supabase nunca chamava registrarTimeline().
@@ -1560,11 +1613,11 @@ async function mover(req, res) {
 
 
       // Log especial de etapas de Layout Virtual na timeline
-      if (isLayoutVirtual) {
+      if (isLayoutVirtualEntry) {
         req.log({ acao:'LAYOUT_VIRTUAL_ENTRADA', entidade:'leads', entidade_id:id,
           depois:{ etapa_id, etapa_nome:etapa.nome, layout_virtual_entrada_em:agora, usuario:req.usuario?.nome||'Sistema' } });
       }
-      if (isAmostrafisica && vemDeLayoutVirtual) {
+      if (isLayoutVirtualAprovado && upd.layout_virtual_aprovado_em) {
         req.log({ acao:'LAYOUT_VIRTUAL_APROVADO', entidade:'leads', entidade_id:id,
           depois:{ layout_virtual_aprovado_em: upd.layout_virtual_aprovado_em, etapa_nome:etapa.nome, usuario:req.usuario?.nome||'Sistema' } });
       }
@@ -1662,8 +1715,10 @@ async function mover(req, res) {
     extras.etapa_atualizada_em = agora; // rastreia entrada na etapa
 
     // ── Layout Virtual: entrada e saída (SQLite) ─────────────────────────
-    const isLayoutVirtualSql = /layout.?virtual/i.test(etapa.nome||'');
-    const isAmostrafisicaSql  = /amostra.?física/i.test(etapa.nome||'');
+    const isLayoutVirtualSql         = /layout.?virtual/i.test(etapa.nome||'');
+    const isLayoutVirtualAprovadoSql = /layout.?virtual\s+aprovado/i.test(etapa.nome||'');
+    const isLayoutVirtualEntrySql    = isLayoutVirtualSql && !isLayoutVirtualAprovadoSql;
+    const isAmostrafisicaSql  = /amostra.?física|amostra.?fisica/i.test(etapa.nome||'');
     let etapaAnteriorNome = '';
     if (lead.etapa_id) {
       const etaAnt = sqlite.prepare('SELECT nome FROM etapas WHERE id=? LIMIT 1').get(lead.etapa_id);
@@ -1671,9 +1726,24 @@ async function mover(req, res) {
     }
     const vemDeLayoutVirtualSql = /layout.?virtual/i.test(etapaAnteriorNome);
 
-    if (isLayoutVirtualSql) {
-      extras.layout_virtual_entrada_em = agora;
-      extras.layout_virtual_aprovado_em = null; // reseta aprovação ao re-entrar
+    if (isLayoutVirtualEntrySql) {
+      // Etapa de entrada: registra entrada e RESETA aprovação
+      extras.layout_virtual_entrada_em  = agora;
+      extras.layout_virtual_aprovado_em = null;
+      console.log('LAYOUT_VIRTUAL_APROVADO_DATE_CHECK_START', { leadId: id, etapa: etapa.nome });
+    }
+
+    if (isLayoutVirtualAprovadoSql) {
+      // Etapa de aprovação: preenche data APENAS se ainda não existir
+      console.log('LAYOUT_VIRTUAL_APROVADO_DATE_CHECK_START', { leadId: id, etapa: etapa.nome });
+      console.log('LAYOUT_VIRTUAL_APROVADO_STAGE_DETECTED', { leadId: id, etapaNome: etapa.nome });
+      const dataAtualSql = lead.layout_virtual_aprovado_em;
+      if (!dataAtualSql) {
+        extras.layout_virtual_aprovado_em = agora;
+        console.log('LAYOUT_VIRTUAL_APROVADO_DATE_SET', { leadId: id, data: agora, origem: 'movimentacao_etapa_sqlite' });
+      } else {
+        console.log('LAYOUT_VIRTUAL_APROVADO_DATE_ALREADY_EXISTS', { leadId: id, dataExistente: dataAtualSql });
+      }
     }
 
     if (isAmostrafisicaSql && vemDeLayoutVirtualSql) {
@@ -1690,6 +1760,9 @@ async function mover(req, res) {
 
     if (req.body.layout_virtual_aprovado_em && !isLayoutVirtualSql) {
       extras.layout_virtual_aprovado_em = req.body.layout_virtual_aprovado_em;
+      console.log('LAYOUT_VIRTUAL_APROVADO_DATE_MANUAL_EDIT_SAVED', {
+        leadId: id, data: req.body.layout_virtual_aprovado_em,
+      });
     }
     // Previsão de próxima compra (Carteira Recorrente)
     const previsaoProxSql = req.body.previsao_proxima_compra ?? lead.previsao_proxima_compra ?? null;
