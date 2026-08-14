@@ -173,12 +173,17 @@ router.post  ('/leads/:id/arquivos/:arqId/producao',          autenticar, arquiv
 router.delete('/leads/:id/arquivos/:arqId',                   autenticar, arquivosCtrl.excluir);
 
 // ── Arquivos do WhatsApp (upload multipart) ───────────────────────────────────
+// PÚBLICO (sem autenticar): Evolution API baixa o arquivo para enviar ao WA.
+// Protegido por token UUID de 64 chars (32 bytes aleatórios) — impossível adivinhar.
+router.get   ('/whatsapp/temp/:token',                        arquivosWaCtrl.getTempMedia);
+// Rotas autenticadas
 router.get   ('/whatsapp/conversas/:id/arquivos',             autenticar, arquivosWaCtrl.listarArquivos);
 router.post  ('/whatsapp/conversas/:id/arquivos',             autenticar, arquivosWaCtrl.upload.single('arquivo'), arquivosWaCtrl.enviarArquivo, arquivosWaCtrl.handleUploadError);
 router.get   ('/whatsapp/arquivos/:arqId/download',           autenticar, arquivosWaCtrl.downloadArquivo);
 // Proxy para download de arquivos RECEBIDOS — Evolution URLs exigem autenticação
 // browser não pode acessar diretamente; este endpoint faz proxy server-side com API key
 router.get   ('/whatsapp/mensagens/:msgId/arquivo',           autenticar, arquivosWaCtrl.proxyArquivoRecebido);
+
 
 
 // ─────────────────────────────────────────────────────────────────────────────

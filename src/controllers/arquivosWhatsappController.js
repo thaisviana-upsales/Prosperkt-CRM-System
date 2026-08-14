@@ -1,12 +1,17 @@
 /**
  * PROSPEKT CRM — Arquivos WhatsApp Controller
  *
- * Envio: base64 direto → Evolution API (sem Supabase Storage obrigatório)
- * Recebimento: proxy autenticado (fetch com Evolution API Key server-side)
- * Limite: 64 MB (máximo prático do WhatsApp/Evolution — acima disso o WA rejeita)
+ * CAUSA RAIZ IDENTIFICADA (2026-08-14):
+ *   Evolution API v1.8.6 aceita base64 SOMENTE para mediatype 'audio'.
+ *   Para image/video/document, retorna HTTP 400 "Verifique telefone e mensagem".
  *
- * REGRA: TODOS os handlers async usam try/catch + next(err)
- *        para evitar unhandled rejections que crasham o processo Node.js.
+ * SOLUÇÃO:
+ *   image/video/document → URL temporária pública /api/whatsapp/temp/:token
+ *   audio → base64 (funciona, mesmo método de whatsappController.js)
+ *
+ *   Arquivo fica em Map em memória por 5 minutos. Evolution baixa via GET.
+ *   Token = 32 bytes aleatórios (impossível adivinhar).
+ *   Sem Supabase Storage permanente.
  */
 const crypto   = require('crypto');
 const multer   = require('multer');
@@ -14,10 +19,41 @@ const { getProvider } = require('../database/dbProvider');
 const evoSvc   = require('../services/evolutionApiService');
 const { extPermitida, sanitizarNome, fmtTamanho } = require('./arquivosController');
 
-const LIMITE_WA_BYTES = 64 * 1024 * 1024; // 64 MB — limite prático WhatsApp/Evolution
+const LIMITE_WA_BYTES = 64 * 1024 * 1024;
 const LIMITE_WA_MB    = 64;
 
-// Multer em memória — limite próprio (não depende do arquivosController)
+// ── Armazenamento temporário em memória ────────────────────────────────────────
+const tempFiles = new Map(); // token → { buffer, mime, name, expires }
+
+const _sweeper = setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of tempFiles) {
+    if (v.expires < now) tempFiles.delete(k);
+  }
+}, 2 * 60 * 1000);
+if (_sweeper?.unref) _sweeper.unref();
+
+function getBaseUrl() {
+  if (process.env.APP_URL)               return process.env.APP_URL.replace(/\/$/, '');
+  if (process.env.RAILWAY_PUBLIC_DOMAIN) return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
+  return 'https://prosperkt-crm-system-production.up.railway.app';
+}
+
+// ── GET /api/whatsapp/temp/:token — PÚBLICO, sem autenticar ───────────────────
+// Evolution API baixa o arquivo deste endpoint para enviar ao WhatsApp
+function getTempMedia(req, res) {
+  const tmp = tempFiles.get(req.params.token);
+  if (!tmp || tmp.expires < Date.now()) {
+    return res.status(404).json({ erro: 'Arquivo temporário expirado.' });
+  }
+  res.set('Content-Type', tmp.mime || 'application/octet-stream');
+  res.set('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(tmp.name)}`);
+  res.set('Cache-Control', 'no-store');
+  res.set('Content-Length', tmp.buffer.length);
+  return res.send(tmp.buffer);
+}
+
+// ── Multer (compatibilidade com envios multipart legados) ──────────────────────
 const upload = multer({
   storage: multer.memoryStorage(),
   limits:  { fileSize: LIMITE_WA_BYTES },
@@ -29,19 +65,13 @@ const upload = multer({
 });
 
 function handleUploadError(err, req, res, next) {
-  if (err?.code === 'LIMIT_FILE_SIZE') {
-    return res.status(413).json({
-      sucesso: false,
-      erro: `Arquivo excede ${LIMITE_WA_MB} MB — limite de envio pelo WhatsApp.`,
-    });
-  }
-  if (err?.code === 'BLOCKED_EXT') {
+  if (err?.code === 'LIMIT_FILE_SIZE')
+    return res.status(413).json({ sucesso: false, erro: `Arquivo excede ${LIMITE_WA_MB} MB.` });
+  if (err?.code === 'BLOCKED_EXT')
     return res.status(400).json({ sucesso: false, erro: err.message });
-  }
-  next(err); // passa ao error handler global do Express
+  next(err);
 }
 
-/** Resolve mediatype da Evolution a partir do mimetype */
 function resolveMediatype(mime) {
   if (!mime) return 'document';
   if (mime.startsWith('image/'))  return 'image';
@@ -51,50 +81,37 @@ function resolveMediatype(mime) {
 }
 
 // ── POST /api/whatsapp/conversas/:id/arquivos ─────────────────────────────────
-// Aceita DOIS formatos de entrada (ambos enviados para Evolution API como base64):
-//   1. JSON body: { arquivo_base64, arquivo_nome, mime_type }  ← novo (Auth.api, igual áudio)
-//   2. multipart/form-data com field 'arquivo'                 ← legado (XHR FormData)
-async function enviarArquivo(req, res, next) {   // <-- next OBRIGATÓRIO
+async function enviarArquivo(req, res, next) {
   try {
     const { sb, isSupa } = getProvider();
     const conversaId = req.params.id;
 
-    // ── Detecta formato de entrada ────────────────────────────────────────────
+    // 1. Normaliza entrada (multipart ou JSON base64)
     let arqBuffer, arqNome, arqMime;
 
     if (req.file) {
-      // Formato 1: multipart (multer)
       arqBuffer = req.file.buffer;
       arqNome   = req.file.originalname;
       arqMime   = req.file.mimetype;
     } else if (req.body?.arquivo_base64) {
-      // Formato 2: JSON base64 (Auth.api — mesmo que áudio)
-      const b64str = req.body.arquivo_base64; // "data:mime;base64,..." ou puro base64
       arqNome = req.body.arquivo_nome || 'arquivo';
       arqMime = req.body.mime_type    || 'application/octet-stream';
-
-      // Remove data URI prefix se presente
-      const pureB64 = b64str.replace(/^data:[^;]+;base64,/, '');
-      try {
-        arqBuffer = Buffer.from(pureB64, 'base64');
-      } catch {
-        return res.status(400).json({ sucesso: false, erro: 'Base64 inválido.' });
-      }
+      const pureB64 = req.body.arquivo_base64.replace(/^data:[^;]+;base64,/, '');
+      try { arqBuffer = Buffer.from(pureB64, 'base64'); }
+      catch { return res.status(400).json({ sucesso: false, erro: 'Base64 inválido.' }); }
     } else {
       return res.status(400).json({ sucesso: false, erro: 'Nenhum arquivo enviado.' });
     }
 
-    if (!extPermitida(arqNome)) {
+    // 2. Validações
+    if (!extPermitida(arqNome))
       return res.status(400).json({ sucesso: false, erro: 'Tipo de arquivo não permitido.' });
-    }
-    if (arqBuffer.length > LIMITE_WA_BYTES) {
+    if (arqBuffer.length > LIMITE_WA_BYTES)
       return res.status(413).json({ sucesso: false, erro: `Arquivo excede ${LIMITE_WA_MB} MB.` });
-    }
-    if (!evoSvc.isConfigured()) {
-      return res.status(503).json({ sucesso: false, erro: 'Evolution API não configurada. Contate o administrador.' });
-    }
+    if (!evoSvc.isConfigured())
+      return res.status(503).json({ sucesso: false, erro: 'Evolution API não configurada.' });
 
-    // 1. Busca conversa para obter telefone
+    // 3. Busca conversa
     let conversa = null;
     try {
       if (isSupa) {
@@ -102,37 +119,44 @@ async function enviarArquivo(req, res, next) {   // <-- next OBRIGATÓRIO
         conversa = data;
       }
     } catch (e) {
-      console.error('[wha.enviarArquivo] Erro ao buscar conversa:', e.message);
+      console.error('[wha.enviarArquivo] Supabase:', e.message);
       return res.status(500).json({ sucesso: false, erro: 'Erro ao buscar conversa.' });
     }
 
-    if (!conversa) {
+    if (!conversa)
       return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
-    }
 
     const telNorm = conversa.telefone?.replace(/\D/g, '');
-    if (!telNorm) {
+    if (!telNorm)
       return res.status(400).json({ sucesso: false, erro: 'Conversa sem telefone válido.' });
-    }
 
     const agora      = new Date().toISOString();
     const nomeSeguro = sanitizarNome(arqNome);
     const msgId      = crypto.randomBytes(16).toString('hex');
     const mediatype  = resolveMediatype(arqMime);
 
-    // 2. Converte buffer para base64 com prefixo data URI
-    //    Evolution API aceita base64 no campo `media` (confirmado para áudio — funciona)
-    const base64 = `data:${arqMime};base64,${arqBuffer.toString('base64')}`;
+    // 4. Monta media para Evolution
+    //    REGRA: audio → base64 (funciona)
+    //           image/video/document → URL pública (base64 retorna 400 nesses tipos)
+    let media;
+    let tempToken = null;
 
-    console.log('[wha.enviarArquivo] Enviando →', {
-      nomeSeguro,
-      tamanho:   fmtTamanho(arqBuffer.length),
-      mediatype,
-      telefone:  telNorm,
-      formato:   req.file ? 'multipart' : 'json-base64',
-    });
+    if (mediatype === 'audio') {
+      media = `data:${arqMime};base64,${arqBuffer.toString('base64')}`;
+      console.log('[wha.enviarArquivo] audio→base64', nomeSeguro, fmtTamanho(arqBuffer.length));
+    } else {
+      tempToken = crypto.randomBytes(32).toString('hex');
+      tempFiles.set(tempToken, {
+        buffer:  arqBuffer,
+        mime:    arqMime,
+        name:    nomeSeguro,
+        expires: Date.now() + 5 * 60 * 1000, // 5 min TTL
+      });
+      media = `${getBaseUrl()}/api/whatsapp/temp/${tempToken}`;
+      console.log('[wha.enviarArquivo] doc/img/vid→URL', nomeSeguro, mediatype, fmtTamanho(arqBuffer.length));
+    }
 
-    // 3. Envia à Evolution API
+    // 5. Envia à Evolution
     let evoOk    = false;
     let evoErro  = null;
     let evoMsgId = null;
@@ -142,91 +166,72 @@ async function enviarArquivo(req, res, next) {   // <-- next OBRIGATÓRIO
         mediatype,
         mimetype: arqMime,
         caption:  req.body?.caption || nomeSeguro,
-        media:    base64,
+        media,
         fileName: nomeSeguro,
       });
 
       if (evoRes.sucesso || evoRes.dados?.key?.id) {
         evoOk    = true;
         evoMsgId = evoRes.dados?.key?.id || null;
-        console.log('[wha.enviarArquivo] Evolution OK →', { evoMsgId, nomeSeguro });
+        console.log('[wha.enviarArquivo] Evolution OK', { evoMsgId, nomeSeguro });
       } else {
-        evoErro = evoRes.erro || JSON.stringify(evoRes.dados) || 'Evolution rejeitou o envio.';
-        console.error('[wha.enviarArquivo] Evolution rejeitou →', evoErro);
+        evoErro = evoRes.erro || JSON.stringify(evoRes.dados) || 'Evolution rejeitou.';
+        console.error('[wha.enviarArquivo] Evolution rejeitou:', evoErro, 'status:', evoRes.status);
       }
     } catch (e) {
       evoErro = e.message;
-      console.error('[wha.enviarArquivo] Evolution exception →', e.message);
+      console.error('[wha.enviarArquivo] Evolution exception:', e.message);
+    } finally {
+      // Limpa temp file 60s após envio (Evolution já baixou)
+      if (tempToken) setTimeout(() => tempFiles.delete(tempToken), 60 * 1000);
     }
 
-    if (!evoOk) {
-      return res.status(502).json({
-        sucesso: false,
-        erro:    evoErro || 'Falha ao enviar arquivo pelo WhatsApp.',
-      });
-    }
+    if (!evoOk)
+      return res.status(502).json({ sucesso: false, erro: evoErro || 'Falha ao enviar pelo WhatsApp.' });
 
-    // 4. Salva histórico em mensagens_whatsapp (arquivo_url = null — sem Storage)
+    // 6. Salva histórico
     let mensagemSalva = null;
     if (isSupa) {
       try {
-        const tipoDb = mediatype === 'image' ? 'imagem'
-          : mediatype === 'video' ? 'video'
-          : 'arquivo';
-
+        const tipoDb = mediatype === 'image' ? 'imagem' : mediatype === 'video' ? 'video' : 'arquivo';
         const { data: msgData } = await sb.from('mensagens_whatsapp').insert({
-          id:           msgId,
-          conversa_id:  conversaId,
-          lead_id:      conversa.lead_id || null,
-          telefone:     conversa.telefone,
-          mensagem:     req.body?.caption || nomeSeguro,
-          tipo:         tipoDb,
-          direcao:      'enviada',
-          status:       'enviado',
-          vendedor_id:  req.usuario?.id || null,
-          arquivo_url:  null,   // sem Storage — arquivo não fica salvo no CRM
+          id: msgId, conversa_id: conversaId,
+          lead_id:     conversa.lead_id || null,
+          telefone:    conversa.telefone,
+          mensagem:    req.body?.caption || nomeSeguro,
+          tipo:        tipoDb,
+          direcao:     'enviada',
+          status:      'enviado',
+          vendedor_id: req.usuario?.id || null,
+          arquivo_url: null,
           arquivo_nome: nomeSeguro,
-          mime_type:    arqMime,
-          criado_em:    agora,
+          mime_type:   arqMime,
+          criado_em:   agora,
         }).select().single();
-
-        if (msgData) {
-          mensagemSalva = { ...msgData, vendedor_nome: req.usuario?.nome || null };
-        }
+        if (msgData) mensagemSalva = { ...msgData, vendedor_nome: req.usuario?.nome || null };
       } catch (e) {
-        console.warn('[wha.enviarArquivo] histórico insert warn:', e.message);
+        console.warn('[wha.enviarArquivo] histórico warn:', e.message);
       }
 
-      // Atualiza última mensagem da conversa
       await sb.from('conversas_whatsapp').update({
-        ultima_msg_em:   agora,
-        atualizado_em:   agora,
-        ultima_mensagem: `📎 ${nomeSeguro}`,
-        status:          'ABERTA',
+        ultima_msg_em: agora, atualizado_em: agora,
+        ultima_mensagem: `📎 ${nomeSeguro}`, status: 'ABERTA',
       }).eq('id', conversaId).catch(() => {});
     }
 
     return res.status(201).json({
       sucesso: true,
       dados: mensagemSalva || {
-        id:           msgId,
-        conversa_id:  conversaId,
-        tipo:         mediatype === 'image' ? 'imagem' : mediatype === 'video' ? 'video' : 'arquivo',
-        arquivo_url:  null,
-        arquivo_nome: nomeSeguro,
-        mime_type:    arqMime,
-        mensagem:     nomeSeguro,
-        direcao:      'enviada',
-        status:       'enviado',
-        criado_em:    agora,
+        id: msgId, conversa_id: conversaId,
+        tipo: mediatype === 'image' ? 'imagem' : mediatype === 'video' ? 'video' : 'arquivo',
+        arquivo_url: null, arquivo_nome: nomeSeguro,
+        mime_type: arqMime, mensagem: nomeSeguro,
+        direcao: 'enviada', status: 'enviado', criado_em: agora,
       },
-      evo_ok:  true,
-      evo_msg: evoMsgId,
-      aviso:   null,
+      evo_ok: true, evo_msg: evoMsgId, aviso: null,
     });
 
   } catch (e) {
-    // Nunca deixa unhandled rejection crashar o processo
     console.error('[wha.enviarArquivo] ERRO NÃO TRATADO:', e.message, e.stack);
     next(e);
   }
@@ -243,171 +248,104 @@ async function listarArquivos(req, res, next) {
       .eq('conversa_id', conversaId)
       .not('arquivo_nome', 'is', null)
       .order('criado_em', { ascending: false });
-    if (error) {
-      console.warn('[wha.listarArquivos]', error.message);
-      return res.json({ sucesso: true, dados: [] });
-    }
+    if (error) { console.warn('[wha.listarArquivos]', error.message); return res.json({ sucesso: true, dados: [] }); }
     return res.json({ sucesso: true, dados: data || [] });
-  } catch (e) {
-    console.error('[wha.listarArquivos] ERRO:', e.message);
-    next(e);
-  }
+  } catch (e) { console.error('[wha.listarArquivos]:', e.message); next(e); }
 }
 
-// ── GET /api/whatsapp/mensagens/:msgId/arquivo ───────────────────────────────
-// Proxy autenticado para arquivos recebidos via Evolution/WhatsApp.
-// O browser não pode acessar Evolution URLs diretamente (requerem API key).
-// Este endpoint faz proxy com autenticação server-side.
+// ── GET /api/whatsapp/mensagens/:msgId/arquivo ────────────────────────────────
 async function proxyArquivoRecebido(req, res, next) {
   try {
     const { sb, isSupa } = getProvider();
     const { msgId } = req.params;
+    if (!isSupa) return res.status(501).json({ sucesso: false, erro: 'Não disponível em modo SQLite.' });
 
-    if (!isSupa) {
-      return res.status(501).json({ sucesso: false, erro: 'Não disponível em modo SQLite.' });
-    }
-
-    // Busca mensagem no banco
     let msg = null;
     try {
       const { data } = await sb.from('mensagens_whatsapp')
         .select('arquivo_url, arquivo_nome, mime_type, tipo, direcao')
-        .eq('id', msgId)
-        .single();
+        .eq('id', msgId).single();
       msg = data;
-    } catch (e) {
-      console.warn('[wha.proxyArquivoRecebido] DB error:', e.message);
-    }
+    } catch (e) { console.warn('[wha.proxyArquivoRecebido] DB:', e.message); }
 
-    if (!msg) {
-      return res.status(404).json({ sucesso: false, erro: 'Mensagem não encontrada.' });
-    }
+    if (!msg) return res.status(404).json({ sucesso: false, erro: 'Mensagem não encontrada.' });
     if (!msg.arquivo_url) {
-      return res.status(404).json({
-        sucesso: false,
-        erro: 'Este arquivo não está disponível (sem URL salva). O arquivo pode ter sido enviado pelo CRM sem armazenamento.',
-      });
+      return res.status(404).json({ sucesso: false, erro: 'Arquivo enviado pelo CRM — sem cópia armazenada. Veja no WhatsApp.' });
     }
 
     const nomeArquivo = msg.arquivo_nome || 'arquivo';
     const mimeType    = msg.mime_type || 'application/octet-stream';
     const evoKey      = process.env.EVOLUTION_API_KEY || '';
 
-    console.log('[wha.proxyArquivoRecebido] Proxying:', {
-      msgId,
-      nome:      nomeArquivo,
-      mime:      mimeType,
-      urlStart:  msg.arquivo_url.slice(0, 70),
-    });
-
-    // Tenta buscar a mídia da Evolution com API key
     let upstream = null;
-    const tryFetch = async (withKey) => {
-      const hdrs = withKey && evoKey ? { apikey: evoKey, 'x-api-key': evoKey } : {};
-      return fetch(msg.arquivo_url, { headers: hdrs });
-    };
-
     try {
-      upstream = await tryFetch(true);
-      if (!upstream.ok && evoKey) {
-        // Tenta sem key (URL pode ser pública, tipo S3 pre-signed)
-        upstream = await tryFetch(false);
-      }
+      upstream = await fetch(msg.arquivo_url, {
+        headers: evoKey ? { apikey: evoKey, 'x-api-key': evoKey } : {},
+      });
+      if (!upstream.ok && evoKey) upstream = await fetch(msg.arquivo_url);
     } catch (e) {
-      console.error('[wha.proxyArquivoRecebido] fetch error:', e.message);
-      return res.status(502).json({ sucesso: false, erro: 'Não foi possível buscar o arquivo da Evolution: ' + e.message });
+      return res.status(502).json({ sucesso: false, erro: 'Não foi possível buscar o arquivo: ' + e.message });
     }
 
     if (!upstream.ok) {
-      console.warn('[wha.proxyArquivoRecebido] upstream status:', upstream.status);
       return res.status(upstream.status).json({
-        sucesso: false,
-        erro: `Arquivo indisponível na Evolution (HTTP ${upstream.status}). A URL pode ter expirado.`,
+        sucesso: false, erro: `Arquivo indisponível (HTTP ${upstream.status}). URL pode ter expirado.`,
       });
     }
 
-    // Stream para o cliente com headers corretos
-    const contentType = upstream.headers.get('content-type') || mimeType;
-    res.set('Content-Type', contentType);
+    res.set('Content-Type', upstream.headers.get('content-type') || mimeType);
     res.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(nomeArquivo)}`);
     res.set('Cache-Control', 'private, max-age=3600');
 
-    // Node.js 18+: Readable.fromWeb está disponível
     try {
       const { Readable } = require('stream');
-      if (Readable.fromWeb && upstream.body) {
-        Readable.fromWeb(upstream.body).pipe(res);
-      } else {
-        const buf = Buffer.from(await upstream.arrayBuffer());
-        res.set('Content-Length', buf.length);
-        res.send(buf);
-      }
-    } catch (e) {
-      // fallback bufferizado
-      const buf = Buffer.from(await upstream.arrayBuffer());
-      res.set('Content-Length', buf.length);
-      res.send(buf);
+      if (Readable.fromWeb && upstream.body) { Readable.fromWeb(upstream.body).pipe(res); }
+      else { const buf = Buffer.from(await upstream.arrayBuffer()); res.set('Content-Length', buf.length); res.send(buf); }
+    } catch {
+      const buf = Buffer.from(await upstream.arrayBuffer()); res.set('Content-Length', buf.length); res.send(buf);
     }
 
-  } catch (e) {
-    console.error('[wha.proxyArquivoRecebido] ERRO NÃO TRATADO:', e.message, e.stack);
-    next(e);
-  }
+  } catch (e) { console.error('[wha.proxyArquivoRecebido] ERRO:', e.message, e.stack); next(e); }
 }
 
-// ── GET /api/whatsapp/arquivos/:arqId/download ───────────────────────────────
-// Mantido para compatibilidade. Delega para proxyArquivoRecebido se possível.
+// ── GET /api/whatsapp/arquivos/:arqId/download ────────────────────────────────
 async function downloadArquivo(req, res, next) {
   try {
     const { sb, isSupa } = getProvider();
     const { arqId } = req.params;
+    if (!isSupa) return res.status(501).json({ sucesso: false, erro: 'Não disponível em modo SQLite.' });
 
-    if (!isSupa) {
-      return res.status(501).json({ sucesso: false, erro: 'Não disponível em modo SQLite.' });
-    }
-
-    // Tenta encontrar a mensagem diretamente (fluxo novo — sem Storage)
     let msg = null;
     try {
       const { data } = await sb.from('mensagens_whatsapp')
-        .select('arquivo_url, arquivo_nome, mime_type, direcao')
-        .eq('id', arqId).single();
+        .select('arquivo_url, arquivo_nome, mime_type, direcao').eq('id', arqId).single();
       msg = data;
     } catch {}
 
-    if (msg?.arquivo_url) {
-      // Redireciona para proxy
-      req.params.msgId = arqId;
-      return proxyArquivoRecebido(req, res, next);
-    }
+    if (msg?.arquivo_url) { req.params.msgId = arqId; return proxyArquivoRecebido(req, res, next); }
 
-    // Fallback: tabela legada mensagens_whatsapp_arquivos
     let arq = null;
     try {
       const { data } = await sb.from('mensagens_whatsapp_arquivos').select('*').eq('id', arqId).single();
       arq = data;
     } catch {}
 
-    if (!arq) {
-      return res.status(404).json({ sucesso: false, erro: 'Arquivo não encontrado.' });
-    }
+    if (!arq) return res.status(404).json({ sucesso: false, erro: 'Arquivo não encontrado.' });
 
-    const BUCKET_WA    = 'whatsapp-arquivos';
+    const BUCKET_WA = 'whatsapp-arquivos';
     const nomeOriginal = arq.nome_original || 'arquivo';
 
     if (arq.storage_path) {
       try {
-        const { data: signedData, error: signErr } = await sb.storage
-          .from(BUCKET_WA).createSignedUrl(arq.storage_path, 300);
-        if (!signErr && signedData?.signedUrl) {
+        const { data: sd, error: se } = await sb.storage.from(BUCKET_WA).createSignedUrl(arq.storage_path, 300);
+        if (!se && sd?.signedUrl) {
           res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(nomeOriginal)}"`);
-          return res.redirect(302, signedData.signedUrl);
+          return res.redirect(302, sd.signedUrl);
         }
       } catch {}
-
       try {
-        const { data: blob, error: dlErr } = await sb.storage.from(BUCKET_WA).download(arq.storage_path);
-        if (!dlErr && blob) {
+        const { data: blob, error: de } = await sb.storage.from(BUCKET_WA).download(arq.storage_path);
+        if (!de && blob) {
           const buf = Buffer.from(await blob.arrayBuffer());
           res.set('Content-Type', arq.mime_type || 'application/octet-stream');
           res.set('Content-Disposition', `attachment; filename="${encodeURIComponent(nomeOriginal)}"`);
@@ -424,15 +362,13 @@ async function downloadArquivo(req, res, next) {
 
     return res.status(404).json({ sucesso: false, erro: 'Arquivo não disponível para download.' });
 
-  } catch (e) {
-    console.error('[wha.downloadArquivo] ERRO NÃO TRATADO:', e.message, e.stack);
-    next(e);
-  }
+  } catch (e) { console.error('[wha.downloadArquivo] ERRO:', e.message, e.stack); next(e); }
 }
 
 module.exports = {
   upload,
   handleUploadError,
+  getTempMedia,
   enviarArquivo,
   listarArquivos,
   downloadArquivo,
