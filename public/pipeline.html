@@ -481,39 +481,39 @@
         <textarea id="ca-obs" class="input input-sm" rows="3" placeholder="Informações extras que devem constar no e-mail..." style="font-size:.78rem;resize:vertical"></textarea>
       </div>
 
-      <!-- Aviso de SMTP não configurado (oculto quando configurado) -->
-      <div id="ca-smtp-aviso" style="display:none;font-size:.73rem;color:var(--warning);background:rgba(245,166,35,0.07);border:1px solid rgba(245,166,35,0.25);border-radius:7px;padding:8px 12px;margin-bottom:10px">
-        ⚠️ E-mail não configurado no servidor. Configure <strong>GMAIL_USER</strong> e <strong>GMAIL_APP_PASSWORD</strong> no Railway para enviar pelo CRM.
-      </div>
+      <!-- BOTÃO 1: Abrir Gmail (nova aba, já preenchido — SEM senha) -->
+      <button id="ca-btn-gmail" class="btn btn-primary" style="width:100%;margin-bottom:8px">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 7l10 7 10-7"/></svg>
+        <span id="ca-btn-gmail-txt">Abrir Gmail para enviar</span>
+      </button>
 
-      <!-- BOTÃO PRINCIPAL: Enviar pelo CRM (SMTP/Gmail — sem abrir outra página) -->
-      <button id="ca-btn-enviar" class="btn btn-primary" style="width:100%;margin-bottom:8px">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-        <span id="ca-btn-txt">Enviar para Conta Azul</span>
-        <div class="spinner hidden" id="ca-spinner"></div>
+      <!-- BOTÃO 2: Baixar ficha como arquivo (download direto — SEM senha) -->
+      <button id="ca-btn-baixar" class="btn btn-secondary" style="width:100%;margin-bottom:12px;font-size:.82rem;background:rgba(91,222,62,0.1);border-color:rgba(91,222,62,0.35)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Baixar ficha da venda (.txt)
       </button>
 
       <!-- Divisor -->
-      <div style="display:flex;align-items:center;gap:8px;margin:8px 0 8px 0;color:var(--text-muted);font-size:.7rem">
-        <div style="flex:1;height:1px;background:rgba(255,255,255,0.07)"></div>
-        <span>ou</span>
-        <div style="flex:1;height:1px;background:rgba(255,255,255,0.07)"></div>
+      <div style="display:flex;align-items:center;gap:8px;margin:4px 0 10px 0;color:var(--text-muted);font-size:.69rem">
+        <div style="flex:1;height:1px;background:rgba(255,255,255,0.06)"></div>
+        <span>mais opções</span>
+        <div style="flex:1;height:1px;background:rgba(255,255,255,0.06)"></div>
       </div>
 
-      <!-- Botão: Copiar conteúdo do e-mail (fallback) -->
-      <button id="ca-btn-copiar" class="btn btn-secondary" style="width:100%;margin-bottom:6px;font-size:.79rem">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      <!-- BOTÃO 3: Copiar conteúdo -->
+      <button id="ca-btn-copiar" class="btn btn-secondary" style="width:100%;margin-bottom:6px;font-size:.78rem;opacity:.85">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         Copiar conteúdo do e-mail
       </button>
 
-      <!-- Botão: Marcar como enviado manualmente -->
-      <button id="ca-btn-manual" class="btn btn-secondary" style="width:100%;margin-bottom:16px;font-size:.78rem;opacity:.8">
+      <!-- BOTÃO 4: Marcar como enviado manualmente -->
+      <button id="ca-btn-manual" class="btn btn-secondary" style="width:100%;margin-bottom:14px;font-size:.78rem;opacity:.75">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
         Marcar como enviado manualmente
       </button>
 
       <!-- Status do envio manual -->
-      <div id="ca-manual-status" style="display:none;font-size:.74rem;color:var(--green);background:rgba(91,222,62,0.07);border:1px solid rgba(91,222,62,0.2);border-radius:7px;padding:8px 12px;margin-bottom:14px"></div>
+      <div id="ca-manual-status" style="display:none;font-size:.74rem;color:var(--green);background:rgba(91,222,62,0.07);border:1px solid rgba(91,222,62,0.2);border-radius:7px;padding:8px 12px;margin-bottom:12px"></div>
 
       <!-- Histórico de envios -->
       <div>
