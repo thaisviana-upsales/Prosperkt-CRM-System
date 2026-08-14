@@ -3107,6 +3107,48 @@ async function webhookReceberMensagem(req, res) {
         console.log('WHATSAPP_MESSAGE_SAVED_IN_ORIGINAL_CONVERSATION', { mensagemId: msgId, conversaId, direcao, tabela: MENSAGENS_TABLE });
         console.log('WEBHOOK_MESSAGE_SAVED', { mensagemId: msgId, conversaId, direcao, telefone: tel });
         console.log('WHATSAPP_MESSAGE_SAVED_EXISTING_CONVERSA', { mensagemId: msgId, conversaId, telefone: tel, direcao, evoMsgId: evoMsgIdWebhook });
+
+        // ── Documentos: armazena no Supabase Storage enquanto Evolution tem em cache ──
+        // Fire-and-forget — NÃO bloqueia resposta do webhook.
+        // Após sucesso: storage_path aponta para arquivo permanente no Supabase.
+        // Proxy usa storage_path como Layer 0 (antes de tentar Evolution re-fetch).
+        if (tipo === 'documento' && evoMsgIdWebhook && evoSvc.isConfigured()) {
+          const _sbRef      = sb; // captura referência para closure async
+          const _docBucket  = 'whatsapp-midias';
+          const _docNome    = (arquivoNome || 'documento').replace(/[^a-zA-Z0-9._\-]/g, '_');
+          const _docPath    = `docs/${evoMsgIdWebhook}/${_docNome}`;
+          const _docTel     = (telFinal || '').replace(/\D/g, '');
+          const _docJid     = (telFinal || '').includes('@') ? (telFinal || '') : `${_docTel}@s.whatsapp.net`;
+          Promise.resolve().then(async () => {
+            try {
+              // Aguarda 2s para Evolution indexar a mensagem em seu banco interno
+              await new Promise(r => setTimeout(r, 2000));
+              const refetch = await evoSvc.getBase64Media(evoMsgIdWebhook, _docJid);
+              if (!refetch.sucesso || !refetch.dados?.base64) {
+                console.warn('WA_DOC_STORE_BASE64_FAIL', { msgId: evoMsgIdWebhook, erro: refetch.erro });
+                return;
+              }
+              const pureB64 = refetch.dados.base64.replace(/^data:[^;]+;base64,/, '');
+              const buf     = Buffer.from(pureB64, 'base64');
+              const mimeDoc = refetch.dados.mimetype || mimeType || 'application/octet-stream';
+              const { error: upErr } = await _sbRef.storage.from(_docBucket).upload(_docPath, buf, {
+                contentType: mimeDoc, upsert: true,
+              });
+              if (upErr) {
+                console.warn('WA_DOC_STORE_UPLOAD_FAIL', { msgId: evoMsgIdWebhook, erro: upErr.message });
+                return;
+              }
+              // Atualiza mensagem com storage_path permanente
+              await _sbRef.from(MENSAGENS_TABLE).update({
+                storage_path: _docPath, storage_bucket: _docBucket, mime_type: mimeDoc,
+              }).eq('id', evoMsgIdWebhook);
+              console.log('WA_DOC_STORE_SUCCESS', { msgId: evoMsgIdWebhook, path: _docPath, size: buf.length, mime: mimeDoc });
+            } catch (e) {
+              console.warn('WA_DOC_STORE_EXCEPTION', { msgId: evoMsgIdWebhook, erro: e.message });
+            }
+          });
+        }
+
         // Atualiza conversa — SOMENTE colunas que existem na tabela Supabase:
         // ultima_msg_em, atualizado_em, status (ultima_mensagem e ultima_direcao NÃO EXISTEM)
         const convUpdate = {

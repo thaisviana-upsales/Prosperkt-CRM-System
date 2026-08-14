@@ -268,7 +268,7 @@ async function proxyArquivoRecebido(req, res, next) {
     let msg = null;
     try {
       const { data } = await sb.from('mensagens_whatsapp')
-        .select('id, arquivo_url, arquivo_nome, mime_type, tipo, direcao, telefone, evolution_message_id')
+        .select('id, arquivo_url, arquivo_nome, mime_type, tipo, direcao, telefone, evolution_message_id, storage_path, storage_bucket')
         .eq('id', msgId).single();
       msg = data;
     } catch (e) { console.warn('[wha.proxy] DB:', e.message); }
@@ -293,10 +293,31 @@ async function proxyArquivoRecebido(req, res, next) {
     const waKeyId         = msg.evolution_message_id || null;
 
     // ══ ESTRATÉGIA ══════════════════════════════════════════════════════════════
-    // Para mídias RECEBIDAS: Layer 2 primeiro (getBase64 decripta automaticamente).
-    // CDN WhatsApp (Layer 1 direto) serve conteúdo ENCRIPTADO → PDF corrompido.
-    // Layer 1 só como fallback quando evolution_message_id for null (msgs antigas).
+    // Layer 0: Supabase Storage (storage_path) → permanente, sem expiração
+    // Layer 2: Evolution getBase64FromMediaMessage → decripta (válido ~7 dias)
+    // Layer 1: URL direta (arquivo_url) → fallback msgs antigas
     // ════════════════════════════════════════════════════════════════════════════
+
+    // ── Layer 0: Supabase Storage — permanente, sem dependência da Evolution ──
+    if (msg.storage_path) {
+      const bucket = msg.storage_bucket || 'whatsapp-midias';
+      try {
+        const { data: fileBlob, error: dlErr } = await sb.storage.from(bucket).download(msg.storage_path);
+        if (!dlErr && fileBlob) {
+          const buf = Buffer.from(await fileBlob.arrayBuffer());
+          const mime = msg.mime_type || mimeType;
+          console.log('WA_INBOUND_FILE_STORAGE_SERVE', { msgId: msgId.slice(0,8), path: msg.storage_path, size: buf.length, mime });
+          res.set('Content-Type', mime);
+          res.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(nomeArquivo)}`);
+          res.set('Cache-Control', 'private, max-age=86400'); // 24h — storage permanente
+          res.set('Content-Length', buf.length);
+          return res.send(buf);
+        }
+        console.warn('WA_INBOUND_FILE_STORAGE_FAIL', { msgId: msgId.slice(0,8), erro: dlErr?.message, path: msg.storage_path });
+      } catch (e0) {
+        console.warn('[wha.proxy] Layer 0 exception:', e0.message);
+      }
+    }
 
     // ── Layer 2: getBase64FromMediaMessage (sempre tenta primeiro para recebidas) ──
     if (isReceivedMedia && waKeyId && remoteJid && evoSvc.isConfigured()) {
