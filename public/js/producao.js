@@ -211,23 +211,32 @@ async function _uploadArquivos(files, leadId) {
     // Marca como arquivo de produção — filtrado separadamente da aba Arquivos
     fd.append('origem', 'producao');
     try {
-      const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+      // CORREÇÃO: token estava em localStorage('token') — chave errada.
+      // Token real: sessionStorage('pkt_access_token') via Auth.getToken()
+      const token = (typeof Auth !== 'undefined' && Auth.getToken) ? Auth.getToken() : sessionStorage.getItem('pkt_access_token');
+      if (!token) { Toast.show('Sessão expirada. Faça login novamente.', 'error'); continue; }
+      console.log('LEAD_FILE_UPLOAD_START', { lead: leadId, arquivo: file.name, tamanho: file.size, origem: 'producao' });
       const resp  = await fetch(`/api/leads/${leadId}/arquivos`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: fd,
       });
+      console.log('LEAD_FILE_UPLOAD_ROUTE_HIT', { lead: leadId, arquivo: file.name, status: resp.status });
       if (resp.ok) {
         enviados++;
-        console.log('[PRODUCAO_UPLOAD_OK] lead:', leadId, '| arquivo:', file.name, '| origem: producao');
+        console.log('LEAD_FILE_UPLOAD_SUCCESS', { lead: leadId, arquivo: file.name });
       } else {
-        const j = await resp.json();
-        Toast.show(j.erro || `Erro ao enviar ${file.name}`, 'error');
-        console.error('[PRODUCAO_UPLOAD_ERRO]', j.erro, '| arquivo:', file.name);
+        const j = await resp.json().catch(() => ({}));
+        const msg = j.erro || `Erro HTTP ${resp.status} ao enviar ${file.name}`;
+        Toast.show(msg, 'error');
+        console.error('LEAD_FILE_UPLOAD_ERROR', { lead: leadId, arquivo: file.name, status: resp.status, erro: msg });
       }
     } catch (e) {
-      Toast.show(`Erro: ${e.message}`, 'error');
-      console.error('[PRODUCAO_UPLOAD_EXCEPTION]', e.message);
+      const msg = e.message === 'Failed to fetch'
+        ? 'Não foi possível conectar ao servidor. Verifique sua conexão.'
+        : `Erro ao enviar: ${e.message}`;
+      Toast.show(msg, 'error');
+      console.error('LEAD_FILE_UPLOAD_ERROR', { lead: leadId, arquivo: file.name, erro: e.message });
     }
   }
 

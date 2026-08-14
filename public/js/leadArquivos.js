@@ -162,21 +162,32 @@
       try {
         const formData = new FormData();
         formData.append('arquivo', f);
-
-        const token = localStorage.getItem('token') || '';
+        // CORREÇÃO: token estava em localStorage('token') — chave errada.
+        // Token real: sessionStorage('pkt_access_token') via Auth.getToken()
+        const token = (typeof Auth !== 'undefined' && Auth.getToken) ? Auth.getToken() : sessionStorage.getItem('pkt_access_token');
+        if (!token) { Toast.show('Sessão expirada. Faça login novamente.', 'error'); continue; }
+        console.log('LEAD_FILE_UPLOAD_START', { leadId: _leadId, arquivo: f.name, tamanho: f.size, origem: 'lead' });
         const resp  = await fetch(`/api/leads/${_leadId}/arquivos`, {
           method:  'POST',
-          headers: token ? { 'Authorization': 'Bearer ' + token } : {},
+          headers: { 'Authorization': 'Bearer ' + token },
           body:    formData,
         });
-        const json = await resp.json();
+        console.log('LEAD_FILE_UPLOAD_ROUTE_HIT', { leadId: _leadId, arquivo: f.name, status: resp.status });
+        const json = await resp.json().catch(() => ({}));
         if (!resp.ok || !json.sucesso) {
-          Toast.show(`Erro ao enviar "${f.name}": ${json.erro || resp.statusText}`, 'error');
+          const msg = json.erro || `Erro HTTP ${resp.status} ao enviar "${f.name}"`;
+          Toast.show(msg, 'error');
+          console.error('LEAD_FILE_UPLOAD_ERROR', { leadId: _leadId, arquivo: f.name, status: resp.status, erro: msg });
         } else {
+          console.log('LEAD_FILE_UPLOAD_SUCCESS', { leadId: _leadId, arquivo: f.name });
           Toast.show(`"${f.name}" enviado com sucesso!`, 'success');
         }
       } catch (e) {
-        Toast.show(`Erro ao enviar "${f.name}": ${e.message}`, 'error');
+        const msg = e.message === 'Failed to fetch'
+          ? 'Não foi possível conectar ao servidor. Verifique sua conexão.'
+          : `Erro ao enviar "${f.name}": ${e.message}`;
+        Toast.show(msg, 'error');
+        console.error('LEAD_FILE_UPLOAD_ERROR', { leadId: _leadId, arquivo: f.name, erro: e.message });
       }
 
       done++;
