@@ -32,6 +32,7 @@ const arquivosWaCtrl     = require('../controllers/arquivosWhatsappController');
 const admVendasCtrl      = require('../controllers/admVendasController');
 const importacaoExcelCtrl = require('../controllers/importacaoExcelController');
 const contaAzulCtrl      = require('../controllers/contaAzulController');
+const adminCtrl          = require('../controllers/adminController');
 const waAudioCtrl        = require('../controllers/whatsappAudioController'); // módulo isolado de áudio
 
 // Seed funis iniciais (só roda se vazio)
@@ -515,5 +516,12 @@ router.get ('/conta-azul/historico/:leadId',        autenticar, contaAzulCtrl.hi
 router.post('/conta-azul/enviar/:leadId',           autenticar, contaAzulCtrl.enviar);
 router.post('/conta-azul/registrar-manual/:leadId', autenticar, contaAzulCtrl.registrarManual);
 
+
+// ───────────────────────────────────────────────────────────────────────────────
+// ADMIN — rotas administrativas (exigem SUPER_ADMIN, verificado no controller)
+// ───────────────────────────────────────────────────────────────────────────────
+// POST /api/admin/reset-dados-teste
+//   Zera dados operacionais de teste. Exige SUPER_ADMIN + confirmacao explícita.
+router.post('/admin/reset-dados-teste', autenticar, adminCtrl.resetDadosTeste);
 
 module.exports = router;
