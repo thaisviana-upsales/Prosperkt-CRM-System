@@ -18,11 +18,13 @@
 .av-board{display:flex;gap:12px;overflow-x:auto;padding-bottom:12px;min-height:calc(100vh - 220px)}
 .av-col{flex:0 0 220px;display:flex;flex-direction:column;gap:8px}
 .av-col-hd{padding:10px 14px;border-radius:12px 12px 0 0;display:flex;align-items:center;gap:8px;font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em}
-.av-col-body{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:0 0 12px 12px;padding:8px;display:flex;flex-direction:column;gap:7px;min-height:120px}
-.av-card{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;transition:all .18s;position:relative;overflow:hidden}
+.av-col-body{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:0 0 12px 12px;padding:8px;display:flex;flex-direction:column;gap:7px;min-height:120px;transition:background .15s,border-color .15s}
+.av-col-body.drag-over{background:rgba(91,222,62,0.07);border-color:rgba(91,222,62,0.45);border-style:dashed}
+.av-card{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:grab;transition:all .18s;position:relative;overflow:hidden}
 .av-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;opacity:0;transition:opacity .15s}
 .av-card:hover{border-color:var(--border-hover);transform:translateY(-1px);box-shadow:0 4px 16px rgba(0,0,0,.3)}
 .av-card:hover::before{opacity:1}
+.av-card.dragging{opacity:.4;cursor:grabbing;transform:scale(.97)}
 .av-card-nome{font-size:.82rem;font-weight:700;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .av-card-sub{font-size:.68rem;color:var(--text-muted);margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .av-card-val{font-size:.78rem;font-weight:700;color:var(--green)}
@@ -336,19 +338,37 @@ function renderBoard() {
   const colsToShow = filtroEtapa ? ETAPAS.filter(e=>e.key===filtroEtapa) : ETAPAS;
   board.innerHTML = colsToShow.map(et => {
     const cards = _vendas.filter(v=>v.etapa===et.key);
-    return `<div class="av-col">
+    return `<div class="av-col" data-etapa="${et.key}">
       <div class="av-col-hd" style="background:${et.cor}18;color:${et.cor};border:1px solid ${et.cor}44;border-bottom:2px solid ${et.cor}">
         <span style="font-size:1rem;flex-shrink:0;filter:drop-shadow(0 0 4px ${et.cor}66)">${et.icon}</span>
         <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${et.label}</span>
-        <span style="margin-left:auto;background:${et.cor}33;border-radius:20px;padding:2px 8px;font-size:.68rem;flex-shrink:0">${cards.length}</span>
+        <span style="margin-left:auto;background:${et.cor}33;border-radius:20px;padding:2px 8px;font-size:.68rem;flex-shrink:0" id="av-counter-${et.key}">${cards.length}</span>
       </div>
-      <div class="av-col-body">
+      <div class="av-col-body" data-etapa="${et.key}">
         ${cards.length ? cards.map(v=>renderCard(v,et)).join('') :
           `<div class="av-empty">Nenhum pedido</div>`}
       </div>
     </div>`;
   }).join('');
-  board.querySelectorAll('.av-card').forEach(c=>c.addEventListener('click',()=>abrirVenda(c.dataset.id)));
+
+  // Click para abrir modal
+  board.querySelectorAll('.av-card').forEach(c => {
+    c.addEventListener('click', () => abrirVenda(c.dataset.id));
+  });
+
+  // Drag-and-drop nos cards
+  board.querySelectorAll('.av-card').forEach(c => {
+    c.setAttribute('draggable', 'true');
+    c.addEventListener('dragstart', _onDragStart);
+    c.addEventListener('dragend',   _onDragEnd);
+  });
+
+  // Drop zones nas colunas
+  board.querySelectorAll('.av-col-body').forEach(col => {
+    col.addEventListener('dragover',  _onDragOver);
+    col.addEventListener('dragleave', _onDragLeave);
+    col.addEventListener('drop',      _onDrop);
+  });
 }
 
 function renderCard(v, et) {
@@ -431,18 +451,104 @@ function selecionarEtapa(btn, etapa, cor) {
 async function carregarHistoricoModal(id) {
   const hist = document.getElementById('av-hist-list');
   hist.innerHTML = '<div style="font-size:.75rem;color:var(--text-muted)">Carregando...</div>';
-  const r = await Auth.api('GET', `/adm-vendas/${id}/historico`);
-  const itens = r?.data?.dados || [];
-  if (!itens.length) { hist.innerHTML='<div style="font-size:.75rem;color:var(--text-muted)">Sem histórico ainda.</div>'; return; }
-  hist.innerHTML = itens.map(h=>{
-    const data = new Date(h.criado_em).toLocaleString('pt-BR');
-    return `<div class="av-hist-item">
-      <div>
-        <div>${h.conteudo}</div>
-        <div class="av-hist-meta">${h.usuario_nome||'Sistema'} · ${data}</div>
-      </div>
-    </div>`;
-  }).join('');
+  console.log('ADM_VENDAS_HISTORICO_LOAD_START', { adm_venda_id: id });
+  try {
+    const r = await Auth.api('GET', `/adm-vendas/${id}/historico`);
+    const itens = r?.data?.dados || [];
+    if (!itens.length) {
+      console.log('ADM_VENDAS_HISTORICO_LOAD_EMPTY', { adm_venda_id: id });
+      hist.innerHTML='<div style="font-size:.75rem;color:var(--text-muted)">Sem histórico ainda.</div>';
+      return;
+    }
+    console.log('ADM_VENDAS_HISTORICO_LOAD_SUCCESS', { adm_venda_id: id, total: itens.length });
+    hist.innerHTML = itens.map(h=>{
+      const data = new Date(h.criado_em).toLocaleString('pt-BR');
+      const autor = h.usuario_nome || h.autor_nome || 'Sistema'; // Fix: backend retorna usuario_nome
+      return `<div class="av-hist-item">
+        <div>
+          <div>${h.conteudo||''}</div>
+          <div class="av-hist-meta">${autor} · ${data}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    console.error('ADM_VENDAS_HISTORICO_LOAD_ERROR', { adm_venda_id: id, erro: e.message });
+    hist.innerHTML='<div style="font-size:.75rem;color:var(--text-muted)">Erro ao carregar histórico.</div>';
+  }
+}
+
+// ── Drag-and-drop ─────────────────────────────────────────────────────────────
+let _dragId          = null;
+let _dragOrigemEtapa = null;
+
+function _onDragStart(e) {
+  _dragId          = e.currentTarget.dataset.id;
+  _dragOrigemEtapa = _vendas.find(v => v.id === _dragId)?.etapa || null;
+  e.currentTarget.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', _dragId);
+  console.log('ADM_VENDAS_MOVE_START', { pedido_id: _dragId, etapa_origem: _dragOrigemEtapa });
+}
+
+function _onDragEnd(e) {
+  e.currentTarget.classList.remove('dragging');
+  document.querySelectorAll('.av-col-body').forEach(c => c.classList.remove('drag-over'));
+}
+
+function _onDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  e.currentTarget.classList.add('drag-over');
+}
+
+function _onDragLeave(e) {
+  if (!e.currentTarget.contains(e.relatedTarget))
+    e.currentTarget.classList.remove('drag-over');
+}
+
+async function _onDrop(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over');
+  if (!_dragId) return;
+
+  const etapaDestino = e.currentTarget.dataset.etapa;
+  const pedidoId     = _dragId;
+  const etapaOrigem  = _dragOrigemEtapa;
+  _dragId = null;
+  _dragOrigemEtapa = null;
+
+  if (!etapaDestino || etapaDestino === etapaOrigem) return;
+
+  console.log('ADM_VENDAS_MOVE_ETAPA_ORIGEM',  { pedido_id: pedidoId, etapa: etapaOrigem });
+  console.log('ADM_VENDAS_MOVE_ETAPA_DESTINO', { pedido_id: pedidoId, etapa: etapaDestino });
+
+  // Otimismo: move visualmente na hora
+  const venda = _vendas.find(v => v.id === pedidoId);
+  if (venda) { venda.etapa = etapaDestino; venda.etapa_atualizada_em = new Date().toISOString(); }
+  renderBoard();
+  renderStats();
+
+  try {
+    const r = await Auth.api('PATCH', `/adm-vendas/${pedidoId}/etapa`, { etapa: etapaDestino });
+    if (r?.ok) {
+      console.log('ADM_VENDAS_MOVE_SUCCESS', { pedido_id: pedidoId, etapa_destino: etapaDestino });
+      if (typeof Toast !== 'undefined') Toast.show('Pedido movido com sucesso! ✅', 'success');
+    } else {
+      // Reverte
+      const erro = r?.data?.erro || 'Não foi possível mover o pedido. Tente novamente.';
+      console.error('ADM_VENDAS_MOVE_ERROR', { pedido_id: pedidoId, motivo: erro });
+      if (venda) venda.etapa = etapaOrigem; // reverte em memória
+      renderBoard();
+      renderStats();
+      if (typeof Toast !== 'undefined') Toast.show(erro, 'error');
+    }
+  } catch(err) {
+    console.error('ADM_VENDAS_MOVE_ERROR', { pedido_id: pedidoId, motivo: err.message });
+    if (venda) venda.etapa = etapaOrigem;
+    renderBoard();
+    renderStats();
+    if (typeof Toast !== 'undefined') Toast.show('Não foi possível mover o pedido. Tente novamente.', 'error');
+  }
 }
 
 async function salvarVenda() {

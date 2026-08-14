@@ -155,13 +155,20 @@ async function buscarPorId(req, res) {
 
   try {
     if (isSupa) {
-      const { data, error } = await sb.from('adm_vendas').select(`
-        *, responsavel:usuarios!responsavel_id(id,nome,avatar_url)
-      `).eq('id', id).single();
+      // SELECT simples — sem FK join (mesmo padrão do listar)
+      const { data, error } = await sb.from('adm_vendas').select('*').eq('id', id).single();
       if (error || !data) return res.status(404).json({ sucesso: false, erro: 'Card não encontrado.' });
       if (usuario.role === 'VENDEDOR' && data.responsavel_id !== usuario.id)
         return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
-      return res.json({ sucesso: true, dados: { ...data, responsavel_nome: data.responsavel?.nome || null, etapa_label: ETAPAS_LABELS[data.etapa] } });
+      // Enriquecimento manual do responsável
+      let responsavelNome = null;
+      try {
+        if (data.responsavel_id) {
+          const { data: u } = await sb.from('usuarios').select('id,nome,avatar_url').eq('id', data.responsavel_id).single();
+          responsavelNome = u?.nome || null;
+        }
+      } catch(eResp) { /* não crítico */ }
+      return res.json({ sucesso: true, dados: { ...data, responsavel_nome: responsavelNome, etapa_label: ETAPAS_LABELS[data.etapa] } });
     }
 
     const row = sqlite.prepare(`
@@ -254,6 +261,7 @@ async function atualizar(req, res) {
     if (usuario.role === 'VENDEDOR' && atual.responsavel_id !== usuario.id)
       return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
 
+    // Campos que qualquer role pode atualizar
     const allow = [
       'nome','empresa','email','telefone','funil_id','valor_venda','forma_pagamento',
       'quantidade_parcelas','parcelas_json','produto_id','produto_nome','produto_cor',
@@ -262,21 +270,90 @@ async function atualizar(req, res) {
     ];
     if (usuario.role !== 'VENDEDOR') allow.push('responsavel_id');
 
-
     const upd = { atualizado_em: now };
     allow.forEach(k => { if (req.body[k] !== undefined) upd[k] = req.body[k]; });
     if (req.body.tags !== undefined) upd.tags = JSON.stringify(req.body.tags);
 
+    // ── Tratamento do campo etapa ─────────────────────────────────────────────
+    const novaEtapa = req.body.etapa;
+    let etapaAnteriorParaHistorico = null;
+
+    if (novaEtapa !== undefined) {
+      console.log('ADM_VENDAS_MOVE_START', {
+        pedido_id: id, etapa_origem: atual.etapa, etapa_destino: novaEtapa,
+        usuario_id: usuario.id, perfil: usuario.role,
+      });
+
+      if (!ETAPAS_ORDEM.includes(novaEtapa)) {
+        return res.status(400).json({ sucesso: false, erro: `Etapa inválida: "${novaEtapa}". Válidas: ${ETAPAS_ORDEM.join(', ')}.` });
+      }
+
+      const etapaAtual = atual.etapa;
+      const idxAtual   = ETAPAS_ORDEM.indexOf(etapaAtual);
+      const idxNova    = ETAPAS_ORDEM.indexOf(novaEtapa);
+
+      console.log('ADM_VENDAS_MOVE_PEDIDO_FOUND', { pedido_id: id, etapa_origem: etapaAtual });
+      console.log('ADM_VENDAS_MOVE_PERMISSION_CHECK', { usuario_id: usuario.id, perfil: usuario.role, retrocesso: idxNova < idxAtual });
+
+      // Bloqueia retrocesso para não-admin
+      if (idxNova < idxAtual && !['SUPER_ADMIN', 'GESTOR'].includes(usuario.role)) {
+        console.log('ADM_VENDAS_MOVE_BLOCKED', { motivo: 'retrocesso_sem_permissao', pedido_id: id });
+        return res.status(403).json({ sucesso: false, erro: 'Apenas Super Admin ou Gestor pode mover para uma etapa anterior.' });
+      }
+      console.log('ADM_VENDAS_MOVE_ALLOWED', { pedido_id: id, etapa_destino: novaEtapa });
+
+      // Concluído exige previsão de próxima compra
+      const previsao = req.body.previsao_proxima_compra || atual.previsao_proxima_compra;
+      if (novaEtapa === 'concluido' && !previsao) {
+        return res.status(400).json({
+          sucesso: false,
+          erro: 'Para concluir a venda, informe a previsão de próxima compra do cliente.',
+          campos_faltando: ['previsao_proxima_compra'],
+        });
+      }
+
+      // Aplica mudança de etapa apenas se realmente mudou
+      if (novaEtapa !== etapaAtual) {
+        etapaAnteriorParaHistorico = etapaAtual;
+        upd.etapa              = novaEtapa;
+        upd.etapa_atualizada_em = now;
+        upd.status             = novaEtapa === 'concluido' ? 'concluido' : 'ativo';
+      }
+    }
+
+    // ── Persiste no banco ─────────────────────────────────────────────────────
+    let updatedData;
     if (isSupa) {
       const { data, error } = await sb.from('adm_vendas').update(upd).eq('id', id).select().single();
       if (error) throw error;
-      return res.json({ sucesso: true, dados: data });
+      updatedData = data;
+    } else {
+      const sets = Object.keys(upd).map(k => `${k}=?`).join(',');
+      sqlite.prepare(`UPDATE adm_vendas SET ${sets} WHERE id=?`).run(...Object.values(upd), id);
+      updatedData = sqlite.prepare('SELECT * FROM adm_vendas WHERE id=?').get(id);
     }
 
-    const sets = Object.keys(upd).map(k => `${k}=?`).join(',');
-    sqlite.prepare(`UPDATE adm_vendas SET ${sets} WHERE id=?`).run(...Object.values(upd), id);
-    return res.json({ sucesso: true, dados: sqlite.prepare('SELECT * FROM adm_vendas WHERE id=?').get(id) });
+    // ── Histórico de etapa ────────────────────────────────────────────────────
+    if (etapaAnteriorParaHistorico !== null) {
+      const etapaAntLabel  = ETAPAS_LABELS[etapaAnteriorParaHistorico] || etapaAnteriorParaHistorico;
+      const etapaNovaLabel = ETAPAS_LABELS[novaEtapa] || novaEtapa;
+      const msg = `Pedido movido de "${etapaAntLabel}" para "${etapaNovaLabel}". Responsável: ${usuario.nome || usuario.email || 'Sistema'}.`;
+      await _registrarHistorico(sb, isSupa, sqlite, id, usuario.id, 'ETAPA', msg);
+      console.log('ADM_VENDAS_MOVE_DB_UPDATE_SUCCESS', { pedido_id: id, etapa_destino: novaEtapa });
+      console.log('ADM_VENDAS_MOVE_HISTORY_SUCCESS',   { pedido_id: id });
+      console.log('ADM_VENDAS_MOVE_SUCCESS',            { pedido_id: id, etapa_destino: novaEtapa });
+    }
+
+    return res.json({
+      sucesso: true,
+      dados: {
+        ...updatedData,
+        etapa_label: ETAPAS_LABELS[updatedData.etapa] || updatedData.etapa,
+      },
+    });
   } catch(e) {
+    if (req.body.etapa !== undefined)
+      console.error('ADM_VENDAS_MOVE_ERROR', { pedido_id: id, motivo: e.message, usuario_id: usuario?.id });
     console.error('[admVendas.atualizar]', e.message);
     return res.status(500).json({ sucesso: false, erro: e.message });
   }
@@ -366,12 +443,33 @@ async function historico(req, res) {
   const { id } = req.params;
 
   try {
+    console.log('ADM_VENDAS_HISTORICO_LOAD_START', { adm_venda_id: id });
     if (isSupa) {
-      const { data, error } = await sb.from('adm_vendas_historico').select(`
-        *, autor:usuarios!usuario_id(nome)
-      `).eq('adm_venda_id', id).order('criado_em', { ascending: true });
+      // SELECT simples — sem FK join (evita erro 500 por FK constraint ausente)
+      const { data, error } = await sb.from('adm_vendas_historico')
+        .select('*')
+        .eq('adm_venda_id', id)
+        .order('criado_em', { ascending: true });
       if (error) throw error;
-      return res.json({ sucesso: true, dados: (data || []).map(h => ({ ...h, autor_nome: h.autor?.nome || 'Sistema' })) });
+
+      // Enriquecimento manual dos autores
+      let uMap = {};
+      try {
+        const uIds = [...new Set((data || []).map(h => h.usuario_id).filter(Boolean))];
+        if (uIds.length > 0) {
+          const { data: usrs } = await sb.from('usuarios').select('id,nome').in('id', uIds);
+          (usrs || []).forEach(u => { uMap[u.id] = u.nome; });
+        }
+      } catch(eU) { /* não crítico */ }
+
+      const itens = (data || []).map(h => ({
+        ...h,
+        usuario_nome: uMap[h.usuario_id] || 'Sistema',
+        autor_nome:   uMap[h.usuario_id] || 'Sistema',  // compatibilidade
+      }));
+      if (itens.length === 0) console.log('ADM_VENDAS_HISTORICO_LOAD_EMPTY', { adm_venda_id: id });
+      else console.log('ADM_VENDAS_HISTORICO_LOAD_SUCCESS', { adm_venda_id: id, total: itens.length });
+      return res.json({ sucesso: true, dados: itens });
     }
 
     const rows = sqlite.prepare(`
