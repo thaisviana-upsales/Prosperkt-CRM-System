@@ -18,15 +18,24 @@
 
 | Funcionalidade | Status |
 |---|---|
-| Envio de mensagem de texto | ✅ FUNCIONANDO |
-| Recebimento de mensagem de texto | ✅ FUNCIONANDO |
-| Envio de áudio pelo CRM | ✅ FUNCIONANDO |
-| Recebimento de áudio de contato | ✅ FUNCIONANDO |
-| Reprodução de áudio no CRM (player) | ✅ FUNCIONANDO |
-| Abertura de conversa correta do lead | ✅ FUNCIONANDO |
-| Envio e recebimento na mesma conversa | ✅ FUNCIONANDO |
-| Lista lateral de conversas (sidebar) | ✅ FUNCIONANDO |
-| Abertura via URL com lead_id e phone | ✅ FUNCIONANDO |
+| Envio de mensagem de texto | ✅ CONGELADO |
+| Recebimento de mensagem de texto | ✅ CONGELADO |
+| Envio de áudio pelo CRM | ✅ CONGELADO |
+| Recebimento de áudio de contato | ✅ CONGELADO |
+| Reprodução de áudio no CRM (player) | ✅ CONGELADO |
+| Envio de arquivo/documento pelo CRM | ✅ CONGELADO — *adicionado em 2026-08-14* |
+| **Recebimento de arquivo/documento do cliente** | ✅ **CONGELADO — adicionado em 2026-08-14** |
+| **Recebimento de imagem do cliente** | ✅ **CONGELADO — adicionado em 2026-08-14** |
+| **Exibição do arquivo recebido no CRM** | ✅ **CONGELADO — adicionado em 2026-08-14** |
+| **Download/abertura do arquivo recebido** | ✅ **CONGELADO — adicionado em 2026-08-14** |
+| **Arquivo salvo permanentemente no Supabase** | ✅ **CONGELADO — adicionado em 2026-08-14** |
+| Abertura de conversa correta do lead | ✅ CONGELADO |
+| Envio e recebimento na mesma conversa | ✅ CONGELADO |
+| Lista lateral de conversas (sidebar) | ✅ CONGELADO |
+| Abertura via URL com lead_id e phone | ✅ CONGELADO |
+
+> **Atualização 2026-08-14:** Recebimento de arquivos pelo WhatsApp também está estável e congelado.
+> Commit de referência para o novo congelamento: `4ad9618`
 
 ---
 
@@ -37,8 +46,9 @@ Os seguintes arquivos **NÃO PODEM SER ALTERADOS** sem autorização explícita:
 ### Backend
 - `src/controllers/whatsappController.js`
 - `src/controllers/whatsappAudioController.js`
+- `src/controllers/arquivosWhatsappController.js` ← *adicionado em 2026-08-14*
 - `src/services/evolutionApiService.js`
-- `src/routes/api.js` — **somente as rotas:** `/whatsapp`, `/whatsapp/audio`, `/whatsapp/media`, `/whatsapp/webhook`
+- `src/routes/api.js` — **somente as rotas:** `/whatsapp`, `/whatsapp/audio`, `/whatsapp/media`, `/whatsapp/arquivo`, `/whatsapp/arquivos`, `/whatsapp/webhook`
 
 ### Frontend
 - `public/js/whatsapp.js`
