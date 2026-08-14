@@ -882,6 +882,23 @@ async function atualizar(req, res) {
                 origem:          'crm',
               });
             } catch(eE) { console.error('[TIMELINE_ETAPA_UPDATE]', eE.message); }
+
+            // ── Clone para Adm. de Vendas ao editar etapa no card ────────────────
+            // CAUSA RAIZ DO BUG: atualizar() nunca chamava clonarDeLeadGanho.
+            // Corrigido: chama o service centralizado (mesmo usado pelo mover()).
+            try {
+              const { sb: _sbClone, isSupa: _isSupaC, sqlite: _sqliteC } = getProvider();
+              const { clonarSeVendas } = require('../services/admVendasCloneService');
+              await clonarSeVendas({
+                leadId:      id,
+                etapaDestId: upd.etapa_id,
+                sb:          _sbClone,
+                isSupa:      _isSupaC,
+                sqlite:      _sqliteC,
+                usuarioId:   req.usuario?.id,
+                leadData:    { ...atual, ...upd },
+              });
+            } catch(eClone) { console.error('[ADM_VENDAS_CLONE_ATUALIZAR]', eClone.message); }
           }
 
           // ── Mudança de responsável via PATCH — resolve nomes reais ────────────
@@ -1378,6 +1395,22 @@ async function mover(req, res) {
           dadosNovos:      { etapa_id, etapa_nome: etapa.nome, status: novoStatus },
           origem:          'pipeline_mover',
         }).catch(e => console.error('[TIMELINE_MOVER_Supabase]', e.message)));
+
+        // ── Clone para Adm. de Vendas — service centralizado ───────────────────
+        // Gatilho: etapa "Vendas" em qualquer funil comercial (exceto Adm. de Vendas).
+        // Carteira Recorrente É incluída como origem válida.
+        // Idempotente: clonarDeLeadGanho garante no-dup por lead_original_id + data_venda.
+        // Usando setImmediate para não bloquear a resposta HTTP ao cliente.
+        setImmediate(() => {
+          const { clonarSeVendas } = require('../services/admVendasCloneService');
+          clonarSeVendas({
+            leadId:      id,
+            etapaDestId: etapa_id,
+            sb, isSupa, sqlite: null,
+            usuarioId:   req.usuario?.id,
+            leadData:    { ...lead, ...upd },
+          }).catch(e => console.error('[ADM_VENDAS_CLONE_MOVER]', e.message));
+        });
       }
 
       // Registra passagem pela etapa de destino no histórico do Funil de Conversão (Supabase)
@@ -1402,40 +1435,9 @@ async function mover(req, res) {
           depois:{ layout_virtual_aprovado_em: upd.layout_virtual_aprovado_em, etapa_nome:etapa.nome, usuario:req.usuario?.nome||'Sistema' } });
       }
 
-      // ── Pós-ganho: clonagem Adm Vendas ─────────────────────────────────
-      // FLUXO CORRETO: lead ganho → Adm Vendas; Adm Vendas → Venda Concluída → Carteira Recorrente
-      if (isGanho) {
-        const leadGanho = { ...lead, ...upd };
-        // Carrega itens de lead_produtos para repassar ao ADM Vendas
-        try {
-          const { data: itensGanho } = await sb.from('lead_produtos')
-            .select('*').eq('lead_id', id).is('deleted_at', null).order('criado_em');
-          leadGanho._lead_produtos = itensGanho || [];
-        } catch { leadGanho._lead_produtos = []; }
-        try {
-          console.log('[ADM_VENDAS_CLONE_TRIGGER_START] lead:', id);
-          const admRes = await getAdmVendasCtrl().clonarDeLeadGanho(leadGanho, lead.responsavel_id, sb, isSupa, null);
-          if (admRes.criado) {
-            console.log('[ADM_VENDAS_CLONE_TRIGGER_SUCCESS] card:', admRes.id);
-            // Registra na timeline do lead original
-            const logAdm = require('crypto').randomBytes(16).toString('hex');
-            await sb.from('logs').insert({
-              id: logAdm, acao: 'ADM_VENDAS_CRIADO', entidade: 'leads', entidade_id: id,
-              descricao: `Venda concluída e enviada para Administração de Vendas. Card ADM: ${admRes.id}.`,
-              depois: JSON.stringify({ adm_venda_id: admRes.id, previsao: previsaoProxima }),
-              criado_em: agora, origem_acao: 'automacao',
-            }).catch(() => {});
-          } else if (!admRes.sucesso) {
-            console.warn('[ADM_VENDAS_CLONE_TRIGGER_ERROR]', admRes.erro);
-          } else {
-            console.log('[ADM_VENDAS_CLONE_TRIGGER_SKIP_DUPLICATE] card:', admRes.id);
-          }
-        } catch(eAdm) { console.error('[ADM_VENDAS_CLONE_TRIGGER_ERROR]', eAdm.message); }
-        // NÃO cria clone direto na Carteira Recorrente aqui.
-        // O clone da Carteira só acontece quando Adm Vendas → Venda Concluída.
-      }
 
       return res.json({ sucesso:true, dados: normalizeLead(data) });
+
     }
 
     // SQLite
