@@ -68,8 +68,79 @@ router.get ('/auth/me',            autenticar, authCtrl.me);
 router.post('/auth/trocar-senha',  authCtrl.trocarSenha); // primeiro acesso — sem JWT (valida senha_atual)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// USUARIOS
+// CEP — proxy server-side (evita CORS + fallback automático ViaCEP → BrasilAPI)
+// GET /api/cep/:cep  — requer autenticação
 // ─────────────────────────────────────────────────────────────────────────────
+router.get('/cep/:cep', autenticar, async (req, res) => {
+  const cepLimpo = (req.params.cep || '').replace(/\D/g, '').slice(0, 8);
+  console.log('CEP_LOOKUP_START', { cepOriginal: req.params.cep, cepNormalizado: cepLimpo });
+
+  if (cepLimpo.length !== 8) {
+    return res.status(400).json({ success: false, motivo: 'cep_invalido', detalhe: 'CEP deve ter 8 dígitos.' });
+  }
+  console.log('CEP_NORMALIZED', { cep: cepLimpo });
+
+  // ── Tentativa 1: ViaCEP ────────────────────────────────────────────────────
+  try {
+    console.log('CEP_LOOKUP_PROVIDER_VIACEP', { cep: cepLimpo });
+    const r = await fetch(`https://viacep.com.br/ws/${cepLimpo}/json/`, {
+      signal: AbortSignal.timeout(6000),
+      headers: { 'Accept': 'application/json' },
+    });
+    if (r.ok) {
+      const data = await r.json();
+      if (!data.erro && data.logradouro !== undefined) {
+        console.log('CEP_LOOKUP_SUCCESS', { cep: cepLimpo, fonte: 'viacep' });
+        return res.json({
+          success: true, cep: cepLimpo, fonte: 'viacep',
+          logradouro: data.logradouro || '',
+          bairro:     data.bairro     || '',
+          cidade:     data.localidade || '',
+          uf:         (data.uf        || '').toUpperCase(),
+        });
+      }
+      if (data.erro) {
+        console.log('CEP_LOOKUP_NOT_FOUND', { cep: cepLimpo, fonte: 'viacep' });
+        return res.status(404).json({ success: false, motivo: 'cep_nao_encontrado' });
+      }
+    }
+  } catch (e) {
+    console.warn('CEP_LOOKUP_SERVICE_ERROR', { provider: 'viacep', erro: e.message });
+  }
+
+  // ── Tentativa 2: BrasilAPI (fallback) ─────────────────────────────────────
+  try {
+    console.log('CEP_LOOKUP_PROVIDER_BRASILAPI', { cep: cepLimpo });
+    const r2 = await fetch(`https://brasilapi.com.br/api/cep/v1/${cepLimpo}`, {
+      signal: AbortSignal.timeout(6000),
+      headers: { 'Accept': 'application/json' },
+    });
+    if (r2.ok) {
+      const data2 = await r2.json();
+      if (data2.cep) {
+        console.log('CEP_LOOKUP_SUCCESS', { cep: cepLimpo, fonte: 'brasilapi' });
+        return res.json({
+          success: true, cep: cepLimpo, fonte: 'brasilapi',
+          logradouro: data2.street        || '',
+          bairro:     data2.neighborhood  || '',
+          cidade:     data2.city          || '',
+          uf:         (data2.state        || '').toUpperCase(),
+        });
+      }
+    }
+    if (r2.status === 404) {
+      console.log('CEP_LOOKUP_NOT_FOUND', { cep: cepLimpo, fonte: 'brasilapi' });
+      return res.status(404).json({ success: false, motivo: 'cep_nao_encontrado' });
+    }
+  } catch (e2) {
+    console.warn('CEP_LOOKUP_SERVICE_ERROR', { provider: 'brasilapi', erro: e2.message });
+  }
+
+  // ── Ambos falharam por erro de serviço ────────────────────────────────────
+  console.warn('CEP_LOOKUP_SERVICE_ERROR', { cep: cepLimpo, motivo: 'ambos os providers falharam' });
+  return res.status(503).json({ success: false, motivo: 'servico_indisponivel' });
+});
+
 router.get   ('/usuarios',              autenticar, usuariosCtrl.listar);
 router.get   ('/usuarios/responsaveis', autenticar, usuariosCtrl.listarResponsaveis); // fallback: vendedores dos leads
 router.get   ('/usuarios/:id',          autenticar, usuariosCtrl.buscarPorId);

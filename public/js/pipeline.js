@@ -199,7 +199,8 @@ async function carregarProdutos() {
   _produtos = r?.data?.dados || [];
 }
 
-// ── CEP: máscara + busca automática via ViaCEP ────────────────────────────────
+// ── CEP: máscara + busca automática via proxy backend ─────────────────────────
+// O proxy (/api/cep/:cep) roda no servidor Railway — sem CORS, com fallback BrasilAPI.
 function formatarCep(val) {
   const d = (val || '').replace(/\D/g,'').slice(0,8);
   return d.length > 5 ? d.slice(0,5) + '-' + d.slice(5) : d;
@@ -207,14 +208,28 @@ function formatarCep(val) {
 
 async function buscarEnderecoViaCep(cep) {
   const cepLimpo = (cep || '').replace(/\D/g,'');
-  if (cepLimpo.length !== 8) return null;
+  if (cepLimpo.length !== 8) return { status: 'incompleto' };
+  console.log('CEP_LOOKUP_START', { cep: cepLimpo });
   try {
-    const res = await fetch(`https://viacep.com.br/ws/${cepLimpo}/json/`, { signal: AbortSignal.timeout(5000) });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data.erro) return null;
-    return data;
-  } catch { return null; }
+    // Usa proxy backend — elimina CORS e centraliza fallback ViaCEP → BrasilAPI
+    const r = await Auth.api('GET', `/cep/${cepLimpo}`);
+    if (r?.ok && r.data?.success) {
+      console.log('CEP_LOOKUP_SUCCESS', { cep: cepLimpo, fonte: r.data.fonte });
+      return { status: 'encontrado', dados: r.data };
+    }
+    if (r?.status === 404 || r?.data?.motivo === 'cep_nao_encontrado') {
+      console.log('CEP_LOOKUP_NOT_FOUND', { cep: cepLimpo });
+      return { status: 'nao_encontrado' };
+    }
+    if (r?.status === 503 || r?.data?.motivo === 'servico_indisponivel') {
+      console.warn('CEP_LOOKUP_SERVICE_ERROR', { cep: cepLimpo });
+      return { status: 'servico_indisponivel' };
+    }
+    return { status: 'servico_indisponivel' };
+  } catch (e) {
+    console.warn('CEP_LOOKUP_SERVICE_ERROR', { cep: cepLimpo, erro: e.message });
+    return { status: 'servico_indisponivel' };
+  }
 }
 
 // ── CEP carregado do banco (referência para detectar mudança) ──────────────────
@@ -266,25 +281,37 @@ async function _buscarEPreencherCep(raw, cepEl, msgEl, spinner) {
   if (spinner) spinner.style.display = '';
   cepEl.disabled = true;
 
-  const dados = await buscarEnderecoViaCep(raw);
+  const resultado = await buscarEnderecoViaCep(raw);
 
   cepEl.disabled = false;
   if (spinner) spinner.style.display = 'none';
 
-  if (!dados) {
-    // API falhou: NÃO apaga dados manuais existentes
+  if (resultado.status === 'nao_encontrado') {
     if (msgEl) {
       msgEl.textContent = 'CEP não localizado. Preencha o endereço manualmente.';
-      msgEl.style.color  = 'var(--text-muted,#888)';
+      msgEl.style.color  = 'var(--pink,#FF3B5C)';
       msgEl.style.display = '';
     }
     return;
   }
 
+  if (resultado.status === 'servico_indisponivel') {
+    if (msgEl) {
+      msgEl.textContent = 'Não foi possível consultar o CEP agora. Preencha manualmente.';
+      msgEl.style.color  = 'var(--text-muted,#888)';
+      msgEl.style.display = '';
+    }
+    return; // NÃO apaga campos já preenchidos
+  }
+
+  if (resultado.status !== 'encontrado') return;
+
+  const dados = resultado.dados;
+
   // Preenchimento inteligente:
   // - CEP mudou vs banco → substitui logradouro/bairro/cidade/UF
   // - Mesmo CEP → só preenche campos vazios (preserva edições manuais)
-  const cepMudou = raw !== (_cepUltimoCarregado || '').replace(/D/g,'');
+  const cepMudou = raw !== (_cepUltimoCarregado || '').replace(/\D/g,''); // FIX: era /D/g (sem barra)
 
   const preencher = (id, val) => {
     const el = document.getElementById(id);
@@ -298,8 +325,9 @@ async function _buscarEPreencherCep(raw, cepEl, msgEl, spinner) {
 
   preencher('fl-endereco-entrega', dados.logradouro || '');
   preencher('fl-bairro-entrega',   dados.bairro     || '');
-  preencher('fl-cidade-entrega',   dados.localidade || '');
-  preencher('fl-uf-entrega',       (dados.uf || '').toUpperCase());
+  preencher('fl-cidade-entrega',   dados.cidade     || '');
+  preencher('fl-uf-entrega',       (dados.uf        || '').toUpperCase());
+  console.log('CEP_FIELDS_FILLED', { cep: raw, logradouro: dados.logradouro, bairro: dados.bairro, cidade: dados.cidade, uf: dados.uf });
 
   if (msgEl) {
     msgEl.textContent = '✓ CEP encontrado — confira e ajuste se necessário.';
