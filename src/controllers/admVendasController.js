@@ -39,29 +39,50 @@ async function listar(req, res) {
   const { etapa, responsavel_id, busca, status = 'ativo', data_inicio, data_fim } = req.query;
   const usuario = req.usuario;
 
-  // Log de diagnóstico
-  console.log('[FILTRO_VENDEDOR_BACKEND_RECEBIDO] adm-vendas.listar | responsavel_id:', responsavel_id || '(nao enviado)', '| role:', usuario?.role);
+  console.log('ADM_VENDAS_API_LOAD_START', {
+    role: usuario?.role, status: status || 'ativo',
+    etapa: etapa || null, responsavel_id: responsavel_id || null,
+  });
 
   try {
 
     if (isSupa) {
-      let q = sb.from('adm_vendas').select(`
-        *,
-        responsavel:usuarios!responsavel_id(id,nome,avatar_url)
-      `).eq('status', status || 'ativo').order('criado_em', { ascending: false });
+      // ── Usa SELECT * simples — sem dependência de FK constraint no PostgREST ──
+      // responsavel:usuarios!responsavel_id exige FK explícita no Supabase.
+      // Como a tabela foi criada sem essa FK, a query falhava → 500.
+      // Solução: SELECT * + enrich manual via query separada.
+      let q = sb.from('adm_vendas')
+        .select('*')
+        .eq('status', status || 'ativo')
+        .order('criado_em', { ascending: false });
 
       if (usuario.role === 'VENDEDOR')    q = q.eq('responsavel_id', usuario.id);
       else if (responsavel_id)            q = q.eq('responsavel_id', responsavel_id);
       if (etapa)  q = q.eq('etapa', etapa);
       if (busca)  q = q.or(`nome.ilike.%${busca}%,empresa.ilike.%${busca}%,produto_nome.ilike.%${busca}%`);
-      // Filtro por data de entrada na etapa (usa etapa_atualizada_em; fallback para atualizado_em)
-      if (data_inicio) q = q.or(`etapa_atualizada_em.gte.${data_inicio},and(etapa_atualizada_em.is.null,atualizado_em.gte.${data_inicio})`);
-      if (data_fim)   q = q.or(`etapa_atualizada_em.lte.${data_fim}T23:59:59,and(etapa_atualizada_em.is.null,atualizado_em.lte.${data_fim}T23:59:59)`);
+      // Filtro por data — usa criado_em como fallback seguro
+      try {
+        if (data_inicio) q = q.gte('criado_em', data_inicio + 'T00:00:00');
+        if (data_fim)    q = q.lte('criado_em', data_fim   + 'T23:59:59');
+      } catch(eDateFilter) { /* ignora se filtro falhar */ }
 
       const { data, error } = await q;
-      if (error) throw error;
+      if (error) {
+        console.error('ADM_VENDAS_API_LOAD_ERROR', { erro: error.message, code: error.code });
+        throw error;
+      }
 
-      // Enriquece com conta_azul_status dos leads (join por email)
+      // ── Enriquece com dados do responsável (sem FK join) ──────────────────
+      let responsavelMap = {};
+      try {
+        const responsavelIds = [...new Set((data || []).map(v => v.responsavel_id).filter(Boolean))];
+        if (responsavelIds.length > 0) {
+          const { data: usrs } = await sb.from('usuarios').select('id,nome,avatar_url').in('id', responsavelIds);
+          (usrs || []).forEach(u => { if (u.id) responsavelMap[u.id] = u; });
+        }
+      } catch(eResp) { /* não quebra se falhar */ }
+
+      // ── Enriquece com conta_azul_status dos leads (join por email) ────────
       let contaAzulMap = {};
       try {
         const emails = [...new Set((data || []).map(v => v.email).filter(Boolean))];
@@ -74,12 +95,17 @@ async function listar(req, res) {
         }
       } catch(e) { /* coluna pode não existir ainda — ignora */ }
 
-      const itens = (data || []).map(v => ({
-        ...v,
-        responsavel_nome: v.responsavel?.nome || null,
-        etapa_label: ETAPAS_LABELS[v.etapa] || v.etapa,
-        conta_azul_status: contaAzulMap[v.email] || null,
-      }));
+      const itens = (data || []).map(v => {
+        const resp = responsavelMap[v.responsavel_id] || null;
+        return {
+          ...v,
+          responsavel: resp ? { id: resp.id, nome: resp.nome, avatar_url: resp.avatar_url || null } : null,
+          responsavel_nome: resp?.nome || null,
+          etapa_label: ETAPAS_LABELS[v.etapa] || v.etapa,
+          conta_azul_status: contaAzulMap[v.email] || null,
+        };
+      });
+      console.log('ADM_VENDAS_API_LOAD_SUCCESS', { total: itens.length, status: status || 'ativo' });
       return res.json({ sucesso: true, dados: itens, total: itens.length });
     }
 
