@@ -648,11 +648,21 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
           }
         }
 
-        if (!candidataUnica && semLid.length === 1) {
-          candidataUnica = semLid[0];
-          console.log('WHATSAPP_LID_RECOVERED_BY_RECENT_OUTBOUND', { lidNumero, conversaId: candidataUnica.id, fonte: 'unica_conversa_sem_lid_72h' });
-        } else if (!candidataUnica && semLid.length > 1) {
-          console.warn('WHATSAPP_LID_AMBIGUOUS_NOT_LINKED', { lidNumero, nome, candidatas: semLid.length, motivo: 'multiplas_conversas_sem_lid' });
+        // ── DESATIVADO: auto-atribuição por "candidata única sem LID" ────────────────
+        // CAUSA DO BUG: após troca de número WA, qualquer lead com outbound recente
+        // tornava-se ÚNICA candidata para TODOS os LID desconhecidos, roteando mensagens
+        // de contatos externos (que nunca foram leads no CRM) para conversas de leads reais.
+        // Exemplo concreto: após testar envio para Marcos, Marcos tornou-se candidata única,
+        // e TODOS os LIDs desconhecidos subsequentes foram atribuídos à conversa do Marcos.
+        //
+        // SOLUÇÃO: bloquear auto-atribuição sem match confirmado.
+        // Somente o match por nome (acima) é aceito para LID recovery.
+        // Contatos desconhecidos via LID criarão conversa PENDENTE_IDENTIFICACAO (não aparece na lista).
+        if (!candidataUnica && semLid.length >= 1) {
+          console.warn('WHATSAPP_LID_SINGLE_CANDIDATE_BLOCKED — roteamento não confirmado, criará PENDENTE', {
+            lidNumero, nome: nome?.slice(0,30), candidatas: semLid.length,
+            motivo: 'heurístico "candidata única" desativado por segurança (causa roteamento errado após troca de número)',
+          });
         }
 
         if (candidataUnica) {
