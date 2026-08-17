@@ -877,6 +877,7 @@ async function listarConversas(req, res) {
     if (isSupa) {
       let q = sb.from(CONVERSAS_TABLE)
         .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa)')
+        .not('lead_id', 'is', null)  // REGRA: só exibe conversas vinculadas a um lead do CRM
         .order('ultima_msg_em', { ascending: false, nullsFirst: false })
         .range(Number(offset), Number(offset) + Number(limit) - 1);
       if (role === 'VENDEDOR') q = q.eq('vendedor_id', req.usuario.id);
@@ -910,6 +911,11 @@ async function listarConversas(req, res) {
         return false;
       };
       const rawData = (data || []).filter(c => {
+        // Segurança extra: garante lead_id vinculado (o filtro .not('lead_id','is',null) já faz isso no DB)
+        if (!c.lead_id) {
+          console.log('WHATSAPP_LIST_HIDE_NO_LEAD', { id: c.id, telefone: c.telefone, nome: c.nome_contato });
+          return false;
+        }
         if (isLidTelefone(c.telefone)) {
           console.log('WHATSAPP_LIST_HIDE_LID_ONLY_CONVERSATION', { id: c.id, telefone: c.telefone, nome: c.nome_contato });
           return false;
@@ -966,8 +972,9 @@ async function listarConversas(req, res) {
          AND direcao = 'recebida' AND status = 'enviado') AS nao_lidas
       FROM conversas_whatsapp c
       LEFT JOIN usuarios u ON c.vendedor_id = u.id
-      LEFT JOIN leads l ON c.lead_id = l.id
+      INNER JOIN leads l ON c.lead_id = l.id  -- REGRA: só exibe conversas vinculadas a um lead
       WHERE 1=1
+        AND c.lead_id IS NOT NULL
     `;
     const params = [];
 
