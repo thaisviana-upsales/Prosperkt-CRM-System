@@ -770,7 +770,8 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
           const telNorm = normalizePhone(telRaw);
           for (const v of phoneVariants(telNorm)) {
             const { data: byEvo } = await sb.from(CONVERSAS_TABLE)
-              .select('id,dados_extras').eq('telefone', v).neq('status', 'FECHADA')
+              .select('id,dados_extras,lead_id').eq('telefone', v).neq('status', 'FECHADA')
+              .not('lead_id', 'is', null) // SEGURANÇA: só roteia para conversas vinculadas a leads do CRM
               .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
             if (byEvo?.[0]) {
               conversaId = byEvo[0].id; fonte = 'lid_evo_phone';
@@ -793,7 +794,10 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
   // FIX: exclui PENDENTE_IDENTIFICACAO (antes só excluía FECHADA) para não
   //      contar pendente como candidata e gerar falso-ambíguo.
   //      limit(5) para filtrar por .not('telefone','is',null) e checar unicidade real.
-  if (!conversaId && isLidJid && lidNumero && nome && !fromMe) {
+  // PASSO 6 DESATIVADO: heurístico por nome é inseguro — causa roteamento incorreto
+  // (mesmo problema do heurístico 'candidata única' já desativado anteriormente)
+  // Contato com LID sem match → cria conversa PENDENTE (invisível na lista)
+  if (false && !conversaId && isLidJid && lidNumero && nome && !fromMe) {
     const primeiroNome = nome.split(' ')[0];
     if (primeiroNome.length >= 3) {
       const { data: byNomeBruto } = await sb.from(CONVERSAS_TABLE)
