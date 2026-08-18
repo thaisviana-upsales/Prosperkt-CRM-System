@@ -282,6 +282,19 @@ function isIdentidadeWhatsappConfiavel(telFinal, { isLidJid, lidNumero, aliasEnc
   return true;
 }
 
+// ── formatarTelefoneParaNome — nome inicial do lead automático ────────────────
+// REGRA: NÃO usar pushName do WhatsApp. Nome = número formatado.
+function formatarTelefoneParaNome(tel) {
+  const d = String(tel || '').replace(/\D/g, '');
+  if (d.length === 13 && d.startsWith('55'))
+    return `+55 ${d.slice(2,4)} ${d.slice(4,9)}-${d.slice(9,13)}`;
+  if (d.length === 12 && d.startsWith('55'))
+    return `+55 ${d.slice(2,4)} ${d.slice(4,8)}-${d.slice(8,12)}`;
+  if (d.length === 11 && d.startsWith('55'))
+    return `+55 ${d.slice(2,4)} ${d.slice(4,11)}`;
+  return d.length > 0 ? `+${d}` : (tel || 'WhatsApp');
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Schema real — nomes canônicos das tabelas WhatsApp
@@ -2774,32 +2787,82 @@ async function webhookReceberMensagem(req, res) {
         }
       }
 
-      // ── 5c. REGRA ABSOLUTA: NUNCA criar lead com identidade LID não confiável ──
-      // Um LID (14+ dígitos sem prefixo 55) nunca é telefone real de cliente.
-      // Criar lead com LID como telefone gera duplicata que não pode ser mesclada.
+      // ── 5c. Lead automático para número desconhecido — funil Instagram Direct ────
+      // REGRAS ABSOLUTAS DE NÃO MISTURAR:
+      //   • Criar lead SOMENTE com telefone real brasileiro (inícia com 55, 12+ dígitos)
+      //   • NÃO usar pushName como nome — usar telefone formatado
+      //   • NÃO correlacionar por nome, empresa ou heurística aproximada
+      //   • NÃO criar em outro funil se Instagram Direct não existir
+      //   • LID sem telefone real → não criar lead (identidade não confiável)
       if (!leadId && !fromMe) {
-        const identConfiavel = isIdentidadeWhatsappConfiavel(telFinal, { isLidJid, lidNumero });
-        if (!identConfiavel) {
+        const digitsCheck = String(telFinal || '').replace(/\D/g, '');
+        const temTelefoneRealBr = telFinal && digitsCheck.startsWith('55') && digitsCheck.length >= 12;
+
+        if (temTelefoneRealBr) {
+          console.log('WHATSAPP_INBOUND_UNKNOWN_NUMBER_DETECTED', {
+            telFinal, lidNumero: lidNumero || null, isLidJid, rawJid: rawJid || null,
+          });
+          let destinoIg = null;
+          try {
+            destinoIg = await planilhaSvc.resolverDestinoInstagramDirect();
+          } catch(eIg) {
+            console.error('WHATSAPP_UNKNOWN_INBOUND_FUNIL_INSTAGRAM_DIRECT_NOT_FOUND', {
+              erro: eIg.message, telFinal,
+            });
+          }
+          if (destinoIg) {
+            const novoLeadId = crypto.randomBytes(16).toString('hex');
+            const nomeParaLead = formatarTelefoneParaNome(telFinal); // NÃO pushName
+            console.log('WHATSAPP_INBOUND_CREATE_LEAD_START', {
+              telFinal, funil: destinoIg.funil.nome, etapa: destinoIg.etapa.nome,
+              nomeLead: nomeParaLead, motivo: 'numero_desconhecido_instagram_direct',
+            });
+            const dadosExtrasLead = JSON.stringify({
+              criado_por_mensagem_whatsapp: true,
+              remoteJid:           rawJid || null,
+              rawJid:              rawJid || null,
+              lid:                 lidNumero || null,
+              pushName:            nome || null,  // apenas informativo
+              primeira_mensagem_em: agora,
+              funil_entrada:       'Instagram - Direct',
+            });
+            const { data: novoLead, error: errL } = await sb.from('leads').insert({
+              id:           novoLeadId,
+              nome:         nomeParaLead,
+              telefone:     telFinal,
+              status:       'ABERTO',
+              funil_id:     destinoIg.funil.id,
+              pipeline_id:  destinoIg.pipeline.id,
+              etapa_id:     destinoIg.etapa.id,
+              origem:       'WhatsApp Recebido',
+              dados_extras: dadosExtrasLead,
+              data_entrada: agora,
+              criado_em:    agora,
+              atualizado_em: agora,
+            }).select('id').single();
+            if (!errL && novoLead) {
+              leadId = novoLead.id;
+              console.log('WHATSAPP_INBOUND_LEAD_CREATED_SUCCESS', {
+                leadId, tel: telFinal,
+                funil: destinoIg.funil.nome, etapa: destinoIg.etapa.nome,
+              });
+            } else {
+              console.error('WHATSAPP_INBOUND_ERROR', {
+                erro: errL?.message, tel: telFinal, funil: destinoIg.funil.nome,
+              });
+            }
+          } else {
+            // Funil não encontrado → NÃO criar em outro funil → cai em PENDENTE
+            console.error('WHATSAPP_UNKNOWN_INBOUND_FUNIL_INSTAGRAM_DIRECT_NOT_FOUND', {
+              telFinal, motivo: 'funil_nao_encontrado_nao_cria_lead_em_outro_funil',
+            });
+          }
+        } else {
+          // LID sem telefone real → bloquear criação de lead
           console.warn('WHATSAPP_BLOCK_LEAD_CREATION_FOR_LID', {
             telFinal, lidNumero, rawJid, isLidJid,
             motivo: 'identidade_nao_confiavel_nao_cria_lead',
           });
-          // não atribui destino nem cria lead — cai no bloco de criação de conversa pendente
-        } else {
-          let destino = null;
-          try { destino = await planilhaSvc.resolverDestino(); } catch(e) {}
-          if (destino) {
-            const novoLeadId = crypto.randomBytes(16).toString('hex');
-            const { data: novoLead, error: errL } = await sb.from('leads').insert({
-              id: novoLeadId, nome: nome || `WhatsApp ${telFinal}`, telefone: telFinal,
-              status: 'ABERTO', funil_id: destino.funil.id,
-              pipeline_id: destino.pipeline.id, etapa_id: destino.etapa.id,
-              dados_extras: JSON.stringify({ fonte: 'evolution_webhook', numero_wa: telFinal }),
-              criado_em: agora, atualizado_em: agora,
-            }).select('id').single();
-            if (!errL && novoLead) { leadId = novoLead.id; console.log(`[WA Webhook] ✅ Lead criado: ${leadId} (${telFinal})`); }
-            else console.warn('[WA Webhook] Lead não criado:', errL?.message);
-          }
         }
       }
     } else if (db) {
@@ -2863,7 +2926,11 @@ async function webhookReceberMensagem(req, res) {
       // Antes de criar conversa: valida se a identidade é confiável.
       // Uma identidade LID sem alias nem telefone real NÃO gera conversa ABERTA.
       // Gera PENDENTE_IDENTIFICACAO (oculta da lista) para não duplicar.
-      const identidadeConfiavel = isIdentidadeWhatsappConfiavel(telFinal, {
+      // Se tem telefone real brasileiro + lead vinculado → confiar para criar conversa ABERTA
+      // (mesmo que isLidJid=true, se temos phone real + lead, devemos ser visíveis no CRM)
+      const _digitsForTrust = String(telFinal || '').replace(/\D/g, '');
+      const temTelRealBr = telFinal && _digitsForTrust.startsWith('55') && _digitsForTrust.length >= 12;
+      const identidadeConfiavel = (temTelRealBr && !!leadId) || isIdentidadeWhatsappConfiavel(telFinal, {
         isLidJid,
         lidNumero,
         aliasEncontrado:  false, // chegou aqui → alias não encontrou conversa

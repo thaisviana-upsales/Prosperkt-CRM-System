@@ -130,6 +130,54 @@ async function resolverDestino() {
   return _cacheDestino;
 }
 
+// ── Busca funil Instagram Direct + pipeline + etapa Lead Recebido ─────────────
+// Usado para criação automática de lead quando número desconhecido manda mensagem.
+let _cacheDestinoIg  = null;
+let _cacheDestinoIgTTL = 0;
+
+async function resolverDestinoInstagramDirect() {
+  const agora = Date.now();
+  if (_cacheDestinoIg && agora < _cacheDestinoIgTTL) return _cacheDestinoIg;
+
+  const { sb } = getProvider();
+
+  // 1. Busca funil cujo nome contenha "Instagram" e "Direct" (case-insensitive)
+  const { data: funis } = await sb.from('funis').select('id,nome').eq('ativo', 1);
+  const funil = (funis || []).find(f => {
+    const normalizado = f.nome.toLowerCase().replace(/[-_\s]+/g, ' ');
+    return normalizado.includes('instagram') && normalizado.includes('direct');
+  });
+
+  if (!funil) {
+    console.error('WHATSAPP_UNKNOWN_INBOUND_FUNIL_INSTAGRAM_DIRECT_NOT_FOUND', {
+      funisDisponiveis: (funis || []).map(f => f.nome),
+      motivo: 'Crie o funil "Instagram - Direct" no CRM antes de usar este recurso.',
+    });
+    throw new Error('Funil "Instagram - Direct" não encontrado. Crie-o no CRM.');
+  }
+  console.log('WHATSAPP_INBOUND_INSTAGRAM_DIRECT_FUNIL_FOUND', { funilId: funil.id, funilNome: funil.nome });
+
+  // 2. Busca pipeline vinculada ao funil
+  const { data: pips } = await sb.from('pipelines').select('id,funil_id').eq('funil_id', funil.id).limit(1);
+  const pipeline = pips?.[0];
+  if (!pipeline) throw new Error(`Nenhuma pipeline para funil "${funil.nome}".`);
+
+  // 3. Busca etapa "Lead Recebido" dentro dessa pipeline
+  const { data: etapas } = await sb.from('etapas').select('id,nome,ordem')
+    .eq('pipeline_id', pipeline.id).order('ordem');
+  const etapa = (etapas || []).find(e => /recebido/i.test(e.nome)) || etapas?.[0];
+
+  if (!etapa) {
+    console.error('WHATSAPP_UNKNOWN_INBOUND_ETAPA_LEAD_RECEBIDO_NOT_FOUND', { funil: funil.nome });
+    throw new Error(`Etapa "Lead Recebido" não encontrada no funil "${funil.nome}".`);
+  }
+  console.log('WHATSAPP_INBOUND_LEAD_RECEBIDO_ETAPA_FOUND', { etapaId: etapa.id, etapaNome: etapa.nome });
+
+  _cacheDestinoIg    = { funil, pipeline, etapa };
+  _cacheDestinoIgTTL = Date.now() + 5 * 60_000; // cache por 5 min
+  return _cacheDestinoIg;
+}
+
 // ── Verifica duplicata ────────────────────────────────────────────────────────
 async function verificarDuplicata(tel, email) {
   const { sb } = getProvider();
@@ -329,6 +377,7 @@ module.exports = {
   pararPolling,
   normTel,
   resolverDestino,
+  resolverDestinoInstagramDirect,
   CSV_URL,
   COLUNAS,
 };
