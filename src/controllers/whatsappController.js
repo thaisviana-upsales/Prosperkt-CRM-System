@@ -746,6 +746,33 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
         }
       } else {
         console.warn('CONVERSA_LOOKUP_LID_EVO_NO_CONTACT', { lidNumero, lidJidCompleto });
+        // Tentativa alternativa: algumas versões da Evolution API indexam pelo campo 'lid'
+        // em vez de usar o LID como 'id' do contato. Tenta ambas as variações.
+        try {
+          const resAlt = await evoSvc.call('POST', `/contacts/find/${evoSvc.EVOLUTION_INSTANCE}`, { where: { lid: lidJidCompleto } });
+          const contatoAlt = (Array.isArray(resAlt?.dados) ? resAlt.dados : (resAlt?.dados ? [resAlt.dados] : []))[0] || null;
+          console.log('CONVERSA_LOOKUP_LID_EVO_ALT_RESULT', { lidNumero, found: !!contatoAlt, keys: contatoAlt ? Object.keys(contatoAlt).slice(0,8) : [] });
+          if (contatoAlt) {
+            const jidAlt = contatoAlt.id || contatoAlt.remoteJid || '';
+            const telAlt = contatoAlt.phone || (jidAlt.includes('@s.whatsapp.net') ? jidAlt.split('@')[0] : null);
+            if (telAlt) {
+              const telNormAlt = normalizePhone(telAlt);
+              for (const v of phoneVariants(telNormAlt)) {
+                const { data: byEvoAlt } = await sb.from(CONVERSAS_TABLE)
+                  .select('id,dados_extras,lead_id').eq('telefone', v).neq('status', 'FECHADA')
+                  .not('lead_id', 'is', null)
+                  .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
+                if (byEvoAlt?.[0]) {
+                  conversaId = byEvoAlt[0].id; fonte = 'lid_evo_alt_lid_field';
+                  console.log('WHATSAPP_RESOLVE_CONVERSA_FOUND', { conversaId, fonte, lidNumero, telNormAlt });
+                  registrarAlias(sb, { conversaId, tel: telNormAlt, rawJid: rawJid || null, lidNumero, nome: !fromMe ? (nome || null) : null })
+                    .catch(e => console.warn('WHATSAPP_ALIAS_EVO_ALT_WARN:', e.message));
+                  break;
+                }
+              }
+            }
+          }
+        } catch (eAlt) { console.warn('CONVERSA_LOOKUP_LID_EVO_ALT_WARN:', eAlt.message); }
       }
     } catch (e) { console.warn('CONVERSA_LOOKUP_LID_EVO_ERROR', e.message); }
   }
@@ -2649,11 +2676,7 @@ async function webhookReceberMensagem(req, res) {
           .limit(1);
         if (existing?.[0]) {
           // ── FIX DEFINITIVO: fromMe=true + LID = capturar LID do destinatário ────────
-          // Quando o CRM envia para phone@s.whatsapp.net, o WhatsApp ecoa de volta
-          // um webhook fromMe=true onde rawJid = LID@lid DO DESTINATÁRIO.
-          // Sem capturar esse LID aqui, quando o destinatário responde com o LID,
-          // não há alias e a mensagem é dropada (Step 0 falha, Step 5 pode falhar).
-          // Com esse registro, Step 0 resolve instantaneamente na próxima resposta.
+          // Cenário A: eco chega com LID JID (ex: SR Assis) → captura diretamente
           if (fromMe && isLidJid && lidNumero && existing[0].conversa_id) {
             console.log('WHATSAPP_FROMME_LID_ALIAS_CAPTURE', { conversaId: existing[0].conversa_id, lidNumero, rawJid });
             registrarAlias(sb, {
@@ -2664,6 +2687,45 @@ async function webhookReceberMensagem(req, res) {
               nome: null,
             }).catch(e => console.warn('WHATSAPP_FROMME_LID_ALIAS_WARN:', e.message));
           }
+
+          // ── FIX COMPLEMENTAR: eco chega com phone JID (não LID) ───────────────────
+          // Cenário B: CRM envia para 5511988360519@s.whatsapp.net → eco fromMe tem phone JID.
+          // Quando o destinatário responde com o LID do dispositivo, Step 0 falha (sem alias LID).
+          // Aqui: tenta buscar o LID do contato na Evolution API via o telefone do eco.
+          // Fire-and-forget para não atrasar a resposta HTTP.
+          if (fromMe && !isLidJid && tel && existing[0].conversa_id && isSupa) {
+            (async () => {
+              try {
+                const telJidBusca = `${tel}@s.whatsapp.net`;
+                const resC = await evoSvc.call('POST', `/contacts/find/${evoSvc.EVOLUTION_INSTANCE}`, { where: { id: telJidBusca } });
+                const c = (Array.isArray(resC?.dados) ? resC.dados : (resC?.dados ? [resC.dados] : []))[0] || null;
+                console.log('WHATSAPP_FROMME_PHONE_CONTACT_EVO', {
+                  tel, found: !!c,
+                  contactId: c?.id || null,
+                  contactLid: c?.lid || null,
+                  keys: c ? Object.keys(c).slice(0, 10) : [],
+                });
+                // Se Evolution retornar campo 'lid' no contato → registra alias para LID
+                if (c) {
+                  const rawLid = c.lid || (typeof c.id === 'string' && c.id.endsWith('@lid') ? c.id : null);
+                  if (rawLid) {
+                    const lidNorm = String(rawLid).split('@')[0].replace(/\D/g, '');
+                    if (lidNorm && lidNorm.length >= 10) {
+                      console.log('WHATSAPP_FROMME_LID_CAPTURED_VIA_PHONE', { tel, lidNorm, conversaId: existing[0].conversa_id });
+                      await registrarAlias(sb, {
+                        conversaId: existing[0].conversa_id,
+                        tel,
+                        rawJid: `${lidNorm}@lid`,
+                        lidNumero: lidNorm,
+                        nome: null,
+                      });
+                    }
+                  }
+                }
+              } catch (e) { console.warn('WHATSAPP_FROMME_PHONE_LID_WARN:', e.message); }
+            })();
+          }
+
           return res.json({ sucesso: true, ignorado: true, motivo: 'mensagem_ja_salva' });
         }
       } else if (db) {
