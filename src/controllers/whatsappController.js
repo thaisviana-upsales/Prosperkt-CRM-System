@@ -838,9 +838,11 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
   // ── Passo 7: LID → conversa pendente ou canônica via dados_extras ──────────
   // ATENÇÃO: se a pendente existe mas tem lead_id, preferir a canônica real.
   if (!conversaId && isLidJid && lidNumero) {
-    // 7a: busca conversa pendente com este LID nos dados_extras
+    // 7a: busca conversa PENDENTE_IDENTIFICACAO com este LID nos dados_extras
+    // REGRA: NUNCA buscar em conversas ABERTA para evitar contaminar leads existentes com LIDs de estranhos
     const { data: pendente } = await sb.from(CONVERSAS_TABLE)
       .select('id,lead_id,status').like('dados_extras', `%${lidNumero}%`)
+      .eq('status', 'PENDENTE_IDENTIFICACAO') // SEGURANÇA: só conversas pendentes não identificadas
       .order('criado_em', { ascending: false }).limit(1);
 
     if (pendente?.[0]) {
@@ -2974,61 +2976,13 @@ async function webhookReceberMensagem(req, res) {
         // sem alias registrado, sem leadId. Antes desta correção → PENDENTE_IDENTIFICACAO → invisível.
         // Agora: busca mensagens enviadas nas últimas 72h → se única conversa candidata com
         // telefone real (não PENDENTE) → usa essa conversa + salva alias para próximas respostas.
-        if (!conversaCanonica && isLidJid && lidNumero) {
-          try {
-            const h72 = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
-            console.log('WHATSAPP_RECENT_OUTBOUND_LOOKUP_START', { lidNumero, janela: '72h' });
-            const { data: recentSentMsgs } = await sb.from(MENSAGENS_TABLE)
-              .select('conversa_id')
-              .eq('direcao', 'enviada')
-              .gte('criado_em', h72)
-              .not('conversa_id', 'is', null)
-              .order('criado_em', { ascending: false })
-              .limit(20);
-            if (recentSentMsgs?.length) {
-              const convIds = [...new Set(recentSentMsgs.map(r => r.conversa_id))].slice(0, 5);
-              const { data: candidatasRecent } = await sb.from(CONVERSAS_TABLE)
-                .select('id,telefone,lead_id')
-                .in('id', convIds)
-                .neq('status', 'FECHADA')
-                .neq('status', 'PENDENTE_IDENTIFICACAO')
-                .not('telefone', 'is', null);
-              const candidatasValidas = (candidatasRecent || []).filter(r => r.telefone && r.telefone.startsWith('55'));
-              // Ordena por frequência de envio recente (recentSentMsgs já está ordenado por criado_em desc)
-              // A conversa com mais mensagens recentes fica no topo da lista de IDs → mais provável ser o destinatário
-              const candidataEscolhida = candidatasValidas.length >= 1 ? candidatasValidas[0] : null;
-
-              if (candidataEscolhida) {
-                conversaCanonica = candidataEscolhida.id;
-                conversaId      = conversaCanonica;
-                if (!leadId && candidataEscolhida.lead_id) leadId = candidataEscolhida.lead_id;
-                const motivo = candidatasValidas.length === 1
-                  ? 'unica_candidata_recente'
-                  : `multiplas_candidatas_escolheu_mais_recente_qtd_${candidatasValidas.length}`;
-                console.log('WHATSAPP_RECENT_OUTBOUND_FOUND', { conversaId, lidNumero, tel: candidataEscolhida.telefone, motivo });
-                // Salva alias: próximas respostas deste LID chegam diretamente na conversa correta
-                await registrarAlias(sb, {
-                  conversaId,
-                  tel:       candidataEscolhida.telefone || null,
-                  rawJid:    rawJid    || null,
-                  lidNumero: lidNumero || null,
-                  nome:      !fromMe   ? nome : null,
-                }).catch(e => console.warn('WHATSAPP_ALIAS_RECENT_OUTBOUND_WARN:', e.message));
-                console.log('WHATSAPP_LID_RECOVERED_BY_RECENT_OUTBOUND', {
-                  conversaId, lidNumero,
-                  tel: candidataEscolhida.telefone,
-                  motivo: 'alias_salvo_para_proximas_respostas',
-                });
-              } else {
-                console.log('WHATSAPP_RECENT_OUTBOUND_NO_CANDIDATE', { lidNumero, recentMsgs: recentSentMsgs.length });
-              }
-
-            } else {
-              console.log('WHATSAPP_RECENT_OUTBOUND_NO_MSGS', { lidNumero, motivo: 'sem_envios_nas_72h' });
-            }
-          } catch(eRO) {
-            console.warn('WHATSAPP_RECENT_OUTBOUND_LOOKUP_WARN:', eRO.message);
-          }
+        // FALLBACK 72H DESATIVADO — causava roteamento aleatório de LIDs desconhecidos
+        // para a conversa mais recentemente ativa, contaminando leads existentes.
+        // Todo LID sem alias/telefone real cria conversa PENDENTE_IDENTIFICACAO (invisível)
+        // e aguarda identificação correta pelo usuário ou por alias futuro.
+        // NÃO REATIVAR sem testes extensivos e sem autorização explícita.
+        if (false && !conversaCanonica && isLidJid && lidNumero) {
+          // código desativado
         }
 
         if (!conversaCanonica) {
