@@ -614,83 +614,18 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
     }
   }
 
-  // ── Passo 1b: LID → recuperação por mensagem enviada recente (fallback robusto) ─
-  // Cenário: LID chegou, sem alias (envio foi antes do fix), sem dados_extras com LID.
-  // Estratégia: busca a mensagem ENVIADA mais recente (direto pelo CRM, não fromMe do WA)
-  // dentro de 72h e com pushName/nome idêntico ao do contato. UMA candidata = seguro.
+  // ── Passo 1b: DESATIVADO — heurístico nome/pushName bloqueado ────────────────
+  // CAUSA DO BUG: correlação por pushName causava roteamento de estranhos para leads
+  // existentes cujo nome_contato começava igual ao pushName do intruso.
+  // pushName NÃO é identidade técnica — bloqueado permanentemente.
+  // Identificação SOMENTE por: alias exato, remoteJid, telefone normalizado, lead_id.
   if (!conversaId && isLidJid && lidNumero) {
-    try {
-      console.log('WHATSAPP_INBOUND_ALIAS_LOOKUP_START', { lidNumero, nome: nome?.slice(0,30) });
-      // Busca as conversas que tiveram mensagem enviada (direcao=enviada) nas últimas 72h
-      const h72 = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
-      const { data: recentOuts } = await sb.from(MENSAGENS_TABLE)
-        .select('conversa_id')
-        .eq('direcao', 'enviada')
-        .gte('criado_em', h72)
-        .order('criado_em', { ascending: false })
-        .limit(100);
-
-      if (recentOuts && recentOuts.length > 0) {
-        // IDs únicos das conversas com envio recente
-        const recentConvIds = [...new Set(recentOuts.map(m => m.conversa_id))];
-
-        // Busca detalhes dessas conversas que ainda não têm resposta LID (sem dado_extras.lid)
-        const { data: candidatas } = await sb.from(CONVERSAS_TABLE)
-          .select('id,nome_contato,dados_extras,telefone')
-          .in('id', recentConvIds)
-          .neq('status', 'FECHADA');
-
-        // Filtra candidatas: sem alias/LID já mapeado E nome compatível (se disponível)
-        const semLid = (candidatas || []).filter(c => {
-          const ext = (() => { try { return typeof c.dados_extras === 'object' ? (c.dados_extras || {}) : JSON.parse(c.dados_extras || '{}'); } catch { return {}; } })();
-          return !ext.lid; // só candidatas sem LID já mapeado
-        });
-
-        let candidataUnica = null;
-
-        if (nome && semLid.length > 0) {
-          const primeiroNome = nome.trim().split(' ')[0].toLowerCase();
-          const comNome = semLid.filter(c =>
-            c.nome_contato && c.nome_contato.trim().toLowerCase().startsWith(primeiroNome)
-          );
-          if (comNome.length === 1) {
-            candidataUnica = comNome[0];
-            console.log('WHATSAPP_LID_RECOVERED_BY_RECENT_OUTBOUND', { lidNumero, conversaId: candidataUnica.id, nome, nomeContato: candidataUnica.nome_contato, fonte: 'nome+outbound_72h' });
-          } else if (comNome.length > 1) {
-            console.warn('WHATSAPP_LID_AMBIGUOUS_NOT_LINKED', { lidNumero, nome, candidatas: comNome.length, motivo: 'multiplas_com_mesmo_nome' });
-          }
-        }
-
-        // ── DESATIVADO: auto-atribuição por "candidata única sem LID" ────────────────
-        // CAUSA DO BUG: após troca de número WA, qualquer lead com outbound recente
-        // tornava-se ÚNICA candidata para TODOS os LID desconhecidos, roteando mensagens
-        // de contatos externos (que nunca foram leads no CRM) para conversas de leads reais.
-        // Exemplo concreto: após testar envio para Marcos, Marcos tornou-se candidata única,
-        // e TODOS os LIDs desconhecidos subsequentes foram atribuídos à conversa do Marcos.
-        //
-        // SOLUÇÃO: bloquear auto-atribuição sem match confirmado.
-        // Somente o match por nome (acima) é aceito para LID recovery.
-        // Contatos desconhecidos via LID criarão conversa PENDENTE_IDENTIFICACAO (não aparece na lista).
-        if (!candidataUnica && semLid.length >= 1) {
-          console.warn('WHATSAPP_LID_SINGLE_CANDIDATE_BLOCKED — roteamento não confirmado, criará PENDENTE', {
-            lidNumero, nome: nome?.slice(0,30), candidatas: semLid.length,
-            motivo: 'heurístico "candidata única" desativado por segurança (causa roteamento errado após troca de número)',
-          });
-        }
-
-        if (candidataUnica) {
-          conversaId = candidataUnica.id;
-          fonte = 'lid_recovered_outbound';
-          await registrarAlias(sb, {
-            conversaId, tel: candidataUnica.telefone || null, rawJid: rawJid || null, lidNumero, nome: nome || null,
-          }).catch(e => console.warn('WHATSAPP_ALIAS_RECOVERED_WARN:', e.message));
-          console.log('WHATSAPP_INBOUND_CANONICAL_CONVERSA_FOUND', { conversaId, fonte, lidNumero });
-        }
-      }
-    } catch(eRec) {
-      console.warn('CONVERSA_LOOKUP_LID_OUTBOUND_RECOVERY_WARN', eRec.message);
-    }
+    console.log('WHATSAPP_INBOUND_BLOCKED_NAME_CORRELATION', {
+      lidNumero, nome: nome?.slice(0,30),
+      motivo: 'passo_1b_desativado_heuristico_nome_pushname_bloqueado',
+    });
   }
+
 
   // ── Passo 2: por lead_id — APENAS conversas canônicas (ABERTA com telefone real) ──
   // REGRA: não retornar PENDENTE_IDENTIFICACAO como destino.
