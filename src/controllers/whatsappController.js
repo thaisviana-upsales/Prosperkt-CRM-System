@@ -2644,10 +2644,26 @@ async function webhookReceberMensagem(req, res) {
       if (isSupa) {
         // Verifica ambos os IDs: local e o da Evolution (salvo em evolution_message_id)
         const { data: existing } = await sb.from(MENSAGENS_TABLE)
-          .select('id')
+          .select('id,conversa_id')
           .or(`id.eq.${messageId},evolution_message_id.eq.${messageId}`)
           .limit(1);
         if (existing?.[0]) {
+          // ── FIX DEFINITIVO: fromMe=true + LID = capturar LID do destinatário ────────
+          // Quando o CRM envia para phone@s.whatsapp.net, o WhatsApp ecoa de volta
+          // um webhook fromMe=true onde rawJid = LID@lid DO DESTINATÁRIO.
+          // Sem capturar esse LID aqui, quando o destinatário responde com o LID,
+          // não há alias e a mensagem é dropada (Step 0 falha, Step 5 pode falhar).
+          // Com esse registro, Step 0 resolve instantaneamente na próxima resposta.
+          if (fromMe && isLidJid && lidNumero && existing[0].conversa_id) {
+            console.log('WHATSAPP_FROMME_LID_ALIAS_CAPTURE', { conversaId: existing[0].conversa_id, lidNumero, rawJid });
+            registrarAlias(sb, {
+              conversaId: existing[0].conversa_id,
+              tel: null,
+              rawJid,
+              lidNumero,
+              nome: null,
+            }).catch(e => console.warn('WHATSAPP_FROMME_LID_ALIAS_WARN:', e.message));
+          }
           return res.json({ sucesso: true, ignorado: true, motivo: 'mensagem_ja_salva' });
         }
       } else if (db) {
@@ -2655,6 +2671,7 @@ async function webhookReceberMensagem(req, res) {
         if (ex) return res.json({ sucesso: true, ignorado: true, motivo: 'mensagem_ja_salva' });
       }
     }
+
 
     // ── 4b. Se fromMe=true: deduplicação extra por conteúdo+telefone+janela 30s ─
     if (fromMe) {
