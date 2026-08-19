@@ -876,8 +876,9 @@ async function listarConversas(req, res) {
       };
       const rawData = (data || []).filter(c => {
         // Segurança extra: garante lead_id vinculado (o filtro .not('lead_id','is',null) já faz isso no DB)
-        if (!c.lead_id) {
-          console.log('WHATSAPP_LIST_HIDE_NO_LEAD', { id: c.id, telefone: c.telefone, nome: c.nome_contato });
+        // TAMBÉM verifica que o JOIN com leads retornou dados — lead_id pode ser UUID de lead deletado (órfão)
+        if (!c.lead_id || !c.leads) {
+          console.log('WHATSAPP_LIST_HIDE_NO_LEAD', { id: c.id, telefone: c.telefone, nome: c.nome_contato, motivo: c.lead_id ? 'lead_deletado_orfao' : 'lead_id_null' });
           return false;
         }
         if (isLidTelefone(c.telefone)) {
