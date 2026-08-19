@@ -730,13 +730,26 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
                   .update({ dados_extras: { ...ext, lid: lidNumero }, atualizado_em: agora })
                   .eq('id', conversaId);
               }
+              // ── FIX: registrar alias para evitar depender do Evolution API em cada mensagem
+              // Sem este registro, cada resposta LID exigia nova resolução via Evolution API.
+              // Com o alias salvo, Step 0 resolve instantaneamente nas próximas mensagens.
+              registrarAlias(sb, {
+                conversaId,
+                tel: telNorm,
+                rawJid: rawJid || null,
+                lidNumero,
+                nome: !fromMe ? (nome || null) : null,
+              }).catch(e => console.warn('WHATSAPP_ALIAS_EVO5_WARN:', e.message));
               break;
             }
           }
         }
+      } else {
+        console.warn('CONVERSA_LOOKUP_LID_EVO_NO_CONTACT', { lidNumero, lidJidCompleto });
       }
     } catch (e) { console.warn('CONVERSA_LOOKUP_LID_EVO_ERROR', e.message); }
   }
+
 
   // ── Passo 6: LID → nome_contato único ───────────────────────────────────
   // FIX: exclui PENDENTE_IDENTIFICACAO (antes só excluía FECHADA) para não
