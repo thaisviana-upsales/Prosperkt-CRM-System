@@ -3827,17 +3827,28 @@ async function evoCriarInstancia(req, res) {
 /** GET /api/whatsapp/evolution/qrcode */
 async function evoQrCode(req, res) {
   try {
-    // Verifica se já está conectado — não gera novo QR sem desconectar antes
+    const forceReconnect = req.query.forceReconnect === 'true' || req.query.force === 'true';
+
+    // Verifica estado atual
     const estado = await evoSvc.getConnectionState();
     const estadoAtual = (estado.dados?.instance?.state || estado.dados?.state || '').toLowerCase();
 
     if (estadoAtual === 'open') {
-      return res.status(409).json({
-        sucesso: false,
-        erro: 'WhatsApp já está conectado. Desconecte a sessão atual antes de gerar um novo QR Code.',
-        estado: 'open',
-        codigo: 'ALREADY_CONNECTED',
-      });
+      if (forceReconnect) {
+        // Sessão quebrada (session_broken): faz logout para liberar o QR
+        console.log('[EVO_QR] forceReconnect=true + estado open → fazendo logout para regenerar QR');
+        const logoutR = await evoSvc.desconectar();
+        console.log('[EVO_QR] logout resultado:', logoutR.sucesso ? 'OK' : logoutR.erro);
+        // Aguarda 1.5s para o Evolution API processar o logout
+        await new Promise(r => setTimeout(r, 1500));
+      } else {
+        return res.status(409).json({
+          sucesso: false,
+          erro: 'WhatsApp já está conectado. Desconecte a sessão atual antes de gerar um novo QR Code.',
+          estado: 'open',
+          codigo: 'ALREADY_CONNECTED',
+        });
+      }
     }
 
     const r = await evoSvc.getQrCode();
@@ -3853,6 +3864,7 @@ async function evoQrCode(req, res) {
     return res.status(500).json({ sucesso: false, erro: e.message });
   }
 }
+
 
 
 /** DELETE /api/whatsapp/evolution/desconectar */

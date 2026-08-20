@@ -250,8 +250,8 @@ async function carregarEvoStatus() {
     if (sub) {
       sub.innerHTML = '⚠️ A sessão do WhatsApp expirou (reinício do servidor). <strong>Escaneie o QR Code para reconectar.</strong>';
     }
-    // Abre o modal de QR automaticamente após 1 segundo
-    setTimeout(() => { abrirModalQr(); }, 1000);
+    // Abre o modal de QR automaticamente com forceReconnect (logout + novo QR)
+    setTimeout(() => { abrirModalQr(true); }, 1000);
   } else if (estado === 'open' || estado === 'connected') {
     if (dot)   dot.className     = 'sdot g';
     if (label) label.textContent = '🟢 Conectado — Pronto para enviar e receber';
@@ -273,11 +273,11 @@ async function carregarEvoStatus() {
 
 
 
-async function abrirModalQr() {
+async function abrirModalQr(forceReconnect = false) {
   const modal = $id('modal-qr-ov');
   if (modal) modal.style.display = 'flex';
 
-  await carregarQrCode();
+  await carregarQrCode(forceReconnect);
   iniciarPollConexao();
 }
 
@@ -287,16 +287,17 @@ function fecharModalQr() {
   pararPollConexao();
 }
 
-async function carregarQrCode() {
+async function carregarQrCode(forceReconnect = false) {
   const loading = $id('qr-loading');
   const img     = $id('qr-img');
   const errEl   = $id('qr-error');
 
-  if (loading) { loading.style.display = ''; loading.textContent = 'Gerando QR Code...'; }
+  if (loading) { loading.style.display = ''; loading.textContent = forceReconnect ? 'Reconectando sessão... aguarde' : 'Gerando QR Code...'; }
   if (img)     img.style.display = 'none';
   if (errEl)   errEl.style.display = 'none';
 
-  const r = await Auth.api('GET', '/whatsapp/evolution/qrcode');
+  const endpoint = forceReconnect ? '/whatsapp/evolution/qrcode?forceReconnect=true' : '/whatsapp/evolution/qrcode';
+  const r = await Auth.api('GET', endpoint);
 
   if (!r?.ok) {
     if (loading) loading.style.display = 'none';
