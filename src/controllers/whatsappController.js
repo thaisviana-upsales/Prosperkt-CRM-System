@@ -3696,6 +3696,33 @@ async function evoInstanciaStatus(req, res) {
       console.log('[EVOLUTION_STATUS_CONNECTED] rawState desconhecido:', rawState);
     }
 
+    // ── Verificação real de sessão Baileys (detecta "open mas sem sessão") ──────
+    // O connectionState pode mostrar "open" mesmo quando o Baileys perdeu a sessão
+    // (ex: após restart do Railway com storage efêmero). Verificamos com sendPresence
+    // que é leve (não envia mensagem visível) e falha com "No sessions" se quebrado.
+    if (estado === 'connected') {
+      try {
+        const presenceCheck = await evoSvc.call('POST', `/chat/sendPresence/${evoSvc.EVOLUTION_INSTANCE}`, {
+          number: evoSvc.WHATSAPP_OFFICIAL_NUMBER || process.env.WHATSAPP_OFFICIAL_NUMBER || '5511959986136',
+          options: { state: 'paused' },
+        });
+        const presenceErr = presenceCheck.erro || '';
+        const isNoSession = !presenceCheck.sucesso && (
+          presenceErr.toLowerCase().includes('no session') ||
+          presenceErr.toLowerCase().includes('session') ||
+          presenceCheck.status === 400
+        );
+        if (isNoSession) {
+          console.warn('[EVOLUTION_STATUS] connectionState=open mas sessão Baileys quebrada (No sessions). Estado corrigido para session_broken.');
+          estado = 'session_broken';
+        } else {
+          console.log('[EVOLUTION_STATUS] Sessão Baileys OK (presence check passou).');
+        }
+      } catch (ePresence) {
+        console.warn('[EVOLUTION_STATUS] presence check falhou (ignorando):', ePresence.message);
+      }
+    }
+
     console.log('[EVOLUTION_STATUS_CONNECTED] estado:', estado, '| rawState:', rawState);
 
     // ── Secundário: getInstanceInfo — tenta owner/profileName (pode dar 401 no fetchInstances) ──
@@ -3728,7 +3755,9 @@ async function evoInstanciaStatus(req, res) {
       profileName,
       profilePictureUrl,
       // Informa se owner não está disponível (sem apikey global) — não é erro
-      ownerIndisponivel: !owner && estado === 'connected',
+      ownerIndisponivel: !owner && (estado === 'connected'),
+      // session_broken: connectionState=open mas sessão Baileys expirou (ex: restart Railway)
+      sessionBroken:     estado === 'session_broken',
       dados:             stateR.dados,
       erro:              stateR.sucesso ? undefined : stateR.erro,
     });
