@@ -345,7 +345,8 @@ async function getInstanceInfo() {
 
 /**
  * Envia mensagem de texto.
- * Evolution API v1.8.6: payload usa textMessage.text, não text diretamente.
+ * Evolution API v2: payload usa `text` diretamente (não textMessage wrapper).
+ * O campo `textMessage` (v1.8.6) é mantido como fallback para compatibilidade.
  * @param {string} telefone  — número no formato 5511999990000 (sem + e sem @)
  * @param {string} texto
  */
@@ -354,7 +355,8 @@ async function enviarTexto(telefone, texto) {
   console.log(`[EVO] enviarTexto → POST /message/sendText/${EVOLUTION_INSTANCE} | number:${number} | preview:${texto?.slice(0,60)}`);
   return call('POST', `/message/sendText/${EVOLUTION_INSTANCE}`, {
     number,
-    textMessage: { text: texto },
+    text: texto,                   // Evolution API v2 format (primário)
+    textMessage: { text: texto },  // Evolution API v1.8.6 format (compatibilidade)
   });
 }
 
