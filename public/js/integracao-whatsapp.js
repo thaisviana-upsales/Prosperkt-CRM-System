@@ -243,16 +243,7 @@ async function carregarEvoStatus() {
 
   // ── Status da conexão ─────────────────────────────────────────────────────
   const estado = (d.estado || '').toLowerCase();
-  if (estado === 'session_broken') {
-    // Sessão Baileys expirou (ex: Railway reiniciou) mas connectionState ainda mostra "open"
-    if (dot)   dot.className     = 'sdot r';
-    if (label) label.textContent = '🔴 Sessão Expirada — WhatsApp desconectado';
-    if (sub) {
-      sub.innerHTML = '⚠️ A sessão do WhatsApp expirou (reinício do servidor). <strong>Escaneie o QR Code para reconectar.</strong>';
-    }
-    // Abre o modal de QR automaticamente com forceReconnect (logout + novo QR)
-    setTimeout(() => { abrirModalQr(true); }, 1000);
-  } else if (estado === 'open' || estado === 'connected') {
+  if (estado === 'open' || estado === 'connected') {
     if (dot)   dot.className     = 'sdot g';
     if (label) label.textContent = '🟢 Conectado — Pronto para enviar e receber';
     if (sub)   sub.textContent   = 'WhatsApp conectado e funcionando via Evolution API.';
@@ -273,13 +264,14 @@ async function carregarEvoStatus() {
 
 
 
-async function abrirModalQr(forceReconnect = false) {
+async function abrirModalQr() {
   const modal = $id('modal-qr-ov');
   if (modal) modal.style.display = 'flex';
 
-  await carregarQrCode(forceReconnect);
+  await carregarQrCode();
   iniciarPollConexao();
 }
+
 
 function fecharModalQr() {
   const modal = $id('modal-qr-ov');
