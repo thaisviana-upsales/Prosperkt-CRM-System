@@ -2,11 +2,39 @@
 
 ## ⚠️ VERSÃO ESTÁVEL BLOQUEADA
 
-**Tag git:** `v-stable-whatsapp-instagram-direct-2026-08-18`
-**Commit:** `6d8a367`
-**Data:** 2026-08-18
+**Tag git:** `v-stable-whatsapp-enviando-2026-08-21`
+**Commit:** `d0d0653`
+**Data:** 2026-08-21
 
-Esta versão foi confirmada pelo usuário como funcionando corretamente.
+Esta versão foi confirmada com envio e recebimento funcionando (HTTP 201 confirmado para Ani NWB).
+
+**Tag anterior:** `v-stable-whatsapp-instagram-direct-2026-08-18` (commit `6d8a367`)
+
+---
+
+## 🚫 INSTÂNCIA EVOLUTION API — PROTEÇÃO ABSOLUTA
+
+**Instância ativa:** `Prospekt_v3`
+**Status confirmado:** Conectada e enviando mensagens (2026-08-21 17:24)
+**Webhook configurado:** `https://prosperkt-crm-system-production.up.railway.app/api/whatsapp/webhook`
+
+### PROIBIDO — NUNCA EXECUTAR SEM AUTORIZAÇÃO EXPLÍCITA DO USUÁRIO:
+- `DELETE /instance/logout/Prospekt_v3`
+- `DELETE /instance/delete/Prospekt_v3`
+- `POST /instance/create` (criar nova instância)
+- Qualquer chamada que modifique ou remova a instância `Prospekt_v3`
+- Qualquer curl ou script que chame os endpoints acima
+
+### PROIBIDO — NUNCA ALTERAR:
+- `EVOLUTION_API_KEY` no Railway (valor: `92b30e1kk99k4kd874k0n`)
+- `EVOLUTION_INSTANCE` no Railway (valor: `Prospekt_v3`)
+- A configuração do webhook da instância
+
+### SE A SESSÃO PARECER QUEBRADA:
+1. Verificar connectionState via curl APENAS para diagnóstico
+2. NUNCA fazer logout automaticamente
+3. NUNCA recriar a instância sem autorização explícita
+4. Reportar ao usuário e aguardar instrução
 
 ---
 
