@@ -298,18 +298,14 @@ async function abrirConversa(id) {
   // Popula header — oculta o LID fictício, mostra info amigável
   const nome = _convAtiva.nome_contato || _convAtiva.lead_nome || _convAtiva.telefone;
   const isLidPhone = (_convAtiva.telefone || '').startsWith('LID:');
-  const telDisplay = isLidPhone ? 'Sem número real — clique em Informar Número' : (_convAtiva.telefone || '—');
+  const telDisplay = isLidPhone ? 'Contato WhatsApp' : (_convAtiva.telefone || '—');
   document.getElementById('chat-nome').textContent = nome;
   document.getElementById('chat-avatar').textContent = (nome || '??').slice(0, 2).toUpperCase();
   document.getElementById('chat-tel').textContent = telDisplay;
-  document.getElementById('chat-tel').style.color = isLidPhone ? '#f59e0b' : '';
-  document.getElementById('chat-tel').style.cursor = isLidPhone ? 'pointer' : '';
-  if (isLidPhone) {
-    document.getElementById('chat-tel').title = 'Clique para informar o número real';
-    document.getElementById('chat-tel').onclick = () => _abrirModalInformarNumero(_convAtiva);
-  } else {
-    document.getElementById('chat-tel').onclick = null;
-  }
+  document.getElementById('chat-tel').style.color = '';
+  document.getElementById('chat-tel').style.cursor = '';
+  document.getElementById('chat-tel').title = '';
+  document.getElementById('chat-tel').onclick = null;
   document.getElementById('chat-status-text').innerHTML =
     _convAtiva.status === 'ABERTA' ? '<span class="online">● Online</span>' :
     _convAtiva.status === 'AGUARDANDO' ? '⌛ Aguardando resposta' : '✓ Fechada';
@@ -975,9 +971,9 @@ async function enviarMensagem() {
       erroMsg,
     });
 
-    // LID_NAO_ENVIAVEL: contato Instagram Direct — destaca botão Criar Lead
+    // LID_NAO_ENVIAVEL: contato WhatsApp no novo formato LID — destaca botão Criar Lead
     if (erroCodigo === 'LID_NAO_ENVIAVEL') {
-      Toast.show('📱 Contato via Instagram Direct. Informe o número WhatsApp real clicando em "Criar Lead".', 'error');
+      Toast.show('⚠️ Não foi possível enviar. Clique em "Criar Lead" e informe o número para responder.', 'error');
       // Pisca e destaca o botão Criar Lead
       const btnCL = document.getElementById('btn-criar-lead-conversa');
       if (btnCL) {

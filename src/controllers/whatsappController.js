@@ -1280,13 +1280,13 @@ async function enviarMensagem(req, res) {
           message: evoErr,
         });
 
-        // Detecta contato LID não enviável (Instagram Direct — exists: false)
+        // Detecta contato LID com erro exists:false (novo formato WhatsApp)
         const _evoDataMsg = evoRes.dados?.response?.message;
         const _isLidNaoEnviavel = Array.isArray(_evoDataMsg) && _evoDataMsg.some(m => m?.exists === false);
         if (_isLidNaoEnviavel || (evoRes.status === 400 && (conversa.telefone || '').startsWith('LID:'))) {
           return res.status(400).json({
             sucesso: false,
-            erro: 'Este contato é do Instagram Direct e não possui número de WhatsApp acessível. Use o botão "Criar Lead" para informar o número real e habilitar o envio.',
+            erro: 'Não foi possível enviar. Contato usa o novo formato de identificação WhatsApp (LID). Atualize o Evolution API para resolver.',
             codigo: 'LID_NAO_ENVIAVEL',
           });
         }
