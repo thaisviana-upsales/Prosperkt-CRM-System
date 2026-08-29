@@ -2773,6 +2773,10 @@ async function webhookReceberMensagem(req, res) {
     // ── 5. Busca lead pelo telefone (normalizado) ────────────────────────────
     let leadId = null;
     const telSem55 = (telFinal && telFinal.startsWith('55') && telFinal.length >= 12) ? telFinal.slice(2) : null;
+    // Declaradas aqui (escopo pai) para ficarem visíveis no step 5b, 5c E no step 6.
+    // ERRO ANTERIOR: estavam dentro do if(isSupa) do step 5, causando ReferenceError no step 6.
+    let aliasConversaEncontrada = null; // conversa_id resolvida via alias de LID — bypassa 5c e step 6
+    let lidLeadCriadoNesta      = false; // lead criado nesta req para LID sem tel real
 
     if (isSupa) {
       let leadsFound = null;
@@ -2799,7 +2803,7 @@ async function webhookReceberMensagem(req, res) {
       // quebra o filtro PostgREST quando passado dentro de .or(`col.eq.${val}`).
       // FIX 2: quando alias tem conversa_id mas sem lead_id, flag aliasConversaEncontrada
       // impede que 5c rode e crie lead desnecessário.
-      let aliasConversaEncontrada = null; // conversa_id resolvida via alias — bypassa 5c
+      // (aliasConversaEncontrada declarada no escopo pai, linha ~2778)
       if (!leadId && isLidJid && lidNumero) {
         try {
           console.log('WA_INBOUND_ALIAS_LOOKUP_START', { lidNumero, rawJid });
@@ -2888,7 +2892,7 @@ async function webhookReceberMensagem(req, res) {
       //   • NÃO correlacionar por nome, empresa ou heurística aproximada
       //   • NÃO criar em outro funil se Instagram Direct não existir
       //   • LID sem telefone real → funil Instagram Direct com LID como identificador técnico
-      let lidLeadCriadoNesta = false; // flag: lead criado nesta req para LID sem tel real (identidade técnica)
+      // (lidLeadCriadoNesta declarada no escopo pai, linha ~2779)
       // FIX CRÍTICO: se alias já resolveu a conversa (aliasConversaEncontrada != null),
       // NÃO criar lead novo — a mensagem será roteada para a conversa existente.
       if (!leadId && !fromMe && !aliasConversaEncontrada) {
