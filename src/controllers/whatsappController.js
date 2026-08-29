@@ -1134,8 +1134,28 @@ async function enviarMensagem(req, res) {
       }
     }
 
-    // 3. Fallback: normalizePhone sem exigir 55 (números internacionais válidos)
-    if (!telParaEnvio && conversa.telefone) {
+    // 3. Fallback: remoteJid do dados_extras (para conversas LID sem telefone real)
+    // Evolution API aceita JID diretamente (ex: "148382630805756@lid") no campo number
+    if (!telParaEnvio && (conversa.telefone || '').startsWith('LID:')) {
+      try {
+        const ext = typeof conversa.dados_extras === 'object'
+          ? (conversa.dados_extras || {})
+          : JSON.parse(conversa.dados_extras || '{}');
+        const rawJidExt = ext.remoteJid || ext.lid;
+        if (rawJidExt) {
+          // Normaliza: se for só o número sem @, adiciona @lid
+          const jidDestino = rawJidExt.includes('@') ? rawJidExt : `${rawJidExt}@lid`;
+          telParaEnvio = jidDestino;
+          phoneSource  = 'dados_extras_lid_jid';
+          console.log('WHATSAPP_SEND_LID_JID_SOURCE', { jidDestino, remoteJid: rawJidExt });
+        }
+      } catch(_eLid) {
+        console.warn('WHATSAPP_SEND_LID_EXTRACT_WARN:', _eLid.message);
+      }
+    }
+
+    // 4. Fallback: normalizePhone sem exigir 55 (números internacionais válidos)
+    if (!telParaEnvio && conversa.telefone && !conversa.telefone.startsWith('LID:')) {
       const telFallback = normalizePhone(conversa.telefone);
       if (telFallback && telFallback.length >= 10) {
         telParaEnvio = telFallback;
@@ -1143,37 +1163,18 @@ async function enviarMensagem(req, res) {
       }
     }
 
-    // Logs obrigatórios de diagnóstico do telefone
-    console.log('WHATSAPP_SEND_PHONE_SOURCE',       { source: phoneSource, raw: conversa.telefone });
-    console.log('WHATSAPP_SEND_PHONE_FINAL',         { phone_final: telParaEnvio, starts_with_55: telParaEnvio?.startsWith('55') });
-    console.log('WHATSAPP_SEND_INSTANCE_USED',       evoSvc.EVOLUTION_INSTANCE);
-
-    // Validações obrigatórias antes de enviar
-    const telDigits = (telParaEnvio || '').replace(/\D/g, '');
-    const isLidDestination = !telParaEnvio ||
-      telDigits.length >= 14 && !telDigits.startsWith('55') ||
-      (conversa.telefone || '').startsWith('LID:') ||
-      (conversa.telefone || '').includes('@lid');
-
-    console.log('WHATSAPP_SEND_IS_LID_DESTINATION', isLidDestination);
-
-    if (isLidDestination) {
-      console.error('WHATSAPP_SEND_BLOCKED_LID', { telefone: conversa.telefone, leadId: conversa.lead_id });
-      return res.status(400).json({
-        sucesso: false,
-        erro: 'Telefone do cliente inválido para envio. A conversa não possui telefone real — apenas identificador interno (LID). Envie uma mensagem primeiro ou atualize o telefone do lead.',
-        codigo: 'TELEFONE_LID_INVALIDO',
-      });
-    }
+    // Logs de diagnóstico
+    console.log('WHATSAPP_SEND_PHONE_SOURCE',  { source: phoneSource, raw: conversa.telefone });
+    console.log('WHATSAPP_SEND_PHONE_FINAL',   { phone_final: telParaEnvio });
+    console.log('WHATSAPP_SEND_INSTANCE_USED', evoSvc.EVOLUTION_INSTANCE);
 
     if (!telParaEnvio) {
       console.error('WHATSAPP_SEND_BLOCKED_NO_PHONE', { telefone: conversa.telefone });
-      return res.status(400).json({ sucesso: false, erro: 'Conversa sem telefone válido para envio.' });
+      return res.status(400).json({ sucesso: false, erro: 'Conversa sem telefone ou JID válido para envio.' });
     }
 
     const telNormalizado = telParaEnvio;
     console.log('WHATSAPP_SEND_PAYLOAD_TYPE', 'text');
-
 
 
     // ── 3. Monta texto com identificação do remetente ─────────────────────────
@@ -4343,7 +4344,35 @@ module.exports = {
   executarDeduplicacao,
   // debug inbound
   debugLastInbound,
+  atualizarConversa,
 };
+
+// ─── PATCH /api/whatsapp/conversas/:id ────────────────────────────────────────
+// Atualiza lead_id, nome_contato e/ou telefone de uma conversa.
+// Usado pelo modal "Criar Lead" no frontend.
+async function atualizarConversa(req, res) {
+  try {
+    const { sb, isSupa } = getProvider();
+    const { id } = req.params;
+    if (!isSupa) return res.status(400).json({ sucesso: false, erro: 'Apenas Supabase suportado.' });
+
+    const campos = {};
+    if (req.body.lead_id     !== undefined) campos.lead_id     = req.body.lead_id;
+    if (req.body.nome_contato !== undefined) campos.nome_contato = req.body.nome_contato;
+    if (req.body.telefone     !== undefined) campos.telefone    = req.body.telefone;
+    if (req.body.status       !== undefined) campos.status      = req.body.status;
+    campos.atualizado_em = new Date().toISOString();
+
+    const { data, error } = await sb.from(CONVERSAS_TABLE).update(campos).eq('id', id).select().single();
+    if (error) throw error;
+    return res.json({ sucesso: true, dados: data });
+  } catch(e) {
+    console.error('[WA] atualizarConversa:', e.message);
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}
+
+
 
 // ───────────────────────────────────────────────────────────────────────────────
 // GET /api/whatsapp/debug/last-inbound

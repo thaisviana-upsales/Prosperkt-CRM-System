@@ -295,18 +295,20 @@ async function abrirConversa(id) {
     }
   }
 
-  // Popula header
+  // Popula header — oculta o LID fictício, mostra info amigável
   const nome = _convAtiva.nome_contato || _convAtiva.lead_nome || _convAtiva.telefone;
+  const isLidPhone = (_convAtiva.telefone || '').startsWith('LID:');
+  const telDisplay = isLidPhone ? 'Contato WhatsApp (sem telefone real)' : (_convAtiva.telefone || '—');
   document.getElementById('chat-nome').textContent = nome;
   document.getElementById('chat-avatar').textContent = (nome || '??').slice(0, 2).toUpperCase();
-  document.getElementById('chat-tel').textContent = _convAtiva.telefone;
+  document.getElementById('chat-tel').textContent = telDisplay;
   document.getElementById('chat-status-text').innerHTML =
     _convAtiva.status === 'ABERTA' ? '<span class="online">● Online</span>' :
     _convAtiva.status === 'AGUARDANDO' ? '⌛ Aguardando resposta' : '✓ Fechada';
 
   // Popula painel info
   document.getElementById('info-nome').textContent = nome;
-  document.getElementById('info-tel').textContent  = _convAtiva.telefone;
+  document.getElementById('info-tel').textContent  = telDisplay;
   document.getElementById('info-empresa').textContent = _convAtiva.lead_empresa || '—';
   document.getElementById('info-vendedor').textContent = _convAtiva.vendedor_nome || '—';
 
@@ -314,6 +316,21 @@ async function abrirConversa(id) {
     const linkWrap = document.getElementById('info-lead-link-wrap');
     linkWrap.style.display = '';
     document.getElementById('info-lead-link').href = `/pipeline.html?lead=${_convAtiva.lead_id}`;
+  }
+
+  // Botão "Criar Lead" para conversas sem lead vinculado
+  const btnCriarLeadExistente = document.getElementById('btn-criar-lead-conversa');
+  if (btnCriarLeadExistente) btnCriarLeadExistente.remove();
+  if (!_convAtiva.lead_id) {
+    const chatHeader = document.getElementById('chat-header');
+    const btnCL = document.createElement('button');
+    btnCL.id = 'btn-criar-lead-conversa';
+    btnCL.title = 'Criar lead para este contato';
+    btnCL.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg> Criar Lead`;
+    btnCL.style.cssText = 'background:var(--green,#25d366);color:#fff;border:none;border-radius:8px;padding:5px 12px;font-size:.78rem;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;margin-left:auto;flex-shrink:0';
+    btnCL.addEventListener('click', () => abrirModalCriarLeadConversa(_convAtiva));
+    // Inserir antes dos ícones de ação (último filho)
+    chatHeader.appendChild(btnCL);
   }
 
   await carregarMensagens(id);
@@ -1647,6 +1664,111 @@ async function _waLoadImg(imgEl) {
       errEl.style.display = 'flex';
     }
   }
+}
+
+// ─── Modal Criar Lead a partir de Conversa WhatsApp ───────────────────────────
+async function abrirModalCriarLeadConversa(conversa) {
+  // Remove modal anterior se existir
+  document.getElementById('modal-criar-lead-wa')?.remove();
+
+  // Busca funis disponíveis
+  let funis = [];
+  try {
+    const r = await Auth.api('GET', '/funis');
+    funis = r?.data?.funis || r?.data || [];
+  } catch {}
+
+  // Nome sugerido: nome_contato sem LID:
+  const nomeSugerido = (conversa.nome_contato || '').startsWith('LID:')
+    ? '' : (conversa.nome_contato || '');
+
+  const modal = document.createElement('div');
+  modal.id = 'modal-criar-lead-wa';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;display:flex;align-items:center;justify-content:center';
+  modal.innerHTML = `
+    <div style="background:#1a2332;border-radius:16px;padding:28px;width:380px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+      <h3 style="margin:0 0 20px;color:#fff;font-size:1.1rem">➕ Criar Lead</h3>
+      <label style="display:block;margin-bottom:14px">
+        <span style="color:#adb5bd;font-size:.82rem;display:block;margin-bottom:6px">Nome do contato *</span>
+        <input id="cl-nome" type="text" value="${nomeSugerido}" placeholder="Nome completo"
+          style="width:100%;background:#0d1929;border:1px solid #2d3748;border-radius:8px;padding:10px 12px;color:#fff;font-size:.9rem;box-sizing:border-box">
+      </label>
+      <label style="display:block;margin-bottom:14px">
+        <span style="color:#adb5bd;font-size:.82rem;display:block;margin-bottom:6px">Telefone (com DDD e 55)</span>
+        <input id="cl-tel" type="text" placeholder="5511999999999"
+          style="width:100%;background:#0d1929;border:1px solid #2d3748;border-radius:8px;padding:10px 12px;color:#fff;font-size:.9rem;box-sizing:border-box">
+      </label>
+      <label style="display:block;margin-bottom:20px">
+        <span style="color:#adb5bd;font-size:.82rem;display:block;margin-bottom:6px">Funil</span>
+        <select id="cl-funil" style="width:100%;background:#0d1929;border:1px solid #2d3748;border-radius:8px;padding:10px 12px;color:#fff;font-size:.9rem;box-sizing:border-box">
+          ${funis.map(f => `<option value="${f.id}">${f.nome}</option>`).join('')}
+        </select>
+      </label>
+      <div id="cl-erro" style="color:#f87171;font-size:.82rem;margin-bottom:12px;display:none"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button id="cl-cancelar" style="background:transparent;color:#adb5bd;border:1px solid #2d3748;border-radius:8px;padding:9px 18px;cursor:pointer;font-size:.88rem">Cancelar</button>
+        <button id="cl-salvar" style="background:#25d366;color:#fff;border:none;border-radius:8px;padding:9px 20px;cursor:pointer;font-size:.88rem;font-weight:600">Criar Lead</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+  document.getElementById('cl-nome').focus();
+  document.getElementById('cl-cancelar').onclick = () => modal.remove();
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+
+  document.getElementById('cl-salvar').onclick = async () => {
+    const nome  = document.getElementById('cl-nome').value.trim();
+    const tel   = document.getElementById('cl-tel').value.trim().replace(/\D/g,'') || null;
+    const funilId = document.getElementById('cl-funil').value;
+    const erroEl = document.getElementById('cl-erro');
+
+    if (!nome) { erroEl.textContent = 'Nome é obrigatório.'; erroEl.style.display=''; return; }
+    erroEl.style.display = 'none';
+    document.getElementById('cl-salvar').disabled = true;
+    document.getElementById('cl-salvar').textContent = 'Criando...';
+
+    try {
+      // Busca pipeline e etapa do funil
+      const rpipe = await Auth.api('GET', `/pipelines?funil_id=${funilId}`);
+      const pipeline = (rpipe?.data?.pipelines || rpipe?.data || [])[0];
+      if (!pipeline) throw new Error('Nenhuma pipeline encontrada para este funil.');
+
+      const retapa = await Auth.api('GET', `/etapas?pipeline_id=${pipeline.id}`);
+      const etapas = retapa?.data?.etapas || retapa?.data || [];
+      const etapa = etapas.find(e => /recebido/i.test(e.nome)) || etapas[0];
+      if (!etapa) throw new Error('Nenhuma etapa encontrada.');
+
+      // Cria o lead
+      const telefoneParaLead = tel ? (tel.startsWith('55') ? tel : `55${tel}`) : `LID:${conversa.id.slice(0,12)}`;
+      const rlead = await Auth.api('POST', '/leads', {
+        nome, telefone: telefoneParaLead,
+        funil_id: funilId, pipeline_id: pipeline.id, etapa_id: etapa.id,
+        status: 'ABERTO', origem: 'WhatsApp Recebido',
+        dados_extras: JSON.stringify({ criado_da_conversa_whatsapp: conversa.id }),
+      });
+      if (!rlead?.ok) throw new Error(rlead?.data?.erro || 'Erro ao criar lead.');
+      const leadId = rlead.data.lead?.id || rlead.data.id;
+
+      // Vincula lead à conversa
+      const telParaConversa = tel ? (tel.startsWith('55') ? tel : `55${tel}`) : conversa.telefone;
+      await Auth.api('PATCH', `/whatsapp/conversas/${conversa.id}`, {
+        lead_id: leadId,
+        nome_contato: nome,
+        telefone: telParaConversa,
+      });
+
+      modal.remove();
+      // Recarrega conversa com novo lead
+      await abrirConversa(conversa.id);
+      // Remove botão criar lead (agora tem lead)
+      document.getElementById('btn-criar-lead-conversa')?.remove();
+    } catch(err) {
+      erroEl.textContent = err.message || 'Erro ao criar lead.';
+      erroEl.style.display = '';
+      document.getElementById('cl-salvar').disabled = false;
+      document.getElementById('cl-salvar').textContent = 'Criar Lead';
+    }
+  };
 }
 
 // ─── Kick-off ─────────────────────────────────────────────────────────────────
