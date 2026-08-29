@@ -2928,14 +2928,28 @@ async function webhookReceberMensagem(req, res) {
                             .then(() => {})
                             .catch(() => {});
                         } else {
-                          // Não conseguiu reconciliar — alias sem lead persiste.
-                          // A mensagem será salva na conversa do alias, mas a conversa vai ficar
-                          // invisível até ser vinculada manualmente. Melhor do que criar lead errado.
+                          // Reconciliação falhou — alias aponta para conversa orfão sem lead.
+                          // Se continuar com aliasConversaEncontrada setado, a mensagem vai para
+                          // conversa invisível (filtrada por .not('lead_id','is',null) na UI).
+                          // FIX: limpar aliasConversaEncontrada → 5c vai rodar → Evolution API
+                          // tenta resolver o telefone real do LID → se encontrar, usa conversa
+                          // canônica do lead → se não encontrar, cria lead em Instagram Direct VISÍVEL.
                           console.log('WA_INBOUND_ALIAS_RECONCILE_FAILED', {
                             conversaId: _aliasRow.conversa_id,
-                            motivo: 'sem_mensagem_enviada_e_sem_dados_extras_match',
-                            acao: 'mensagem_salva_em_conversa_orfao_aguarda_vinculacao',
+                            motivo: 'alias_orfao_sem_lead_sem_mensagem_enviada',
+                            acao: 'limpando_alias_5c_vai_resolver_visivelmente',
                           });
+                          aliasConversaEncontrada = null; // ← limpar para 5c rodar
+                          // Remove alias ruim do banco (fire-and-forget, queries separadas — sem .or() com @)
+                          if (rawJid) {
+                            sb.from(ALIAS_TABLE).delete().eq('remote_jid', rawJid)
+                              .then(() => console.log('WA_INBOUND_ORPHAN_ALIAS_DELETED', { rawJid }))
+                              .catch(() => {});
+                          }
+                          if (lidNumero) {
+                            sb.from(ALIAS_TABLE).delete().eq('lid', lidNumero)
+                              .then(() => {}).catch(() => {});
+                          }
                         }
                       }
                     } catch(_eRec) {
