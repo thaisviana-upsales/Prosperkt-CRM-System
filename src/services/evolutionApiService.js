@@ -345,42 +345,41 @@ async function getInstanceInfo() {
 
 /**
  * Envia mensagem de texto.
- * Evolution API v1.8.5: payload usa textMessage.text, não text diretamente.
- * @param {string} telefone  — número no formato 5511999990000 (sem + e sem @)
+ * Evolution API v2.x: payload usa `text` direto na raiz (não mais textMessage.text).
+ * @param {string} telefone  — número no formato 5511999990000 ou JID (@lid, @s.whatsapp.net)
  * @param {string} texto
  */
 async function enviarTexto(telefone, texto) {
   // Preserva JIDs (@lid, @s.whatsapp.net) — remove apenas espaços
-  // NÃO usa replace(/\D/g,'') porque isso converte '102276223995915@lid' em '102276223995915'
-  // que a Evolution API não reconhece (exists: false)
   const number = telefone.includes('@')
     ? telefone.trim()                     // JID: passa exato
     : telefone.replace(/[\s()\-]/g, '');  // Telefone: remove apenas espaços/hífens
   console.log(`[EVO] enviarTexto → POST /message/sendText/${EVOLUTION_INSTANCE} | number:${number} | preview:${texto?.slice(0,60)}`);
   return call('POST', `/message/sendText/${EVOLUTION_INSTANCE}`, {
     number,
-    textMessage: { text: texto },
+    text: texto,  // v2.x: campo direto na raiz (v1.x usava textMessage:{text})
   });
 }
 
 /**
  * Envia mídia (imagem, documento, áudio, vídeo).
- * Evolution API v2: propriedades encapsuladas em mediaMessage: {}
+ * Evolution API v2.x: campos na raiz do payload (sem wrapper mediaMessage:{}).
  * @param {string} telefone
  * @param {{ mediatype, mimetype, caption, media, fileName, ptt }} opcoes
  */
 async function enviarMidia(telefone, opcoes) {
-  const number = telefone.replace(/\D/g, '');
+  // Preserva JIDs (@lid, @s.whatsapp.net)
+  const number = telefone.includes('@')
+    ? telefone.trim()
+    : telefone.replace(/\D/g, '');
   return call('POST', `/message/sendMedia/${EVOLUTION_INSTANCE}`, {
     number,
-    mediaMessage: {
-      mediatype: opcoes.mediatype || 'image',
-      mimetype:  opcoes.mimetype  || 'image/jpeg',
-      caption:   opcoes.caption   || '',
-      media:     opcoes.media,      // URL pública ou base64
-      fileName:  opcoes.fileName   || 'arquivo',
-      ...(opcoes.ptt ? { ptt: true } : {}),  // PTT = mensagem de voz (bolha de voz)
-    },
+    mediatype: opcoes.mediatype || 'image',
+    mimetype:  opcoes.mimetype  || 'image/jpeg',
+    caption:   opcoes.caption   || '',
+    media:     opcoes.media,      // URL pública ou base64
+    fileName:  opcoes.fileName   || 'arquivo',
+    ...(opcoes.ptt ? { ptt: true } : {}),  // PTT = mensagem de voz
   });
 }
 
