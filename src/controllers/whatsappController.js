@@ -881,58 +881,35 @@ async function listarConversas(req, res) {
     if (isSupa) {
       let q = sb.from(CONVERSAS_TABLE)
         .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa)')
-        .not('lead_id', 'is', null)  // REGRA: só exibe conversas vinculadas a um lead do CRM
         .order('ultima_msg_em', { ascending: false, nullsFirst: false })
         .range(Number(offset), Number(offset) + Number(limit) - 1);
       if (role === 'VENDEDOR') q = q.eq('vendedor_id', req.usuario.id);
       if (vendedor_id) q = q.eq('vendedor_id', vendedor_id);
-      // Por padrão: exclui FECHADA (inclui duplicatas marcadas por deduplicação)
-      // Se o usuário pedir status=FECHADA explicitamente, mostra normalmente
+      // Por padrão: exclui FECHADA e PENDENTE_IDENTIFICACAO
       if (status) {
         q = q.eq('status', status);
       } else {
-        // Por padrão: exclui FECHADA e PENDENTE_IDENTIFICACAO (conversas LID não resolvidas)
         q = q.neq('status', 'FECHADA').neq('status', 'PENDENTE_IDENTIFICACAO');
       }
-      if (busca)       q = q.or(`telefone.ilike.%${busca}%,nome_contato.ilike.%${busca}%`);
+      // Exclui conversas explicitamente invisíveis (visivel=false)
+      q = q.neq('visivel', false);
+      if (busca) q = q.or(`telefone.ilike.%${busca}%,nome_contato.ilike.%${busca}%`);
       const { data, error } = await q;
       if (error) throw error;
 
-      // ── FIX: filtro pós-query de conversas com telefone LID ─────────────────────
-      // Supabase não suporta regex nem "NOT LIKE" encadeado facilmente no PostgREST.
-      // Portanto: filtra no Node.js após a query.
-      // Critérios de exclusão:
-      //   • telefone LIKE 'LID:%'
-      //   • telefone numérico com 14+ dígitos que NÃO começa com '55'
-      //   • dados_extras.tipo_identidade = 'lid' ou 'lid_nao_resolvido'
-      // Objetivo: conversa LID NUNCA aparece na lista principal.
-      const isLidTelefone = (tel) => {
-        if (!tel) return false;
-        const t = String(tel).trim();
-        if (t.startsWith('LID:')) return true;
-        const digits = t.replace(/\D/g, '');
-        if (digits.length >= 14 && !digits.startsWith('55')) return true;
-        return false;
-      };
+      // FIX DEFINITIVO (2026-08-29): incluir conversas de novos contatos WhatsApp
+      // mesmo sem lead_id vinculado — essas são conversas reais de números que
+      // mandaram mensagem mas ainda não têm cadastro no CRM.
       const rawData = (data || []).filter(c => {
-        // Segurança extra: garante lead_id vinculado (o filtro .not('lead_id','is',null) já faz isso no DB)
-        // TAMBÉM verifica que o JOIN com leads retornou dados — lead_id pode ser UUID de lead deletado (órfão)
-        if (!c.lead_id || !c.leads) {
-          console.log('WHATSAPP_LIST_HIDE_NO_LEAD', { id: c.id, telefone: c.telefone, nome: c.nome_contato, motivo: c.lead_id ? 'lead_deletado_orfao' : 'lead_id_null' });
+        // Ocultar: conversas com lead_id que apontam para lead DELETADO (órfão)
+        if (c.lead_id && !c.leads) {
+          console.log('WHATSAPP_LIST_HIDE_ORPHAN', { id: c.id, lead_id: c.lead_id, motivo: 'lead_deletado' });
           return false;
         }
-        if (isLidTelefone(c.telefone)) {
-          console.log('WHATSAPP_LIST_HIDE_LID_ONLY_CONVERSATION', { id: c.id, telefone: c.telefone, nome: c.nome_contato });
-          return false;
-        }
-        const ext = (() => { try { return typeof c.dados_extras === 'object' ? (c.dados_extras || {}) : JSON.parse(c.dados_extras || '{}'); } catch { return {}; } })();
-        const tipoId = ext.tipo_identidade || '';
-        if (tipoId === 'lid' || tipoId === 'lid_nao_resolvido') {
-          console.log('WHATSAPP_LIST_HIDE_LID_ONLY_CONVERSATION', { id: c.id, tipo_identidade: tipoId });
-          return false;
-        }
+        // Mostrar tudo o que está ABERTA/AGUARDANDO e não é órfão
         return true;
       });
+
 
       const conversas = rawData.map(c => ({
         ...c,
@@ -3363,8 +3340,8 @@ async function webhookReceberMensagem(req, res) {
             const _convNovoId = crypto.randomBytes(16).toString('hex');
             const { data: _nc, error: _enc } = await sb.from(CONVERSAS_TABLE).insert({
               id: _convNovoId, telefone: _telNovo, nome_contato: _nomeNovo,
-              lead_id: leadId || null, origem: 'WHATSAPP_WEBHOOK', status: 'ABERTA',
-              dados_extras: JSON.stringify({ lid: lidNumero || null, remoteJid: rawJid || null, tipo_identidade: isLidJid ? 'lid' : 'telefone', criado_via: 'garantia_inbound' }),
+              lead_id: leadId || null, origem: 'WHATSAPP_WEBHOOK', status: 'ABERTA', visivel: true,
+              dados_extras: JSON.stringify({ lid: lidNumero || null, remoteJid: rawJid || null, criado_via: 'garantia_inbound' }),
               criado_em: agora, atualizado_em: agora,
             }).select('id').single();
             if (!_enc && _nc) {
@@ -3386,12 +3363,12 @@ async function webhookReceberMensagem(req, res) {
         const novoConvId = crypto.randomBytes(16).toString('hex');
         const telParaConversa = telFinal || null;
         const dadosExtrasNova = isLidJid && lidNumero
-          ? JSON.stringify({ lid: lidNumero, remoteJid: rawJid, tipo_identidade: 'lid' })
+          ? JSON.stringify({ lid: lidNumero, remoteJid: rawJid })
           : null;
         console.log('WHATSAPP_INBOUND_CONVERSA_CREATED', { tel: telParaConversa, lidNumero: lidNumero || null, leadId, nomeContato });
         const { data: novaConv, error: errC } = await sb.from(CONVERSAS_TABLE).insert({
           id: novoConvId, telefone: telParaConversa, nome_contato: nomeContato,
-          lead_id: leadId || null, origem: 'WHATSAPP_WEBHOOK', status: 'ABERTA',
+          lead_id: leadId || null, origem: 'WHATSAPP_WEBHOOK', status: 'ABERTA', visivel: true,
           dados_extras: dadosExtrasNova, criado_em: agora, atualizado_em: agora,
         }).select('id').single();
         if (!errC && novaConv) {
