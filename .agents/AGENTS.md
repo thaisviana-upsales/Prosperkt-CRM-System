@@ -2,13 +2,13 @@
 
 ## ⚠️ VERSÃO ESTÁVEL BLOQUEADA
 
-**Tag git:** `v-stable-whatsapp-enviando-2026-08-21`
-**Commit:** `d0d0653`
-**Data:** 2026-08-21
+**Tag git:** `v-stable-whatsapp-enviando-recebendo-2026-08-29`
+**Commit:** `b8ede98`
+**Data:** 2026-08-29
 
-Esta versão foi confirmada com envio e recebimento funcionando (HTTP 201 confirmado para Ani NWB).
+Esta versão foi confirmada com envio E recebimento funcionando (10:43 BRT — respostas aparecendo no CRM na conversa correta).
 
-**Tag anterior:** `v-stable-whatsapp-instagram-direct-2026-08-18` (commit `6d8a367`)
+**Tag anterior (só envio):** `v-stable-whatsapp-enviando-2026-08-21` (commit `d0d0653`)
 
 ---
 
@@ -47,12 +47,22 @@ Os seguintes fluxos estão funcionando e NÃO podem ser alterados:
 - Envio de arquivos/imagens
 - Qualquer lógica nos endpoints `POST /api/whatsapp/conversas/:id/mensagens`
 
-### WhatsApp — Recebimento de leads existentes (BLOQUEADO)
-- Fluxo de recebimento de texto para leads já cadastrados no CRM
-- Fluxo de recebimento de áudio para leads já cadastrados
-- Fluxo de recebimento de arquivos para leads já cadastrados
+### WhatsApp — Recebimento inbound (BLOQUEADO — confirmado 2026-08-29)
+Os seguintes fluxos estão funcionando e NÃO podem ser alterados:
+- Recebimento de texto de leads com LID (`@lid`)
+- Recebimento de texto de leads com telefone real
+- Recebimento de áudio para leads já cadastrados
+- Recebimento de arquivos para leads já cadastrados
 - Player de áudio (frontend e backend)
 - Download de mídias do bucket `whatsapp-midias`
+
+### Lógica inbound protegida (BLOQUEADO)
+Os seguintes blocos em `src/controllers/whatsappController.js` NÃO podem ser alterados:
+- **ECO alias (5b-ECO):** `if (fromMe && isLidJid && lidNumero && messageId)` — salva alias correto via `evolution_message_id`
+- **Step 5b alias lookup:** queries separadas `.eq('remote_jid')` e `.eq('lid')` — sem `.or()` com `@`
+- **Reconciliação de alias órfão:** busca mensagem enviada na conversa do alias
+- **Fallback outbound 30min:** busca última mensagem enviada quando Evolution API não retorna telefone
+- **Shortcut Step 6:** `if (aliasConversaEncontrada && !fromMe)` → usa conversa do alias diretamente
 
 ### Infraestrutura (BLOQUEADO)
 - `src/services/evolutionApiService.js` — NÃO alterar sem autorização explícita
