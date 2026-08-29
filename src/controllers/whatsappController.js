@@ -1279,6 +1279,18 @@ async function enviarMensagem(req, res) {
           data:    evoRes.dados,
           message: evoErr,
         });
+
+        // Detecta contato LID não enviável (Instagram Direct — exists: false)
+        const _evoDataMsg = evoRes.dados?.response?.message;
+        const _isLidNaoEnviavel = Array.isArray(_evoDataMsg) && _evoDataMsg.some(m => m?.exists === false);
+        if (_isLidNaoEnviavel || (evoRes.status === 400 && (conversa.telefone || '').startsWith('LID:'))) {
+          return res.status(400).json({
+            sucesso: false,
+            erro: 'Este contato é do Instagram Direct e não possui número de WhatsApp acessível. Use o botão "Criar Lead" para informar o número real e habilitar o envio.',
+            codigo: 'LID_NAO_ENVIAVEL',
+          });
+        }
+
         // Retorna erro imediato — não salva mensagem não enviada
         return res.status(502).json({
           sucesso: false,
@@ -1286,6 +1298,7 @@ async function enviarMensagem(req, res) {
           detalhe: { endpoint, numero: telNormalizado, evoStatus: evoRes.status },
         });
       }
+
     } else if (tipo !== 'audio' && arquivo_url) {
       // Mídia: tenta enviar, mas não bloqueia se falhar
       if (evoSvc.isConfigured()) {

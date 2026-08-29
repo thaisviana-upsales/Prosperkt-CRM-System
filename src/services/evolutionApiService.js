@@ -350,7 +350,12 @@ async function getInstanceInfo() {
  * @param {string} texto
  */
 async function enviarTexto(telefone, texto) {
-  const number = telefone.replace(/\D/g, '');
+  // Preserva JIDs (@lid, @s.whatsapp.net) — remove apenas espaços
+  // NÃO usa replace(/\D/g,'') porque isso converte '102276223995915@lid' em '102276223995915'
+  // que a Evolution API não reconhece (exists: false)
+  const number = telefone.includes('@')
+    ? telefone.trim()                     // JID: passa exato
+    : telefone.replace(/[\s()\-]/g, '');  // Telefone: remove apenas espaços/hífens
   console.log(`[EVO] enviarTexto → POST /message/sendText/${EVOLUTION_INSTANCE} | number:${number} | preview:${texto?.slice(0,60)}`);
   return call('POST', `/message/sendText/${EVOLUTION_INSTANCE}`, {
     number,

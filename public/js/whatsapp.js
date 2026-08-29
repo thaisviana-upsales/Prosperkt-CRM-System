@@ -959,6 +959,7 @@ async function enviarMensagem() {
     btn.disabled = false; // reabilita para nova tentativa
     const erroMsg = r?.data?.erro
       || (r === null ? 'Sem resposta do servidor. Verifique a conexão.' : 'Mensagem não enviada. Tente novamente.');
+    const erroCodigo = r?.data?.codigo;
 
     console.error('FRONTEND_SEND_FAIL', {
       r_status: r?.status,
@@ -966,10 +967,27 @@ async function enviarMensagem() {
       erroMsg,
     });
 
-    Toast.show(erroMsg, 'error');
+    // LID_NAO_ENVIAVEL: contato Instagram Direct — destaca botão Criar Lead
+    if (erroCodigo === 'LID_NAO_ENVIAVEL') {
+      Toast.show('📱 Contato via Instagram Direct. Informe o número WhatsApp real clicando em "Criar Lead".', 'error');
+      // Pisca e destaca o botão Criar Lead
+      const btnCL = document.getElementById('btn-criar-lead-conversa');
+      if (btnCL) {
+        btnCL.style.transition = 'transform 0.15s, box-shadow 0.15s';
+        btnCL.style.transform = 'scale(1.15)';
+        btnCL.style.boxShadow = '0 0 0 4px rgba(37,211,102,.5)';
+        setTimeout(() => {
+          btnCL.style.transform = '';
+          btnCL.style.boxShadow = '';
+        }, 600);
+      }
+    } else {
+      Toast.show(erroMsg, 'error');
+    }
     // Texto permanece no input — usuário pode tentar novamente
   }
 }
+
 
 
 
