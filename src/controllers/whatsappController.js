@@ -2796,6 +2796,31 @@ async function webhookReceberMensagem(req, res) {
         console.log(`WEBHOOK_LEAD_LOOKUP_SKIP: telFinal=null (LID sem participant), buscando via alias`);
       }
 
+      // ── 5b-ECO: fromMe+LID → alias correto via evolution_message_id ──────────────
+      // Quando o CRM envia mensagem, o ECO chega com remoteJid=LID. O key.id do ECO
+      // é IDÊNTICO ao evolution_message_id salvo no banco ao enviar. Usamos isso para
+      // encontrar a conversa canônica e salvar alias LID→canonical. Sem isso, o ECO
+      // criaria alias para conversa órfã e todo inbound futuro falharia.
+      if (fromMe && isLidJid && lidNumero && messageId) {
+        try {
+          const { data: _ecoMsg } = await sb.from(MENSAGENS_TABLE)
+            .select('conversa_id, lead_id')
+            .eq('evolution_message_id', messageId)
+            .eq('direcao', 'enviada')
+            .limit(1);
+          if (_ecoMsg?.[0]?.conversa_id) {
+            await registrarAlias(sb, {
+              conversaId: _ecoMsg[0].conversa_id,
+              tel: null, rawJid: rawJid || null, lidNumero: lidNumero || null, nome: null,
+            }).catch(() => {});
+            console.log('WA_ECO_LID_ALIAS_SAVED', {
+              conversaId: _ecoMsg[0].conversa_id, leadId: _ecoMsg[0].lead_id, lidNumero, messageId,
+            });
+            return res.json({ sucesso: true, ignorado: true, motivo: 'fromMe_eco_alias_salvo_via_message_id' });
+          }
+        } catch(_eEco) { console.warn('WA_ECO_LID_ALIAS_WARN:', _eEco.message); }
+      }
+
       // ── 5b. FIX: Quando telFinal=null (LID sem participant), busca lead via alias ─
       // Cenário: LID chegou na resposta do cliente sem campo participant (sem telefone real).
       // Busca por remoteJid OU lid na tabela de aliases.
@@ -3117,57 +3142,90 @@ async function webhookReceberMensagem(req, res) {
               console.log('WA_INBOUND_LEAD_LOOKUP_BY_PHONE', { leadId, tel: _telViaEvo, resultado: 'encontrado' });
             }
           } else {
-            // Evolution API não retornou telefone real → criar lead com identificador LID
+            // Evolution API não retornou telefone real
             console.log('WA_INBOUND_ALT_PHONE_NOT_FOUND', { lidNumero });
-            console.log('WA_INBOUND_UNKNOWN_TECH_IDENTITY', { lidNumero, rawJid });
-            console.log('WA_INBOUND_CREATE_LEAD_INSTAGRAM_DIRECT_START', { lidNumero, funil: 'Instagram - Direct' });
 
-            let _destIgLid = null;
-            try { _destIgLid = await planilhaSvc.resolverDestinoInstagramDirect(); } catch(_eIg) {
-              console.error('WA_INBOUND_ERROR', {
-                etapa: 'resolver_destino_instagram_direct',
-                erro: _eIg.message,
-                erroStack: _eIg.stack || null,
-                lidNumero, rawJid,
-                motivo: 'funil_instagram_direct_nao_encontrado',
-              });
-            }
-            if (_destIgLid) {
-              const _novoLidId = crypto.randomBytes(16).toString('hex');
-              const _nomeLid   = `WhatsApp LID ${lidNumero}`;
-              const _telLid    = `LID:${lidNumero}`; // placeholder NOT NULL — NÃO é telefone real
-              const { data: _nlLid, error: _errLid } = await sb.from('leads').insert({
-                id: _novoLidId, nome: _nomeLid,
-                telefone: _telLid,
-                status: 'ABERTO', funil_id: _destIgLid.funil.id,
-                pipeline_id: _destIgLid.pipeline.id, etapa_id: _destIgLid.etapa.id,
-                origem: 'WhatsApp Recebido',
-                dados_extras: JSON.stringify({
-                  criado_por_mensagem_whatsapp: true,
-                  remoteJid: rawJid, rawJid, lid: lidNumero,
-                  pushName: nome || null,  // apenas informativo — NÃO usar para correlação
-                  primeira_mensagem_em: agora,
-                  funil_entrada: 'Instagram - Direct',
-                  tipo_identidade: 'lid_sem_telefone',
-                }),
-                data_entrada: agora, criado_em: agora, atualizado_em: agora,
-              }).select('id').single();
-              if (!_errLid && _nlLid) {
-                leadId = _nlLid.id;
-                lidLeadCriadoNesta = true;
-                telFinal = _telLid; // placeholder satisfaz NOT NULL nas tabelas de conversa/mensagem
-                console.log('WA_INBOUND_CREATE_LEAD_INSTAGRAM_DIRECT_SUCCESS', {
-                  leadId, lidNumero, telefone_placeholder: _telLid,
-                  funil: _destIgLid.funil.nome, etapa: _destIgLid.etapa.nome,
+            // ── Fallback: outbound mais recente (30 min) ─────────────────────────────
+            // Se o CRM enviou mensagem recentemente e o contato está respondendo com LID,
+            // a conversa mais recente com mensagem enviada é provavelmente o destino certo.
+            // Muito mais confiável do que Instagram Direct (que pode não existir no CRM).
+            let _aliasViaOutbound = false;
+            try {
+              const _trintaMin = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+              const { data: _lastOut } = await sb.from(MENSAGENS_TABLE)
+                .select('conversa_id, lead_id')
+                .eq('direcao', 'enviada')
+                .not('lead_id', 'is', null)
+                .gt('criado_em', _trintaMin)
+                .order('criado_em', { ascending: false })
+                .limit(1); // mais recente — não busca 2 pois não filtramos por unicidade
+              if (_lastOut?.[0]?.conversa_id && _lastOut[0].lead_id) {
+                leadId = _lastOut[0].lead_id;
+                aliasConversaEncontrada = _lastOut[0].conversa_id;
+                _aliasViaOutbound = true;
+                // Salva alias definitivo para que próximos inbounds não precisem deste fallback
+                await registrarAlias(sb, {
+                  conversaId: _lastOut[0].conversa_id,
+                  tel: null, rawJid: rawJid || null, lidNumero: lidNumero || null, nome: null,
+                }).catch(() => {});
+                console.log('WA_INBOUND_LID_MATCHED_VIA_LAST_OUTBOUND', {
+                  conversaId: _lastOut[0].conversa_id, leadId, lidNumero,
+                  motivo: 'outbound_recente_30min',
                 });
-              } else {
+              }
+            } catch(_eLastOut) { console.warn('WA_INBOUND_LAST_OUTBOUND_WARN:', _eLastOut.message); }
+
+            if (!_aliasViaOutbound) {
+              // Nenhum outbound recente → tentar Instagram Direct
+              console.log('WA_INBOUND_UNKNOWN_TECH_IDENTITY', { lidNumero, rawJid });
+              console.log('WA_INBOUND_CREATE_LEAD_INSTAGRAM_DIRECT_START', { lidNumero, funil: 'Instagram - Direct' });
+
+              let _destIgLid = null;
+              try { _destIgLid = await planilhaSvc.resolverDestinoInstagramDirect(); } catch(_eIg) {
                 console.error('WA_INBOUND_ERROR', {
-                  etapa: 'criacao_lead_lid_sem_telefone',
-                  erro: _errLid?.message,
-                  erroStack: _errLid?.stack || null,
-                  erroDetalhe: JSON.stringify(_errLid || {}),
-                  lidNumero, rawJid, telPlaceholder: _telLid,
+                  etapa: 'resolver_destino_instagram_direct',
+                  erro: _eIg.message,
+                  erroStack: _eIg.stack || null,
+                  lidNumero, rawJid,
+                  motivo: 'funil_instagram_direct_nao_encontrado',
                 });
+              }
+              if (_destIgLid) {
+                const _novoLidId = crypto.randomBytes(16).toString('hex');
+                const _nomeLid   = `WhatsApp LID ${lidNumero}`;
+                const _telLid    = `LID:${lidNumero}`; // placeholder NOT NULL — NÃO é telefone real
+                const { data: _nlLid, error: _errLid } = await sb.from('leads').insert({
+                  id: _novoLidId, nome: _nomeLid,
+                  telefone: _telLid,
+                  status: 'ABERTO', funil_id: _destIgLid.funil.id,
+                  pipeline_id: _destIgLid.pipeline.id, etapa_id: _destIgLid.etapa.id,
+                  origem: 'WhatsApp Recebido',
+                  dados_extras: JSON.stringify({
+                    criado_por_mensagem_whatsapp: true,
+                    remoteJid: rawJid, rawJid, lid: lidNumero,
+                    pushName: nome || null,
+                    primeira_mensagem_em: agora,
+                    funil_entrada: 'Instagram - Direct',
+                    tipo_identidade: 'lid_sem_telefone',
+                  }),
+                  data_entrada: agora, criado_em: agora, atualizado_em: agora,
+                }).select('id').single();
+                if (!_errLid && _nlLid) {
+                  leadId = _nlLid.id;
+                  lidLeadCriadoNesta = true;
+                  telFinal = _telLid;
+                  console.log('WA_INBOUND_CREATE_LEAD_INSTAGRAM_DIRECT_SUCCESS', {
+                    leadId, lidNumero, telefone_placeholder: _telLid,
+                    funil: _destIgLid.funil.nome, etapa: _destIgLid.etapa.nome,
+                  });
+                } else {
+                  console.error('WA_INBOUND_ERROR', {
+                    etapa: 'criacao_lead_lid_sem_telefone',
+                    erro: _errLid?.message, erroStack: _errLid?.stack || null,
+                    erroDetalhe: JSON.stringify(_errLid || {}),
+                    lidNumero, rawJid, telPlaceholder: _telLid,
+                  });
+                }
               }
             }
           }
