@@ -132,6 +132,7 @@ async function resolverDestino() {
 
 // ── Busca funil Instagram Direct + pipeline + etapa Lead Recebido ─────────────
 // Usado para criação automática de lead quando número desconhecido manda mensagem.
+// FALLBACK: se "Instagram - Direct" não existir, usa o primeiro funil ativo com pipeline.
 let _cacheDestinoIg  = null;
 let _cacheDestinoIgTTL = 0;
 
@@ -142,7 +143,6 @@ async function resolverDestinoInstagramDirect() {
   const { sb } = getProvider();
 
   // 1. Busca TODOS os funis (sem filtrar por ativo — campo pode ser boolean ou int no banco)
-  // O filtro por nome é feito no código para evitar falha de tipo.
   const { data: funis, error: errFunis } = await sb.from('funis').select('id,nome,ativo');
   if (errFunis) {
     console.error('WA_INBOUND_FUNIS_QUERY_ERROR', { erro: errFunis.message });
@@ -151,35 +151,50 @@ async function resolverDestinoInstagramDirect() {
     total: (funis || []).length,
     nomes: (funis || []).map(f => f.nome),
   });
-  const funil = (funis || []).find(f => {
+
+  // Tenta encontrar "Instagram - Direct" pelo nome (prioridade)
+  let funil = (funis || []).find(f => {
     const normalizado = f.nome.toLowerCase().replace(/[-_\s]+/g, ' ');
     return normalizado.includes('instagram') && normalizado.includes('direct');
   });
 
+  // FALLBACK: qualquer funil ativo disponível
   if (!funil) {
-    console.error('WHATSAPP_UNKNOWN_INBOUND_FUNIL_INSTAGRAM_DIRECT_NOT_FOUND', {
+    console.warn('WA_INBOUND_INSTAGRAM_DIRECT_NAO_ENCONTRADO_USANDO_FALLBACK', {
       funisDisponiveis: (funis || []).map(f => f.nome),
-      motivo: 'Crie o funil "Instagram - Direct" no CRM antes de usar este recurso.',
+      motivo: 'Funil "Instagram - Direct" não existe — usando primeiro funil disponível',
     });
-    throw new Error('Funil "Instagram - Direct" não encontrado. Crie-o no CRM.');
+    funil = (funis || [])[0] || null;
   }
-  console.log('WHATSAPP_INBOUND_INSTAGRAM_DIRECT_FUNIL_FOUND', { funilId: funil.id, funilNome: funil.nome });
 
-  // 2. Busca pipeline vinculada ao funil
-  const { data: pips } = await sb.from('pipelines').select('id,funil_id').eq('funil_id', funil.id).limit(1);
-  const pipeline = pips?.[0];
-  if (!pipeline) throw new Error(`Nenhuma pipeline para funil "${funil.nome}".`);
+  if (!funil) throw new Error('Nenhum funil encontrado no CRM. Crie pelo menos um funil antes de usar o WhatsApp.');
+
+  console.log('WA_INBOUND_FUNIL_SELECIONADO', { funilId: funil.id, funilNome: funil.nome });
+
+  // 2. Busca pipeline vinculada ao funil (tenta o funil escolhido, faz fallback para outros)
+  let pipeline = null;
+  const funisOrdem = [funil, ...(funis || []).filter(f => f.id !== funil.id)];
+  for (const _f of funisOrdem) {
+    const { data: pips } = await sb.from('pipelines').select('id,funil_id').eq('funil_id', _f.id).limit(1);
+    if (pips?.[0]) {
+      if (_f.id !== funil.id) {
+        console.warn('WA_INBOUND_PIPELINE_FALLBACK', { funilOriginal: funil.nome, funilComPipeline: _f.nome });
+        funil = _f; // usa o funil que tem pipeline
+      }
+      pipeline = pips[0];
+      break;
+    }
+  }
+  if (!pipeline) throw new Error('Nenhuma pipeline encontrada em nenhum funil do CRM.');
 
   // 3. Busca etapa "Lead Recebido" dentro dessa pipeline
   const { data: etapas } = await sb.from('etapas').select('id,nome,ordem')
     .eq('pipeline_id', pipeline.id).order('ordem');
   const etapa = (etapas || []).find(e => /recebido/i.test(e.nome)) || etapas?.[0];
 
-  if (!etapa) {
-    console.error('WHATSAPP_UNKNOWN_INBOUND_ETAPA_LEAD_RECEBIDO_NOT_FOUND', { funil: funil.nome });
-    throw new Error(`Etapa "Lead Recebido" não encontrada no funil "${funil.nome}".`);
-  }
-  console.log('WHATSAPP_INBOUND_LEAD_RECEBIDO_ETAPA_FOUND', { etapaId: etapa.id, etapaNome: etapa.nome });
+  if (!etapa) throw new Error(`Nenhuma etapa encontrada na pipeline do funil "${funil.nome}".`);
+
+  console.log('WA_INBOUND_DESTINO_RESOLVIDO', { funil: funil.nome, pipeline: pipeline.id, etapa: etapa.nome });
 
   _cacheDestinoIg    = { funil, pipeline, etapa };
   _cacheDestinoIgTTL = Date.now() + 5 * 60_000; // cache por 5 min

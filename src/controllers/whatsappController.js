@@ -3032,7 +3032,8 @@ async function webhookReceberMensagem(req, res) {
               lid:                 lidNumero || null,
               pushName:            nome || null,  // apenas informativo
               primeira_mensagem_em: agora,
-              funil_entrada:       'Instagram - Direct',
+              funil_entrada:       destinoIg.funil.nome,
+              tag:                 'conversa_iniciada_sem_lead',
             });
             const { data: novoLead, error: errL } = await sb.from('leads').insert({
               id:           novoLeadId,
