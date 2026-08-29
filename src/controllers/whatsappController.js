@@ -2964,109 +2964,27 @@ async function webhookReceberMensagem(req, res) {
                             motivo: 'alias_orfao_sem_lead_sem_mensagem_enviada',
                             acao: 'limpando_alias_5c_vai_resolver_visivelmente',
                           });
-                          aliasConversaEncontrada = null; // ← limpar para 5c rodar
-                          // Remove alias ruim do banco (fire-and-forget, queries separadas — sem .or() com @)
-                          if (rawJid) {
-                            sb.from(ALIAS_TABLE).delete().eq('remote_jid', rawJid)
-                              .then(() => console.log('WA_INBOUND_ORPHAN_ALIAS_DELETED', { rawJid }))
-                              .catch(() => {});
-                          }
-                          if (lidNumero) {
-                            sb.from(ALIAS_TABLE).delete().eq('lid', lidNumero)
-                              .then(() => {}).catch(() => {});
-                          }
-                        }
-                      }
-                    } catch(_eRec) {
-                      console.warn('WA_INBOUND_ALIAS_RECONCILE_WARN:', _eRec.message);
-                    }
-                  } // fim else (conversa sem lead_id)
-                } catch(_eCvA) { console.warn('WA_INBOUND_ALIAS_CONVERSA_LOOKUP_WARN:', _eCvA.message); }
-              } // fim if (!leadId)
-            } // fim if (_aliasRow.conversa_id)
-          } else {
-            console.log('WA_INBOUND_ALIAS_NOT_FOUND', { lidNumero, rawJid });
-          }
-        } catch(eLA) {
-          console.warn('WEBHOOK_LEAD_LID_ALIAS_WARN:', eLA.message);
-        }
-      }
+                          aliasConversaEncontrada = null;
+                          // Alias órfão limpo — step 5c vai resolver visivelmente
+                        } // fecha else (reconciliação falhou — if _convComLid)
+                      } // fecha else (busca 2 — if _msgLead)
+                    } catch (_eRec) { console.warn('WA_INBOUND_ALIAS_RECONCILE_WARN:', _eRec.message); }
+                  } // fecha else (sem lead_id — if _cvAlias)
+                } catch (_eCvAlias) { console.warn('WA_INBOUND_ALIAS_CV_WARN:', _eCvAlias.message); }
+              } // fecha if (!leadId)
+            } // fecha if (_aliasRow.conversa_id)
+          } // fecha if (_aliasRow)
+        } catch (_eAliasLookup) { console.warn('WA_INBOUND_ALIAS_LOOKUP_WARN:', _eAliasLookup.message); }
+      } // fecha if (!leadId && isLidJid && lidNumero) — step 5b
 
-      // ── 5c. Lead automático para número desconhecido — funil Instagram Direct ────
-      // REGRAS ABSOLUTAS DE NÃO MISTURAR:
-      //   • Criar lead SOMENTE com telefone real brasileiro (inícia com 55, 12+ dígitos)
-      //   • NÃO usar pushName como nome — usar telefone formatado
-      //   • NÃO correlacionar por nome, empresa ou heurística aproximada
-      //   • NÃO criar em outro funil se Instagram Direct não existir
-      //   • LID sem telefone real → funil Instagram Direct com LID como identificador técnico
-      // (lidLeadCriadoNesta declarada no escopo pai, linha ~2779)
-      // FIX CRÍTICO: se alias já resolveu a conversa (aliasConversaEncontrada != null),
-      // NÃO criar lead novo — a mensagem será roteada para a conversa existente.
-      if (!leadId && !fromMe && !aliasConversaEncontrada) {
-        const digitsCheck = String(telFinal || '').replace(/\D/g, '');
-        const temTelefoneRealBr = telFinal && digitsCheck.startsWith('55') && digitsCheck.length >= 12;
-
-        if (temTelefoneRealBr) {
-          console.log('WHATSAPP_INBOUND_UNKNOWN_NUMBER_DETECTED', {
-            telFinal, lidNumero: lidNumero || null, isLidJid, rawJid: rawJid || null,
-          });
-          let destinoIg = null;
-          try {
-            destinoIg = await planilhaSvc.resolverDestinoInstagramDirect();
-          } catch(eIg) {
-            console.error('WHATSAPP_UNKNOWN_INBOUND_FUNIL_INSTAGRAM_DIRECT_NOT_FOUND', {
-              erro: eIg.message, telFinal,
-            });
-          }
-          if (destinoIg) {
-            const novoLeadId = crypto.randomBytes(16).toString('hex');
-            const nomeParaLead = formatarTelefoneParaNome(telFinal); // NÃO pushName
-            console.log('WHATSAPP_INBOUND_CREATE_LEAD_START', {
-              telFinal, funil: destinoIg.funil.nome, etapa: destinoIg.etapa.nome,
-              nomeLead: nomeParaLead, motivo: 'numero_desconhecido_instagram_direct',
-            });
-            const dadosExtrasLead = JSON.stringify({
-              criado_por_mensagem_whatsapp: true,
-              remoteJid:           rawJid || null,
-              rawJid:              rawJid || null,
-              lid:                 lidNumero || null,
-              pushName:            nome || null,  // apenas informativo
-              primeira_mensagem_em: agora,
-              funil_entrada:       destinoIg.funil.nome,
-              tag:                 'conversa_iniciada_sem_lead',
-            });
-            const { data: novoLead, error: errL } = await sb.from('leads').insert({
-              id:           novoLeadId,
-              nome:         nomeParaLead,
-              telefone:     telFinal,
-              status:       'ABERTO',
-              funil_id:     destinoIg.funil.id,
-              pipeline_id:  destinoIg.pipeline.id,
-              etapa_id:     destinoIg.etapa.id,
-              origem:       'WhatsApp Recebido',
-              dados_extras: dadosExtrasLead,
-              data_entrada: agora,
-              criado_em:    agora,
-              atualizado_em: agora,
-            }).select('id').single();
-            if (!errL && novoLead) {
-              leadId = novoLead.id;
-              console.log('WHATSAPP_INBOUND_LEAD_CREATED_SUCCESS', {
-                leadId, tel: telFinal,
-                funil: destinoIg.funil.nome, etapa: destinoIg.etapa.nome,
-              });
-            } else {
-              console.error('WHATSAPP_INBOUND_ERROR', {
-                erro: errL?.message, tel: telFinal, funil: destinoIg.funil.nome,
-              });
-            }
-          } else {
-            // Funil não encontrado → NÃO criar em outro funil → cai em PENDENTE
-            console.error('WHATSAPP_UNKNOWN_INBOUND_FUNIL_INSTAGRAM_DIRECT_NOT_FOUND', {
-              telFinal, motivo: 'funil_nao_encontrado_nao_cria_lead_em_outro_funil',
-            });
-          }
+      // ── 5c. Cria lead para número desconhecido ─────────────────────────────
+      // Só executa se não encontrou lead E não há alias que resolva a conversa.
+      if (!leadId && !aliasConversaEncontrada) {
+        if (telFinal && !isLidJid) {
+          // Número com telefone real (não LID) — sem lead existente → criar em Instagram Direct
+          console.log('WA_INBOUND_UNKNOWN_REAL_PHONE', { telFinal, motivo: 'sem_lead_criando_instagram_direct' });
         } else if (isLidJid && lidNumero) {
+
           // ── LID sem telefone real — tentar Evolution API e criar lead em Instagram Direct ──
           // REGRAS: sem pushName, sem correlação por nome, sem heurística aproximada.
           // Identidade: apenas rawJid/LID técnico.
@@ -3146,35 +3064,16 @@ async function webhookReceberMensagem(req, res) {
             // Evolution API não retornou telefone real
             console.log('WA_INBOUND_ALT_PHONE_NOT_FOUND', { lidNumero });
 
-            // ── Fallback: outbound mais recente (30 min) ─────────────────────────────
-            // Se o CRM enviou mensagem recentemente e o contato está respondendo com LID,
-            // a conversa mais recente com mensagem enviada é provavelmente o destino certo.
-            // Muito mais confiável do que Instagram Direct (que pode não existir no CRM).
-            let _aliasViaOutbound = false;
-            try {
-              const _trintaMin = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-              const { data: _lastOut } = await sb.from(MENSAGENS_TABLE)
-                .select('conversa_id, lead_id')
-                .eq('direcao', 'enviada')
-                .not('lead_id', 'is', null)
-                .gt('criado_em', _trintaMin)
-                .order('criado_em', { ascending: false })
-                .limit(1); // mais recente — não busca 2 pois não filtramos por unicidade
-              if (_lastOut?.[0]?.conversa_id && _lastOut[0].lead_id) {
-                leadId = _lastOut[0].lead_id;
-                aliasConversaEncontrada = _lastOut[0].conversa_id;
-                _aliasViaOutbound = true;
-                // Salva alias definitivo para que próximos inbounds não precisem deste fallback
-                await registrarAlias(sb, {
-                  conversaId: _lastOut[0].conversa_id,
-                  tel: null, rawJid: rawJid || null, lidNumero: lidNumero || null, nome: null,
-                }).catch(() => {});
-                console.log('WA_INBOUND_LID_MATCHED_VIA_LAST_OUTBOUND', {
-                  conversaId: _lastOut[0].conversa_id, leadId, lidNumero,
-                  motivo: 'outbound_recente_30min',
-                });
-              }
-            } catch(_eLastOut) { console.warn('WA_INBOUND_LAST_OUTBOUND_WARN:', _eLastOut.message); }
+            // ── FALLBACK OUTBOUND 30MIN — DESATIVADO PERMANENTEMENTE ────────────────────
+            // CAUSA DO BUG (confirmado 2026-08-29): número desconhecido com LID sem telefone
+            // estava sendo roteado para a conversa do ÚLTIMO lead que recebeu mensagem nos
+            // últimos 30 min — contaminou a conversa do lead Thais-Teste com mensagens de estranho.
+            // Este heurístico é identicamente perigoso ao fallback 72h (desativado em linha ~3382):
+            // não filtra por número de destino, usa qualquer conversa recentemente ativa.
+            // REGRA: LID sem telefone real → criar lead novo em Instagram Direct (visível no CRM).
+            // NÃO REATIVAR sem testes extensivos e autorização explícita.
+            const _aliasViaOutbound = false; // DESATIVADO — sempre false
+            console.log('WA_INBOUND_OUTBOUND_FALLBACK_DISABLED', { lidNumero, rawJid, motivo: 'desativado_bug_2026-08-29' });
 
             if (!_aliasViaOutbound) {
               // Nenhum outbound recente → tentar Instagram Direct
