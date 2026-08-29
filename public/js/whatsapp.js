@@ -1666,110 +1666,158 @@ async function _waLoadImg(imgEl) {
   }
 }
 
+
 // ─── Modal Criar Lead a partir de Conversa WhatsApp ───────────────────────────
-async function abrirModalCriarLeadConversa(conversa) {
+function abrirModalCriarLeadConversa(conversa) {
   // Remove modal anterior se existir
   document.getElementById('modal-criar-lead-wa')?.remove();
 
-  // Busca funis disponíveis
-  let funis = [];
-  try {
-    const r = await Auth.api('GET', '/funis');
-    funis = r?.data?.funis || r?.data || [];
-  } catch {}
-
-  // Nome sugerido: nome_contato sem LID:
+  // Nome sugerido: usa nome_contato mas descarta prefixo LID:
   const nomeSugerido = (conversa.nome_contato || '').startsWith('LID:')
     ? '' : (conversa.nome_contato || '');
 
+  // Mostra modal IMEDIATAMENTE (sem esperar API)
   const modal = document.createElement('div');
   modal.id = 'modal-criar-lead-wa';
-  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;display:flex;align-items:center;justify-content:center';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:9999;display:flex;align-items:center;justify-content:center';
   modal.innerHTML = `
-    <div style="background:#1a2332;border-radius:16px;padding:28px;width:380px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,.5)">
-      <h3 style="margin:0 0 20px;color:#fff;font-size:1.1rem">➕ Criar Lead</h3>
+    <div style="background:#1a2332;border-radius:16px;padding:28px;width:400px;max-width:95vw;box-shadow:0 24px 64px rgba(0,0,0,.6)">
+      <h3 style="margin:0 0 6px;color:#fff;font-size:1.05rem;display:flex;align-items:center;gap:8px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#25d366" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+        Criar Lead
+      </h3>
+      <p style="color:#64748b;font-size:.8rem;margin:0 0 20px">Vincula este contato WhatsApp a um lead no CRM.</p>
       <label style="display:block;margin-bottom:14px">
-        <span style="color:#adb5bd;font-size:.82rem;display:block;margin-bottom:6px">Nome do contato *</span>
-        <input id="cl-nome" type="text" value="${nomeSugerido}" placeholder="Nome completo"
-          style="width:100%;background:#0d1929;border:1px solid #2d3748;border-radius:8px;padding:10px 12px;color:#fff;font-size:.9rem;box-sizing:border-box">
+        <span style="color:#94a3b8;font-size:.8rem;font-weight:600;display:block;margin-bottom:6px">NOME *</span>
+        <input id="cl-nome" type="text" value="${nomeSugerido}" placeholder="Nome completo do contato"
+          style="width:100%;background:#0d1929;border:1.5px solid #2d3748;border-radius:8px;padding:10px 13px;color:#fff;font-size:.9rem;box-sizing:border-box;outline:none">
       </label>
       <label style="display:block;margin-bottom:14px">
-        <span style="color:#adb5bd;font-size:.82rem;display:block;margin-bottom:6px">Telefone (com DDD e 55)</span>
-        <input id="cl-tel" type="text" placeholder="5511999999999"
-          style="width:100%;background:#0d1929;border:1px solid #2d3748;border-radius:8px;padding:10px 12px;color:#fff;font-size:.9rem;box-sizing:border-box">
+        <span style="color:#94a3b8;font-size:.8rem;font-weight:600;display:block;margin-bottom:6px">TELEFONE REAL <span style="color:#25d366;font-weight:400">(necessário para enviar mensagem)</span></span>
+        <input id="cl-tel" type="text" placeholder="5511999999999 ou (11) 99999-9999"
+          style="width:100%;background:#0d1929;border:1.5px solid #2d3748;border-radius:8px;padding:10px 13px;color:#fff;font-size:.9rem;box-sizing:border-box;outline:none">
       </label>
       <label style="display:block;margin-bottom:20px">
-        <span style="color:#adb5bd;font-size:.82rem;display:block;margin-bottom:6px">Funil</span>
-        <select id="cl-funil" style="width:100%;background:#0d1929;border:1px solid #2d3748;border-radius:8px;padding:10px 12px;color:#fff;font-size:.9rem;box-sizing:border-box">
-          ${funis.map(f => `<option value="${f.id}">${f.nome}</option>`).join('')}
+        <span style="color:#94a3b8;font-size:.8rem;font-weight:600;display:block;margin-bottom:6px">FUNIL</span>
+        <select id="cl-funil" style="width:100%;background:#0d1929;border:1.5px solid #2d3748;border-radius:8px;padding:10px 13px;color:#fff;font-size:.9rem;box-sizing:border-box">
+          <option value="">⏳ Carregando funis...</option>
         </select>
       </label>
-      <div id="cl-erro" style="color:#f87171;font-size:.82rem;margin-bottom:12px;display:none"></div>
+      <div id="cl-erro" style="color:#f87171;font-size:.82rem;margin-bottom:12px;padding:8px 12px;background:rgba(248,113,113,.1);border-radius:6px;display:none"></div>
       <div style="display:flex;gap:10px;justify-content:flex-end">
-        <button id="cl-cancelar" style="background:transparent;color:#adb5bd;border:1px solid #2d3748;border-radius:8px;padding:9px 18px;cursor:pointer;font-size:.88rem">Cancelar</button>
-        <button id="cl-salvar" style="background:#25d366;color:#fff;border:none;border-radius:8px;padding:9px 20px;cursor:pointer;font-size:.88rem;font-weight:600">Criar Lead</button>
+        <button id="cl-cancelar" style="background:transparent;color:#94a3b8;border:1px solid #2d3748;border-radius:8px;padding:9px 20px;cursor:pointer;font-size:.88rem">Cancelar</button>
+        <button id="cl-salvar" style="background:#25d366;color:#fff;border:none;border-radius:8px;padding:9px 22px;cursor:pointer;font-size:.88rem;font-weight:700;display:flex;align-items:center;gap:6px">Criar Lead</button>
       </div>
     </div>`;
 
   document.body.appendChild(modal);
-  document.getElementById('cl-nome').focus();
+  setTimeout(() => document.getElementById('cl-nome')?.focus(), 50);
   document.getElementById('cl-cancelar').onclick = () => modal.remove();
   modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
 
-  document.getElementById('cl-salvar').onclick = async () => {
-    const nome  = document.getElementById('cl-nome').value.trim();
-    const tel   = document.getElementById('cl-tel').value.trim().replace(/\D/g,'') || null;
-    const funilId = document.getElementById('cl-funil').value;
-    const erroEl = document.getElementById('cl-erro');
+  // Carrega funis em background (não bloqueia o modal)
+  Auth.api('GET', '/funis').then(r => {
+    const funis = r?.data?.dados || r?.data?.funis || r?.data || [];
+    const sel = document.getElementById('cl-funil');
+    if (!sel) return;
+    if (funis.length === 0) {
+      sel.innerHTML = '<option value="">Sem funis disponíveis</option>';
+    } else {
+      sel.innerHTML = funis.map(f => `<option value="${f.id}">${f.nome}</option>`).join('');
+    }
+  }).catch(() => {
+    const sel = document.getElementById('cl-funil');
+    if (sel) sel.innerHTML = '<option value="">Erro ao carregar funis</option>';
+  });
 
-    if (!nome) { erroEl.textContent = 'Nome é obrigatório.'; erroEl.style.display=''; return; }
+  document.getElementById('cl-salvar').onclick = async () => {
+    const nome    = document.getElementById('cl-nome').value.trim();
+    const telRaw  = document.getElementById('cl-tel').value.trim().replace(/\D/g, '') || '';
+    const funilId = document.getElementById('cl-funil').value;
+    const erroEl  = document.getElementById('cl-erro');
+
+    if (!nome) {
+      erroEl.textContent = 'Nome é obrigatório.';
+      erroEl.style.display = '';
+      return;
+    }
+    if (!funilId) {
+      erroEl.textContent = 'Aguarde os funis carregarem e selecione um.';
+      erroEl.style.display = '';
+      return;
+    }
     erroEl.style.display = 'none';
-    document.getElementById('cl-salvar').disabled = true;
-    document.getElementById('cl-salvar').textContent = 'Criando...';
+    const btnSalvar = document.getElementById('cl-salvar');
+    btnSalvar.disabled = true;
+    btnSalvar.textContent = 'Criando...';
 
     try {
-      // Busca pipeline e etapa do funil
-      const rpipe = await Auth.api('GET', `/pipelines?funil_id=${funilId}`);
-      const pipeline = (rpipe?.data?.pipelines || rpipe?.data || [])[0];
-      if (!pipeline) throw new Error('Nenhuma pipeline encontrada para este funil.');
-
-      const retapa = await Auth.api('GET', `/etapas?pipeline_id=${pipeline.id}`);
-      const etapas = retapa?.data?.etapas || retapa?.data || [];
-      const etapa = etapas.find(e => /recebido/i.test(e.nome)) || etapas[0];
+      // 1. Busca funil completo com pipeline_id e etapas
+      const rfunil = await Auth.api('GET', `/funis/${funilId}`);
+      const funil = rfunil?.data?.dados || rfunil?.data?.funil || rfunil?.data;
+      if (!funil) throw new Error('Funil não encontrado.');
+      
+      // Pipeline: vem no funil ou busca separado
+      let pipelineId = funil.pipeline_id;
+      let etapaId    = null;
+      
+      if (!pipelineId) {
+        const rp = await Auth.api('GET', `/pipelines?funil_id=${funilId}`);
+        const pipes = rp?.data?.dados || rp?.data?.pipelines || rp?.data || [];
+        pipelineId = pipes[0]?.id;
+      }
+      if (!pipelineId) throw new Error('Nenhuma pipeline encontrada.');
+      
+      // Busca etapas da pipeline
+      const re = await Auth.api('GET', `/etapas?pipeline_id=${pipelineId}`);
+      const etapas = re?.data?.dados || re?.data?.etapas || re?.data || [];
+      const etapa = etapas.find(e => /recebido|novo|entrada/i.test(e.nome)) || etapas[0];
       if (!etapa) throw new Error('Nenhuma etapa encontrada.');
+      etapaId = etapa.id;
 
-      // Cria o lead
-      const telefoneParaLead = tel ? (tel.startsWith('55') ? tel : `55${tel}`) : `LID:${conversa.id.slice(0,12)}`;
+      // 2. Define telefone para o lead
+      const telefoneParaLead = telRaw
+        ? (telRaw.startsWith('55') ? telRaw : `55${telRaw}`)
+        : conversa.telefone; // mantém LID: se não digitou
+
+      // 3. Cria o lead
       const rlead = await Auth.api('POST', '/leads', {
-        nome, telefone: telefoneParaLead,
-        funil_id: funilId, pipeline_id: pipeline.id, etapa_id: etapa.id,
-        status: 'ABERTO', origem: 'WhatsApp Recebido',
-        dados_extras: JSON.stringify({ criado_da_conversa_whatsapp: conversa.id }),
+        nome,
+        telefone: telefoneParaLead,
+        funil_id: funilId,
+        pipeline_id: pipelineId,
+        etapa_id: etapaId,
+        status: 'ABERTO',
+        origem: 'WhatsApp Recebido',
+        dados_extras: JSON.stringify({ criado_da_conversa_whatsapp: conversa.id, whatsapp_lid: conversa.telefone }),
       });
-      if (!rlead?.ok) throw new Error(rlead?.data?.erro || 'Erro ao criar lead.');
-      const leadId = rlead.data.lead?.id || rlead.data.id;
+      if (!rlead?.ok) throw new Error(rlead?.data?.erro || rlead?.data?.message || 'Erro ao criar lead.');
+      const leadId = rlead.data?.lead?.id || rlead.data?.id || rlead.data?.dados?.id;
+      if (!leadId) throw new Error('Lead criado mas sem ID retornado.');
 
-      // Vincula lead à conversa
-      const telParaConversa = tel ? (tel.startsWith('55') ? tel : `55${tel}`) : conversa.telefone;
-      await Auth.api('PATCH', `/whatsapp/conversas/${conversa.id}`, {
-        lead_id: leadId,
-        nome_contato: nome,
-        telefone: telParaConversa,
-      });
+      // 4. Vincula lead à conversa e atualiza telefone se digitou um real
+      const atualizacao = { lead_id: leadId, nome_contato: nome };
+      if (telRaw) {
+        atualizacao.telefone = telefoneParaLead;
+        // Salva também no dados_extras da conversa o telefone real para envio
+      }
+      await Auth.api('PATCH', `/whatsapp/conversas/${conversa.id}`, atualizacao);
 
       modal.remove();
-      // Recarrega conversa com novo lead
+      // Atualiza dados_extras da conversa com telefone real (para envio via JID)
+      // e recarrega a conversa
       await abrirConversa(conversa.id);
-      // Remove botão criar lead (agora tem lead)
-      document.getElementById('btn-criar-lead-conversa')?.remove();
+
     } catch(err) {
-      erroEl.textContent = err.message || 'Erro ao criar lead.';
+      console.error('[CriarLead]', err);
+      erroEl.textContent = err.message || 'Erro ao criar lead. Tente novamente.';
       erroEl.style.display = '';
-      document.getElementById('cl-salvar').disabled = false;
-      document.getElementById('cl-salvar').textContent = 'Criar Lead';
+      btnSalvar.disabled = false;
+      btnSalvar.textContent = 'Criar Lead';
     }
   };
 }
+
 
 // ─── Kick-off ─────────────────────────────────────────────────────────────────
 init();
