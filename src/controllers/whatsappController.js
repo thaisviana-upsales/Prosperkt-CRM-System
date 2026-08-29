@@ -2413,8 +2413,9 @@ async function webhookReceberMensagem(req, res) {
     hasMedia:     _rawHasMedia,
     payloadSize:  JSON.stringify(_rawPayload).length,
   });
-  // Log completo do payload (para diagnóstico inicial — pode ser removido após confirmação)
-  console.log('WEBHOOK_EVOLUTION_RECEBIDO_REAL', JSON.stringify(req.body, null, 2));
+  // Log completo do payload: DESATIVADO — causava rate limit 500 logs/sec no Railway.
+  // Para ativar temporariamente para diagnóstico: descomente a linha abaixo.
+  // console.log('WEBHOOK_EVOLUTION_RECEBIDO_REAL', JSON.stringify(req.body, null, 2));
 
   const body = req.body;
   if (!body || typeof body !== 'object') {
@@ -2794,30 +2795,47 @@ async function webhookReceberMensagem(req, res) {
       // ── 5b. FIX: Quando telFinal=null (LID sem participant), busca lead via alias ─
       // Cenário: LID chegou na resposta do cliente sem campo participant (sem telefone real).
       // Busca por remoteJid OU lid na tabela de aliases.
-      // FIX CRÍTICO: também resolve via conversa_id quando alias existe mas sem telefone_normalizado.
+      // FIX CRÍTICO: usa queries SEPARADAS (não .or()) porque remote_jid contém '@' que
+      // quebra o filtro PostgREST quando passado dentro de .or(`col.eq.${val}`).
+      // FIX 2: quando alias tem conversa_id mas sem lead_id, flag aliasConversaEncontrada
+      // impede que 5c rode e crie lead desnecessário.
+      let aliasConversaEncontrada = null; // conversa_id resolvida via alias — bypassa 5c
       if (!leadId && isLidJid && lidNumero) {
         try {
           console.log('WA_INBOUND_ALIAS_LOOKUP_START', { lidNumero, rawJid });
-          console.log('WEBHOOK_LEAD_LID_ALIAS_LOOKUP', { lidNumero });
-          const _remoteJidQ = rawJid && rawJid.includes('@') ? rawJid : null;
-          let _aliasQ = sb.from(ALIAS_TABLE).select('conversa_id, telefone_normalizado');
-          if (_remoteJidQ) {
-            _aliasQ = _aliasQ.or(`lid.eq.${lidNumero},remote_jid.eq.${_remoteJidQ}`);
-          } else {
-            _aliasQ = _aliasQ.eq('lid', lidNumero);
-          }
-          const { data: aliasLead } = await _aliasQ.limit(1);
+          let _aliasRow = null;
 
-          if (aliasLead?.[0]) {
-            console.log('WA_INBOUND_ALIAS_FOUND', { lidNumero, rawJid, conversaId: aliasLead[0].conversa_id, telefone_normalizado: aliasLead[0].telefone_normalizado || null });
+          // Busca 1: por remote_jid exato (query própria — sem .or() com @ no valor)
+          if (rawJid && rawJid.includes('@')) {
+            const { data: _aJid } = await sb.from(ALIAS_TABLE)
+              .select('conversa_id, telefone_normalizado')
+              .eq('remote_jid', rawJid)
+              .limit(1);
+            if (_aJid?.[0]) _aliasRow = _aJid[0];
+          }
+
+          // Busca 2: por lid numérico (se busca 1 falhou)
+          if (!_aliasRow && lidNumero) {
+            const { data: _aLid } = await sb.from(ALIAS_TABLE)
+              .select('conversa_id, telefone_normalizado')
+              .eq('lid', lidNumero)
+              .limit(1);
+            if (_aLid?.[0]) _aliasRow = _aLid[0];
+          }
+
+          if (_aliasRow) {
+            console.log('WA_INBOUND_ALIAS_FOUND', {
+              lidNumero, rawJid,
+              conversaId: _aliasRow.conversa_id,
+              telefone_normalizado: _aliasRow.telefone_normalizado || null,
+            });
 
             // Caso A: alias tem telefone normalizado → buscar lead pelo telefone
-            if (aliasLead[0].telefone_normalizado) {
-              const telAlias = aliasLead[0].telefone_normalizado;
+            if (_aliasRow.telefone_normalizado) {
+              const telAlias = _aliasRow.telefone_normalizado;
               for (const v of phoneVariants(telAlias)) {
                 const { data: foundByAlias } = await sb.from('leads').select('id,telefone')
-                  .or(`telefone.eq.${v},telefone.ilike.%${v}%`)
-                  .is('deleted_at', null).limit(1);
+                  .eq('telefone', v).is('deleted_at', null).limit(1);
                 if (foundByAlias?.[0]) { leadId = foundByAlias[0].id; break; }
               }
               if (leadId) {
@@ -2825,21 +2843,35 @@ async function webhookReceberMensagem(req, res) {
               }
             }
 
-            // Caso B (FIX CRÍTICO): alias tem conversa_id mas sem telefone → resolve lead via conversa
-            if (!leadId && aliasLead[0].conversa_id) {
-              try {
-                const { data: _cvAlias } = await sb.from(CONVERSAS_TABLE)
-                  .select('lead_id, telefone').eq('id', aliasLead[0].conversa_id).single();
-                if (_cvAlias?.lead_id) {
-                  leadId = _cvAlias.lead_id;
-                  // Se a conversa tem telefone real (não placeholder LID:), atualiza telFinal
-                  if (_cvAlias.telefone && !_cvAlias.telefone.startsWith('LID:') && !_cvAlias.telefone.startsWith('PENDING:')) {
-                    const _telNormConv = normalizePhoneBR(_cvAlias.telefone);
-                    if (_telNormConv) telFinal = _telNormConv;
+            // Caso B: alias tem conversa_id → resolve lead via conversa (mesmo sem telefone)
+            if (_aliasRow.conversa_id) {
+              // Sempre marca conversaEncontrada para bypasaar 5c
+              aliasConversaEncontrada = _aliasRow.conversa_id;
+              if (!leadId) {
+                try {
+                  const { data: _cvAlias } = await sb.from(CONVERSAS_TABLE)
+                    .select('lead_id, telefone').eq('id', _aliasRow.conversa_id).single();
+                  if (_cvAlias?.lead_id) {
+                    leadId = _cvAlias.lead_id;
+                    // Se conversa tem telefone real, atualiza telFinal
+                    if (_cvAlias.telefone && !_cvAlias.telefone.startsWith('LID:') && !_cvAlias.telefone.startsWith('PENDING:')) {
+                      const _telNormConv = normalizePhoneBR(_cvAlias.telefone);
+                      if (_telNormConv) telFinal = _telNormConv;
+                    }
+                    console.log('WEBHOOK_LEAD_ENCONTRADO_VIA_ALIAS_CONVERSA', {
+                      lidNumero, leadId,
+                      conversaId: _aliasRow.conversa_id,
+                      telFinalAtualizado: telFinal || null,
+                    });
+                  } else {
+                    // Conversa existe mas sem lead_id — OK, alias é suficiente para rotear
+                    console.log('WA_INBOUND_ALIAS_CONVERSA_SEM_LEAD', {
+                      conversaId: _aliasRow.conversa_id,
+                      motivo: 'conversa_sem_lead_id_mas_alias_valido',
+                    });
                   }
-                  console.log('WEBHOOK_LEAD_ENCONTRADO_VIA_ALIAS_CONVERSA', { lidNumero, leadId, conversaId: aliasLead[0].conversa_id, telFinalAtualizado: telFinal || null });
-                }
-              } catch(_eCvA) { /* ignora erro de lookup de conversa */ }
+                } catch(_eCvA) { console.warn('WA_INBOUND_ALIAS_CONVERSA_LOOKUP_WARN:', _eCvA.message); }
+              }
             }
           } else {
             console.log('WA_INBOUND_ALIAS_NOT_FOUND', { lidNumero, rawJid });
@@ -2857,7 +2889,9 @@ async function webhookReceberMensagem(req, res) {
       //   • NÃO criar em outro funil se Instagram Direct não existir
       //   • LID sem telefone real → funil Instagram Direct com LID como identificador técnico
       let lidLeadCriadoNesta = false; // flag: lead criado nesta req para LID sem tel real (identidade técnica)
-      if (!leadId && !fromMe) {
+      // FIX CRÍTICO: se alias já resolveu a conversa (aliasConversaEncontrada != null),
+      // NÃO criar lead novo — a mensagem será roteada para a conversa existente.
+      if (!leadId && !fromMe && !aliasConversaEncontrada) {
         const digitsCheck = String(telFinal || '').replace(/\D/g, '');
         const temTelefoneRealBr = telFinal && digitsCheck.startsWith('55') && digitsCheck.length >= 12;
 
@@ -2982,9 +3016,15 @@ async function webhookReceberMensagem(req, res) {
                   if (!_errNlEvo && _nlEvo) {
                     leadId = _nlEvo.id; lidLeadCriadoNesta = true;
                     console.log('WA_INBOUND_CREATE_LEAD_INSTAGRAM_DIRECT_SUCCESS', { leadId, tel: _telViaEvo, funil: _destIgEvo.funil.nome, etapa: _destIgEvo.etapa.nome });
-                  } else {
-                    console.error('WA_INBOUND_ERROR', { erro: _errNlEvo?.message, tel: _telViaEvo, lidNumero });
-                  }
+              } else {
+                console.error('WA_INBOUND_ERROR', {
+                  etapa: 'criacao_lead_lid_com_tel_real',
+                  erro: _errNlEvo?.message,
+                  erroStack: _errNlEvo?.stack || null,
+                  erroDetalhe: JSON.stringify(_errNlEvo || {}),
+                  tel: _telViaEvo, lidNumero, rawJid,
+                });
+              }
                 }
               }
             } else {
@@ -2998,7 +3038,13 @@ async function webhookReceberMensagem(req, res) {
 
             let _destIgLid = null;
             try { _destIgLid = await planilhaSvc.resolverDestinoInstagramDirect(); } catch(_eIg) {
-              console.error('WA_INBOUND_ERROR', { erro: _eIg.message, lidNumero, motivo: 'funil_instagram_direct_nao_encontrado' });
+              console.error('WA_INBOUND_ERROR', {
+                etapa: 'resolver_destino_instagram_direct',
+                erro: _eIg.message,
+                erroStack: _eIg.stack || null,
+                lidNumero, rawJid,
+                motivo: 'funil_instagram_direct_nao_encontrado',
+              });
             }
             if (_destIgLid) {
               const _novoLidId = crypto.randomBytes(16).toString('hex');
@@ -3029,7 +3075,13 @@ async function webhookReceberMensagem(req, res) {
                   funil: _destIgLid.funil.nome, etapa: _destIgLid.etapa.nome,
                 });
               } else {
-                console.error('WA_INBOUND_ERROR', { erro: _errLid?.message, lidNumero });
+                console.error('WA_INBOUND_ERROR', {
+                  etapa: 'criacao_lead_lid_sem_telefone',
+                  erro: _errLid?.message,
+                  erroStack: _errLid?.stack || null,
+                  erroDetalhe: JSON.stringify(_errLid || {}),
+                  lidNumero, rawJid, telPlaceholder: _telLid,
+                });
               }
             }
           }
@@ -3040,6 +3092,12 @@ async function webhookReceberMensagem(req, res) {
             motivo: 'identidade_nao_confiavel_nao_cria_lead',
           });
         }
+      } else if (aliasConversaEncontrada && !leadId) {
+        // Alias resolveu conversa mas sem lead_id — OK, conversa existe e será usada pelo resolver
+        console.log('WA_INBOUND_ALIAS_BYPASS_5C', {
+          conversaId: aliasConversaEncontrada,
+          motivo: 'alias_resolveu_conversa_sem_lead_5c_bypassado',
+        });
       }
     } else if (db) {
       // SQLite: tenta ambas variantes
@@ -3047,13 +3105,33 @@ async function webhookReceberMensagem(req, res) {
       if (!l && telSem55) l = db.prepare("SELECT id FROM leads WHERE telefone = ? LIMIT 1").get(telSem55);
       leadId = l?.id || null;
     }
-    console.log('[WA Webhook] RESULTADO_BUSCA_LEAD:', { telefoneNormalizado: telFinal, variantesSem55: telSem55, leadId });
+    console.log('[WA Webhook] RESULTADO_BUSCA_LEAD:', {
+      telefoneNormalizado: telFinal,
+      variantesSem55: telSem55,
+      leadId,
+      aliasConversaEncontrada: aliasConversaEncontrada || null,
+      lidLeadCriadoNesta,
+    });
 
     // ── 6. Resolve conversa (FUNÇÃO CENTRAL — elimina duplicação) ─────────────
     // Usa resolverConversaWhatsapp() que executa 8 passos de busca em ordem antes
     // de permitir qualquer criação. Nunca cria conversa duplicada.
+    // FIX CRÍTICO: se aliasConversaEncontrada já foi resolvida no Step 5b,
+    // usa diretamente como conversaId sem chamar resolverConversaWhatsapp para esse path.
     let conversaId = null;
     if (isSupa) {
+      // Shortcut: alias já resolvido no Step 5b → usa conversa diretamente
+      if (aliasConversaEncontrada && !fromMe) {
+        conversaId = aliasConversaEncontrada;
+        console.log('WA_INBOUND_DECISION', {
+          decisao: 'CONVERSA_EXISTENTE_POR_ALIAS',
+          conversaId,
+          leadId: leadId || null,
+          rawJid,
+          lidNumero,
+          motivo: 'alias_resolvido_step5b',
+        });
+      } else {
       const resolucao = await resolverConversaWhatsapp(sb, {
         tel: telFinal, lidNumero, leadId, isLidJid, rawJid, fromMe, nome
       });
@@ -3100,7 +3178,8 @@ async function webhookReceberMensagem(req, res) {
       }
 
       conversaId = resolucao.conversaId;
-      console.log('CONVERSA_RESOLVE_RESULT', { conversaId, permiteCreate: resolucao.permiteCreate, fonte: resolucao.fonte });
+        console.log('CONVERSA_RESOLVE_RESULT', { conversaId, permiteCreate: resolucao.permiteCreate, fonte: resolucao.fonte });
+      } // fim do else (sem aliasConversaEncontrada)
     } else if (db) {
       const variantesLocais = phoneVariants(tel);
       let conv = null;
@@ -3142,8 +3221,8 @@ async function webhookReceberMensagem(req, res) {
       const _digitsForTrust = String(telFinal || '').replace(/\D/g, '');
       const temTelRealBr = telFinal && _digitsForTrust.startsWith('55') && _digitsForTrust.length >= 12;
       // FIX: lidLeadCriadoNesta=true → lead criado nesta req para LID sem tel → identidade confiável
-      // (já decidimos criar a conversa para este LID — não criar PENDENTE_IDENTIFICACAO)
-      const identidadeConfiavel = (temTelRealBr && !!leadId) || lidLeadCriadoNesta || isIdentidadeWhatsappConfiavel(telFinal, {
+      // FIX2: aliasConversaEncontrada → alias resolveu conversa → confiar mesmo sem tel
+      const identidadeConfiavel = (temTelRealBr && !!leadId) || lidLeadCriadoNesta || !!aliasConversaEncontrada || isIdentidadeWhatsappConfiavel(telFinal, {
         isLidJid,
         lidNumero,
         aliasEncontrado:  false, // chegou aqui → alias não encontrou conversa

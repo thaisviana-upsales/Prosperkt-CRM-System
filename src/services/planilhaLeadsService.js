@@ -141,8 +141,16 @@ async function resolverDestinoInstagramDirect() {
 
   const { sb } = getProvider();
 
-  // 1. Busca funil cujo nome contenha "Instagram" e "Direct" (case-insensitive)
-  const { data: funis } = await sb.from('funis').select('id,nome').eq('ativo', 1);
+  // 1. Busca TODOS os funis (sem filtrar por ativo — campo pode ser boolean ou int no banco)
+  // O filtro por nome é feito no código para evitar falha de tipo.
+  const { data: funis, error: errFunis } = await sb.from('funis').select('id,nome,ativo');
+  if (errFunis) {
+    console.error('WA_INBOUND_FUNIS_QUERY_ERROR', { erro: errFunis.message });
+  }
+  console.log('WA_INBOUND_FUNIS_DISPONIVEIS', {
+    total: (funis || []).length,
+    nomes: (funis || []).map(f => f.nome),
+  });
   const funil = (funis || []).find(f => {
     const normalizado = f.nome.toLowerCase().replace(/[-_\s]+/g, ' ');
     return normalizado.includes('instagram') && normalizado.includes('direct');
