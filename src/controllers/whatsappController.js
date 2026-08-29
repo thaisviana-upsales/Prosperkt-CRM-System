@@ -2103,20 +2103,58 @@ function normalizarPayloadWA(body) {
   // ── Extrai telefone (todos os caminhos possíveis) ─────────────────────────
   // PRIORIDADE para Evolution API com LID:
   //   1. Se remoteJid é @lid COM participant: usa o participant JID (contém telefone real)
-  //   2. Se remoteJid é @lid SEM participant: rawTel = null (sem telefone real no payload)
-  //      ↳ FIX CAUSA RAIZ: antes usava remoteJid → normalizePhoneBR extraia o número LID
-  //        (ex: 67044573708506) como telefone válido via /^\d{10,15}$/ (14 dígitos ok),
-  //        criando uma conversa duplicada com LID como telefone em vez da conversa real.
-  //   3. JID normal @s.whatsapp.net: usa remoteJid diretamente
+  //   2. Se remoteJid é @lid: tenta extrair de campos adicionais do payload
+  //      (contact.phone, contact.id @s.whatsapp.net, number, source)
+  //   3. Se nenhum campo tem o número real: rawTel = null
+  //   4. JID normal @s.whatsapp.net: usa remoteJid diretamente
   const participantJid = isEvolution
     ? (dataRaw?.participant || dataRaw?.key?.participant || null)
     : null;
   const isLidRaw = isEvolution && remoteJid.endsWith('@lid');
 
+  // Tenta extrair número real de campos adicionais quando é LID
+  let _lidRealPhone = null;
+  if (isLidRaw && !participantJid) {
+    // LOG completo do payload para diagnóstico (apenas para LID sem participant)
+    console.log('WA_LID_PAYLOAD_FIELDS', JSON.stringify({
+      event: body.event,
+      remoteJid: dataRaw?.key?.remoteJid,
+      participant: dataRaw?.key?.participant,
+      pushName: dataRaw?.pushName,
+      notifyName: dataRaw?.notifyName,
+      contact_id: dataRaw?.contact?.id,
+      contact_phone: dataRaw?.contact?.phone,
+      contact_lid: dataRaw?.contact?.lid,
+      number: dataRaw?.number,
+      source: dataRaw?.source,
+      phoneNumber: dataRaw?.phoneNumber,
+      waId: dataRaw?.waId,
+      jid: dataRaw?.jid,
+      id_field: dataRaw?.id,
+      dataKeys: Object.keys(dataRaw || {}),
+    }).slice(0, 800));
+
+    // Tenta campo contact.phone ou contact.id (@s.whatsapp.net)
+    const _cId   = dataRaw?.contact?.id   || '';
+    const _cPhone = dataRaw?.contact?.phone || '';
+    const _cPhoneAlt = dataRaw?.phoneNumber || dataRaw?.waId || dataRaw?.number || dataRaw?.source || '';
+    if (_cPhone) {
+      _lidRealPhone = _cPhone;
+    } else if (_cId && _cId.includes('@s.whatsapp.net')) {
+      _lidRealPhone = _cId.split('@')[0];
+    } else if (_cPhoneAlt) {
+      _lidRealPhone = _cPhoneAlt;
+    }
+    if (_lidRealPhone) {
+      console.log('WA_LID_REAL_PHONE_FROM_PAYLOAD', { _lidRealPhone, source: _cPhone ? 'contact.phone' : _cId ? 'contact.id' : 'alt_field' });
+    }
+  }
+
   const rawTel = isEvolution
     ? (
         (isLidRaw && participantJid) ? participantJid   // LID + participant: JID real do contato
-        : isLidRaw ? null                               // ← FIX: LID sem participant = sem tel real
+        : (isLidRaw && _lidRealPhone) ? _lidRealPhone   // LID + campo extra: número real
+        : isLidRaw ? null                               // LID sem nenhum campo: sem tel real
         : remoteJid                                     // JID normal: usa direto
       )
     : (
