@@ -3320,62 +3320,99 @@ async function webhookReceberMensagem(req, res) {
         }
 
         if (!conversaCanonica) {
-          // Sem canônica via lead nem por envio recente — cria conversa PENDENTE_IDENTIFICACAO
+          // Sem canônica via lead. Identidade não confiável (LID sem telefone real).
+          // FIX CRÍTICO (2026-08-29): Step 5c tentou criar lead mas falhou tecnicamente
+          // (Evolution API down, Instagram Direct inacessível). Não podemos simplesmente
+          // salvar como PENDENTE invisível — a mensagem desaparece do CRM para sempre.
+          // SOLUÇÃO: tentar criar lead com qualquer funil disponível (segunda tentativa).
+          // Se falhar, aí sim cria PENDENTE — mas isso é exceção extremamente rara.
 
-          console.warn('WHATSAPP_BLOCK_ACTIVE_CONVERSATION_CREATION_FOR_LID', {
-            telFinal, lidNumero, rawJid, isLidJid, nomeContato,
-            motivo: 'identidade_nao_confiavel',
-          });
-          console.log('WHATSAPP_IDENTITY_IS_LID', { lidNumero, rawJid });
+          let _tentativaFallbackLead = false;
+          if (isLidJid && lidNumero && !leadId) {
+            try {
+              const _destFallback = await planilhaSvc.resolverDestinoInstagramDirect();
+              if (_destFallback) {
+                const _novoLeadFallbackId = crypto.randomBytes(16).toString('hex');
+                const _nomeFallback = nome || nomeContato || `LID:${lidNumero}`;
+                const _telFallback  = `LID:${lidNumero}`;
+                const { data: _lfb, error: _elfb } = await sb.from('leads').insert({
+                  id: _novoLeadFallbackId, nome: _nomeFallback, telefone: _telFallback,
+                  status: 'ABERTO', funil_id: _destFallback.funil.id,
+                  pipeline_id: _destFallback.pipeline.id, etapa_id: _destFallback.etapa.id,
+                  origem: 'WhatsApp Recebido',
+                  dados_extras: JSON.stringify({
+                    criado_por_mensagem_whatsapp: true, remoteJid: rawJid, lid: lidNumero,
+                    pushName: nome || null, primeira_mensagem_em: agora,
+                    funil_entrada: _destFallback.funil.nome, tipo_identidade: 'lid_sem_telefone',
+                    criado_via: 'fallback_identidade_nao_confiavel',
+                  }),
+                  data_entrada: agora, criado_em: agora, atualizado_em: agora,
+                }).select('id').single();
+                if (!_elfb && _lfb) {
+                  leadId = _lfb.id;
+                  telFinal = _telFallback;
+                  lidLeadCriadoNesta = true;
+                  _tentativaFallbackLead = true;
+                  console.log('WA_INBOUND_FALLBACK_LEAD_CREATED', {
+                    leadId, lidNumero, funil: _destFallback.funil.nome, motivo: 'identidade_nao_confiavel_segunda_tentativa',
+                  });
+                  // Criar conversa ABERTA visível
+                  const _novoConvFbId = crypto.randomBytes(16).toString('hex');
+                  const { data: _convFb, error: _ecFb } = await sb.from(CONVERSAS_TABLE).insert({
+                    id: _novoConvFbId, telefone: _telFallback, nome_contato: nomeContato || _nomeFallback,
+                    lead_id: leadId, origem: 'WHATSAPP_WEBHOOK', status: 'ABERTA',
+                    dados_extras: JSON.stringify({ lid: lidNumero, remoteJid: rawJid, tipo_identidade: 'lid_sem_telefone_fallback' }),
+                    criado_em: agora, atualizado_em: agora,
+                  }).select('id').single();
+                  if (!_ecFb && _convFb) {
+                    conversaId = _convFb.id;
+                    console.log('WA_INBOUND_FALLBACK_CONVERSA_CREATED', { conversaId, leadId, status: 'ABERTA' });
+                  }
+                }
+              }
+            } catch (_eFb) {
+              console.warn('WA_INBOUND_FALLBACK_LEAD_WARN:', _eFb.message);
+            }
+          }
 
-          const novoConvId = crypto.randomBytes(16).toString('hex');
-          const dadosExtrasPendente = JSON.stringify({
-            lid:              lidNumero || null,
-            remoteJid:        rawJid || null,
-            tipo_identidade:  'lid_nao_resolvido',
-            bloqueio_motivo:  'identidade_nao_confiavel',
-            bloqueio_em:      agora,
-          });
-
-          // FIX CRÍTICO: conversas_whatsapp.telefone é NOT NULL no banco.
-          // Inserir null causava: "null value in column 'telefone' violates not-null constraint"
-          // Solução: usar placeholder 'LID:NUMERO' para satisfazer a constraint.
-          // Este valor nunca é usado para envio — é apenas identificador interno da PENDENTE.
-          const telefonePendente = lidNumero
-            ? `LID:${lidNumero}`
-            : (rawJid ? `LID:${rawJid.split('@')[0]}` : `PENDING:${novoConvId.slice(0, 12)}`);
-
-          const { data: convPendente, error: errPend } = await sb.from(CONVERSAS_TABLE).insert({
-            id:           novoConvId,
-            telefone:     telefonePendente, // FIX: NOT NULL — placeholder LID
-            nome_contato: nomeContato,
-            lead_id:      leadId || null,
-            origem:       'WHATSAPP_WEBHOOK',
-            status:       'PENDENTE_IDENTIFICACAO',
-            visivel:      false,            // nunca aparece na UI principal
-            dados_extras: dadosExtrasPendente,
-            criado_em:    agora,
-            atualizado_em: agora,
-          }).select('id').single();
-
-          if (!errPend && convPendente) {
-            conversaId = convPendente.id;
-            console.log('WHATSAPP_MESSAGE_SAVED_UNRESOLVED', {
-              conversaId,
-              status: 'PENDENTE_IDENTIFICACAO',
-              lidNumero: lidNumero || null,
-              telefonePendente,
-              nomeContato,
-              motivo: 'identidade_nao_confiavel_salvo_pendente',
+          if (!_tentativaFallbackLead && !conversaId) {
+            // Última opção: PENDENTE_IDENTIFICACAO — só chega aqui se nenhum funil existe
+            console.warn('WHATSAPP_BLOCK_ACTIVE_CONVERSATION_CREATION_FOR_LID', {
+              telFinal, lidNumero, rawJid, isLidJid, nomeContato,
+              motivo: 'identidade_nao_confiavel_e_sem_funil',
             });
-          } else {
-            // FIX: antes retornava ignorado:true — a mensagem era perdida.
-            // Agora: loga o erro mas NÃO descarta — continua com conversaId=null.
-            // A mensagem ainda será salva se outro fallback encontrar conversaId.
-            console.error('WEBHOOK_PENDENTE_CREATE_ERROR:', errPend?.message, { telefonePendente, lidNumero });
-            // conversaId permanece null — não retorna ignorado aqui
+            console.log('WHATSAPP_IDENTITY_IS_LID', { lidNumero, rawJid });
+
+            const novoConvId = crypto.randomBytes(16).toString('hex');
+            const dadosExtrasPendente = JSON.stringify({
+              lid: lidNumero || null, remoteJid: rawJid || null,
+              tipo_identidade: 'lid_nao_resolvido', bloqueio_motivo: 'identidade_nao_confiavel',
+              bloqueio_em: agora,
+            });
+            const telefonePendente = lidNumero
+              ? `LID:${lidNumero}`
+              : (rawJid ? `LID:${rawJid.split('@')[0]}` : `PENDING:${novoConvId.slice(0, 12)}`);
+
+            const { data: convPendente, error: errPend } = await sb.from(CONVERSAS_TABLE).insert({
+              id: novoConvId, telefone: telefonePendente, nome_contato: nomeContato,
+              lead_id: leadId || null, origem: 'WHATSAPP_WEBHOOK',
+              status: 'PENDENTE_IDENTIFICACAO', visivel: false,
+              dados_extras: dadosExtrasPendente, criado_em: agora, atualizado_em: agora,
+            }).select('id').single();
+
+            if (!errPend && convPendente) {
+              conversaId = convPendente.id;
+              console.log('WHATSAPP_MESSAGE_SAVED_UNRESOLVED', {
+                conversaId, status: 'PENDENTE_IDENTIFICACAO',
+                lidNumero: lidNumero || null, telefonePendente, nomeContato,
+                motivo: 'sem_funil_disponivel',
+              });
+            } else {
+              console.error('WEBHOOK_PENDENTE_CREATE_ERROR:', errPend?.message, { telefonePendente, lidNumero });
+            }
           }
         }
+
 
 
       } else {
