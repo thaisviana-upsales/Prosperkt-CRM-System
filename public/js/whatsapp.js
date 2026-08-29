@@ -298,10 +298,18 @@ async function abrirConversa(id) {
   // Popula header — oculta o LID fictício, mostra info amigável
   const nome = _convAtiva.nome_contato || _convAtiva.lead_nome || _convAtiva.telefone;
   const isLidPhone = (_convAtiva.telefone || '').startsWith('LID:');
-  const telDisplay = isLidPhone ? 'Contato WhatsApp (sem telefone real)' : (_convAtiva.telefone || '—');
+  const telDisplay = isLidPhone ? 'Sem número real — clique em Informar Número' : (_convAtiva.telefone || '—');
   document.getElementById('chat-nome').textContent = nome;
   document.getElementById('chat-avatar').textContent = (nome || '??').slice(0, 2).toUpperCase();
   document.getElementById('chat-tel').textContent = telDisplay;
+  document.getElementById('chat-tel').style.color = isLidPhone ? '#f59e0b' : '';
+  document.getElementById('chat-tel').style.cursor = isLidPhone ? 'pointer' : '';
+  if (isLidPhone) {
+    document.getElementById('chat-tel').title = 'Clique para informar o número real';
+    document.getElementById('chat-tel').onclick = () => _abrirModalInformarNumero(_convAtiva);
+  } else {
+    document.getElementById('chat-tel').onclick = null;
+  }
   document.getElementById('chat-status-text').innerHTML =
     _convAtiva.status === 'ABERTA' ? '<span class="online">● Online</span>' :
     _convAtiva.status === 'AGUARDANDO' ? '⌛ Aguardando resposta' : '✓ Fechada';
@@ -1832,6 +1840,61 @@ function abrirModalCriarLeadConversa(conversa) {
       erroEl.style.display = '';
       btnSalvar.disabled = false;
       btnSalvar.textContent = 'Criar Lead';
+    }
+  };
+}
+
+
+// ─── Modal rápido: Informar Número Real (sem criar lead) ─────────────────────
+// Aparece quando usuário clica no telefone LID no header da conversa.
+// Salva o telefone real na conversa via PATCH e recarrega _convAtiva.
+async function _abrirModalInformarNumero(conversa) {
+  document.getElementById('modal-informar-numero')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-informar-numero';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;display:flex;align-items:center;justify-content:center';
+  overlay.innerHTML = `
+    <div style="background:#1a2332;border-radius:14px;padding:24px;width:360px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,.6)">
+      <h3 style="margin:0 0 6px;color:#fff;font-size:1rem">📱 Informar Número WhatsApp</h3>
+      <p style="color:#64748b;font-size:.8rem;margin:0 0 16px">Digite o número real para habilitar o envio de mensagens. O lead <strong>não</strong> precisa ser criado.</p>
+      <input id="informar-tel-input" type="text" placeholder="5511999999999 ou (11) 99999-9999"
+        style="width:100%;background:#0d1929;border:1.5px solid #25d366;border-radius:8px;padding:10px 13px;color:#fff;font-size:.9rem;box-sizing:border-box;outline:none;margin-bottom:14px">
+      <div id="informar-tel-erro" style="color:#f87171;font-size:.8rem;margin-bottom:10px;display:none"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button id="informar-tel-cancel" style="background:transparent;color:#94a3b8;border:1px solid #2d3748;border-radius:8px;padding:8px 18px;cursor:pointer">Cancelar</button>
+        <button id="informar-tel-salvar" style="background:#25d366;color:#fff;border:none;border-radius:8px;padding:8px 20px;font-weight:700;cursor:pointer">Salvar e Habilitar Envio</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+  const inp = document.getElementById('informar-tel-input');
+  setTimeout(() => inp?.focus(), 50);
+  document.getElementById('informar-tel-cancel').onclick = () => overlay.remove();
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+  document.getElementById('informar-tel-salvar').onclick = async () => {
+    const raw = inp.value.trim().replace(/[\s()\-]/g, '');
+    const tel = raw.startsWith('55') ? raw : `55${raw}`;
+    const erroEl = document.getElementById('informar-tel-erro');
+    if (!/^\d{12,13}$/.test(tel)) {
+      erroEl.textContent = 'Número inválido. Use o formato: 5511999999999 (com 55 + DDD + número)';
+      erroEl.style.display = '';
+      return;
+    }
+    const btn = document.getElementById('informar-tel-salvar');
+    btn.disabled = true; btn.textContent = 'Salvando...';
+    try {
+      const r = await Auth.api('PATCH', `/whatsapp/conversas/${conversa.id}`, { telefone: tel });
+      if (!r?.ok) throw new Error(r?.data?.erro || 'Erro ao salvar.');
+      overlay.remove();
+      Toast.show('✅ Número salvo! Agora você pode enviar mensagens.', 'success');
+      // Recarrega a conversa para atualizar _convAtiva com o novo telefone
+      await abrirConversa(conversa.id);
+    } catch (e) {
+      erroEl.textContent = e.message;
+      erroEl.style.display = '';
+      btn.disabled = false; btn.textContent = 'Salvar e Habilitar Envio';
     }
   };
 }
