@@ -2868,15 +2868,83 @@ async function webhookReceberMensagem(req, res) {
                       telFinalAtualizado: telFinal || null,
                     });
                   } else {
-                    // Conversa existe mas sem lead_id — OK, alias é suficiente para rotear
+                    // Conversa existe mas sem lead_id — RECONCILIAR via mensagem enviada pelo CRM.
+                    // CAUSA RAIZ DO BUG: o alias criado no ECO (fromMe) apontava para conversa
+                    // criada sem lead_id. A mensagem é salva, mas a UI filtra conversas sem lead.
+                    // FIX: busca mensagem 'enviada' nessa conversa → o CRM sempre vincula lead_id ao enviar.
                     console.log('WA_INBOUND_ALIAS_CONVERSA_SEM_LEAD', {
                       conversaId: _aliasRow.conversa_id,
-                      motivo: 'conversa_sem_lead_id_mas_alias_valido',
+                      motivo: 'tentando_reconciliar_via_mensagem_enviada',
                     });
-                  }
+                    try {
+                      // Busca 1: mensagem enviada na conversa do alias com lead_id
+                      const { data: _msgLead } = await sb.from(MENSAGENS_TABLE)
+                        .select('lead_id')
+                        .eq('conversa_id', _aliasRow.conversa_id)
+                        .eq('direcao', 'enviada')
+                        .not('lead_id', 'is', null)
+                        .limit(1);
+                      if (_msgLead?.[0]?.lead_id) {
+                        leadId = _msgLead[0].lead_id;
+                        console.log('WA_INBOUND_ALIAS_RECONCILED_VIA_SENT_MSG', {
+                          conversaId: _aliasRow.conversa_id,
+                          leadId,
+                          motivo: 'lead_encontrado_em_mensagem_enviada_nessa_conversa',
+                        });
+                        // Vincula o lead à conversa para que apareça na UI (fire-and-forget)
+                        sb.from(CONVERSAS_TABLE)
+                          .update({ lead_id: leadId, status: 'ABERTA', atualizado_em: agora })
+                          .eq('id', _aliasRow.conversa_id)
+                          .then(() => console.log('WA_INBOUND_CONVERSA_LEAD_LINKED', { conversaId: _aliasRow.conversa_id, leadId }))
+                          .catch(e => console.warn('WA_INBOUND_CONVERSA_LEAD_LINK_WARN:', e.message));
+                      } else {
+                        // Busca 2: conversa ativa com lead_id que tenha rawJid nos dados_extras
+                        const { data: _convComLid } = await sb.from(CONVERSAS_TABLE)
+                          .select('id, lead_id, telefone')
+                          .not('lead_id', 'is', null)
+                          .neq('status', 'FECHADA')
+                          .neq('status', 'PENDENTE_IDENTIFICACAO')
+                          .ilike('dados_extras', `%${lidNumero}%`)
+                          .limit(1);
+                        if (_convComLid?.[0]?.lead_id) {
+                          leadId = _convComLid[0].lead_id;
+                          // Repontar alias para a conversa ativa com lead
+                          aliasConversaEncontrada = _convComLid[0].id;
+                          console.log('WA_INBOUND_ALIAS_RECONCILED_VIA_DADOS_EXTRAS', {
+                            conversaIdAntiga: _aliasRow.conversa_id,
+                            conversaIdNova: _convComLid[0].id,
+                            leadId,
+                            motivo: 'dados_extras_lid_match',
+                          });
+                          // Atualiza alias para apontar para a conversa ativa
+                          sb.from(ALIAS_TABLE)
+                            .update({ conversa_id: aliasConversaEncontrada, atualizado_em: agora })
+                            .eq('remote_jid', rawJid)
+                            .then(() => {})
+                            .catch(() => {});
+                          sb.from(ALIAS_TABLE)
+                            .update({ conversa_id: aliasConversaEncontrada, atualizado_em: agora })
+                            .eq('lid', lidNumero)
+                            .then(() => {})
+                            .catch(() => {});
+                        } else {
+                          // Não conseguiu reconciliar — alias sem lead persiste.
+                          // A mensagem será salva na conversa do alias, mas a conversa vai ficar
+                          // invisível até ser vinculada manualmente. Melhor do que criar lead errado.
+                          console.log('WA_INBOUND_ALIAS_RECONCILE_FAILED', {
+                            conversaId: _aliasRow.conversa_id,
+                            motivo: 'sem_mensagem_enviada_e_sem_dados_extras_match',
+                            acao: 'mensagem_salva_em_conversa_orfao_aguarda_vinculacao',
+                          });
+                        }
+                      }
+                    } catch(_eRec) {
+                      console.warn('WA_INBOUND_ALIAS_RECONCILE_WARN:', _eRec.message);
+                    }
+                  } // fim else (conversa sem lead_id)
                 } catch(_eCvA) { console.warn('WA_INBOUND_ALIAS_CONVERSA_LOOKUP_WARN:', _eCvA.message); }
-              }
-            }
+              } // fim if (!leadId)
+            } // fim if (_aliasRow.conversa_id)
           } else {
             console.log('WA_INBOUND_ALIAS_NOT_FOUND', { lidNumero, rawJid });
           }
