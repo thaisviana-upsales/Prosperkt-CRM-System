@@ -32,20 +32,28 @@ let db;
 function getDb() {
   if (!Database) {
     // better-sqlite3 não carregou — em produção usa-se Supabase via dbProvider
-    console.warn('[DB] getDb() chamado mas better-sqlite3 não está disponível. Use Supabase (DATABASE_PROVIDER=supabase).');
     return null;
   }
   if (!db) {
-    db = new Database(path.resolve(DB_PATH), {
-      verbose: process.env.NODE_ENV === 'development' ? console.log : null,
-    });
-    db.pragma('journal_mode = WAL');       // Write-Ahead Logging para performance
-    db.pragma('foreign_keys = ON');         // FK constraints ativos
-    db.pragma('synchronous = NORMAL');      // Balanço entre segurança e velocidade
-    initSchema(db);
+    try {
+      db = new Database(path.resolve(DB_PATH), {
+        verbose: process.env.NODE_ENV === 'development' ? console.log : null,
+      });
+      db.pragma('journal_mode = WAL');
+      db.pragma('foreign_keys = ON');
+      db.pragma('synchronous = NORMAL');
+      initSchema(db);
+    } catch (e) {
+      // Em Railway/produção, new Database() falha com ERR_DLOPEN_FAILED (invalid ELF header).
+      // O CRM usa Supabase em produção — getDb() retorna null silenciosamente.
+      console.warn('[DB] SQLite indisponível neste ambiente (invalid ELF header ou sem suporte nativo). Usando Supabase.');
+      Database = null; // previne novas tentativas
+      return null;
+    }
   }
   return db;
 }
+
 
 function initSchema(db) {
   db.exec(`
