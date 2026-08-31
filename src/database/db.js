@@ -1,9 +1,20 @@
 /**
  * PROSPEKT CRM — Database Schema & Initialization
- * Banco de dados SQLite com melhor-sqlite3 (síncrono, persistente)
+ * Banco de dados SQLite com better-sqlite3 (síncrono, persistente).
+ * Em produção (Railway + Supabase) este módulo nunca é invocado.
+ * O require() é protegido para não derrubar o servidor caso o binário
+ * nativo não esteja disponível no ambiente de execução.
  */
 
-const Database = require('better-sqlite3');
+let Database = null;
+try {
+  Database = require('better-sqlite3');
+} catch (e) {
+  // Em Railway/produção, better-sqlite3 pode falhar (ERR_DLOPEN_FAILED).
+  // O CRM usa Supabase em produção — este módulo não é necessário.
+  console.warn('[DB] better-sqlite3 indisponível (modo produção/Supabase):', e.message);
+}
+
 const path = require('path');
 const fs = require('fs');
 require('dotenv').config();
@@ -19,6 +30,11 @@ if (!fs.existsSync(dbDir)) {
 let db;
 
 function getDb() {
+  if (!Database) {
+    // better-sqlite3 não carregou — em produção usa-se Supabase via dbProvider
+    console.warn('[DB] getDb() chamado mas better-sqlite3 não está disponível. Use Supabase (DATABASE_PROVIDER=supabase).');
+    return null;
+  }
   if (!db) {
     db = new Database(path.resolve(DB_PATH), {
       verbose: process.env.NODE_ENV === 'development' ? console.log : null,
