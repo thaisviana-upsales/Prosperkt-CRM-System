@@ -87,12 +87,25 @@ async function buscarConversa(sb, conversaId, usuario) {
 async function resolverTelefone(sb, conversa) {
   let tel = conversa.telefone || '';
   if (tel.startsWith('LID:') || tel.includes('@lid') || !tel) {
-    // Tenta buscar pelo lead
+    // Tenta buscar o telefone real pelo lead
     if (conversa.lead_id) {
       const { data: ld } = await sb.from('leads').select('telefone').eq('id', conversa.lead_id).single();
-      if (ld?.telefone && !ld.telefone.startsWith('LID:')) tel = ld.telefone;
+      if (ld?.telefone && !ld.telefone.startsWith('LID:') && !ld.telefone.includes('@lid')) {
+        tel = ld.telefone;
+      }
     }
   }
+
+  // Se ainda for LID após busca do lead, retorna o JID completo (ex: '148382630805756@lid')
+  // A Evolution API v2 exige o sufixo @lid para rotear corretamente
+  if (tel.startsWith('LID:') || tel.includes('@lid')) {
+    const lidJid = tel.startsWith('LID:') ? tel.replace('LID:', '') : tel;
+    if (lidJid.includes('@lid')) {
+      console.log('[resolverTelefone] LID JID detectado — retornando JID completo:', lidJid);
+      return lidJid; // ex: '148382630805756@lid'
+    }
+  }
+
   const digits = telSoDigitos(tel);
   if (!digits || digits.length < 8) return null;
   return digits;
@@ -354,14 +367,14 @@ async function sincronizarAudios(req, res) {
           ? (msg.telefone.includes('@') ? msg.telefone : `${telSoDigitos(msg.telefone)}@s.whatsapp.net`)
           : null;
 
-        // Prioridade 2: dados da conversa (LID JIDs têm dados_extras.remoteJid)
+        // Prioridade 2: dados da conversa (LID JIDs têm dados_extras.remoteJid ou telefone 'LID:xxx@lid')
         if (!remoteJid) {
           if (!convCache) {
             const { data: cd } = await sb.from(CONVERSAS_TABLE)
               .select('telefone, dados_extras').eq('id', conversaId).single();
             convCache = cd || {};
           }
-          if (convCache.telefone && !convCache.telefone.startsWith('LID:')) {
+          if (convCache.telefone && !convCache.telefone.startsWith('LID:') && !convCache.telefone.includes('@lid')) {
             const d = telSoDigitos(convCache.telefone);
             if (d && d.length >= 10) remoteJid = `${d}@s.whatsapp.net`;
           }
@@ -372,6 +385,15 @@ async function sincronizarAudios(req, res) {
                 : convCache.dados_extras;
               remoteJid = ex?.remoteJid || null;
             } catch (_) {}
+          }
+          // Fallback LID: extrai JID de 'LID:148382630805756@lid'
+          if (!remoteJid && convCache.telefone) {
+            const ct = convCache.telefone;
+            const lidJid = ct.startsWith('LID:') ? ct.replace('LID:', '') : ct;
+            if (lidJid.includes('@lid')) {
+              remoteJid = lidJid;
+              console.log('WA_AUDIO_SYNC_LID_JID_FALLBACK', { msgId: msg.id, remoteJid });
+            }
           }
         }
 
@@ -649,7 +671,7 @@ async function _servirViaApi(res, sb, msg) {
       .eq('id', msg.conversa_id)
       .single();
 
-    if (conv?.telefone && !conv.telefone.startsWith('LID:')) {
+    if (conv?.telefone && !conv.telefone.startsWith('LID:') && !conv.telefone.includes('@lid')) {
       const d = telSoDigitos(conv.telefone);
       if (d && d.length >= 10) remoteJid = `${d}@s.whatsapp.net`;
     }
@@ -659,6 +681,15 @@ async function _servirViaApi(res, sb, msg) {
           ? JSON.parse(conv.dados_extras) : conv.dados_extras;
         remoteJid = ex?.remoteJid || null;
       } catch (_) {}
+    }
+    // Fallback: extrai JID de telefone LID ('LID:148382630805756@lid' → '148382630805756@lid')
+    if (!remoteJid && conv?.telefone) {
+      const ct = conv.telefone;
+      const lidJid = ct.startsWith('LID:') ? ct.replace('LID:', '') : ct;
+      if (lidJid.includes('@lid')) {
+        remoteJid = lidJid;
+        console.log('WA_AUDIO_PLAY_API_LID_JID_FALLBACK', { msgId, remoteJid });
+      }
     }
 
     if (!remoteJid) {
