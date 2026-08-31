@@ -27,13 +27,36 @@ if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
 }
 
+/**
+ * Mock de banco SQLite para uso em produção (Railway + Supabase).
+ * Retornado por getDb() quando better-sqlite3 não está disponível.
+ * Evita TypeError em código legado que chama getDb() mesmo com Supabase ativo.
+ * Todas as operações retornam valores vazios/noop — dados reais vêm do Supabase.
+ */
+const SQLITE_NOOP = {
+  prepare: () => ({
+    all:  () => [],
+    get:  () => undefined,
+    run:  () => ({ changes: 0, lastInsertRowid: null }),
+    bind: function() { return this; },
+  }),
+  exec:        () => {},
+  pragma:      () => [],
+  close:       () => {},
+  transaction: (fn) => { const tx = (...args) => { try { return fn(...args); } catch(_) {} }; return tx; },
+};
+
 let db;
+let _sqliteUnavailable = false;
 
 function getDb() {
+  if (_sqliteUnavailable) return SQLITE_NOOP;
+
   if (!Database) {
-    // better-sqlite3 não carregou — em produção usa-se Supabase via dbProvider
-    return null;
+    _sqliteUnavailable = true;
+    return SQLITE_NOOP;
   }
+
   if (!db) {
     try {
       db = new Database(path.resolve(DB_PATH), {
@@ -44,15 +67,17 @@ function getDb() {
       db.pragma('synchronous = NORMAL');
       initSchema(db);
     } catch (e) {
-      // Em Railway/produção, new Database() falha com ERR_DLOPEN_FAILED (invalid ELF header).
-      // O CRM usa Supabase em produção — getDb() retorna null silenciosamente.
-      console.warn('[DB] SQLite indisponível neste ambiente (invalid ELF header ou sem suporte nativo). Usando Supabase.');
-      Database = null; // previne novas tentativas
-      return null;
+      // Em Railway/produção: binário nativo incompatível (invalid ELF header).
+      // O CRM usa Supabase — retorna mock silenciosamente para evitar erros nos logs.
+      console.warn('[DB] SQLite nativo indisponível neste ambiente. Usando Supabase como banco principal.');
+      Database = null;
+      _sqliteUnavailable = true;
+      return SQLITE_NOOP;
     }
   }
   return db;
 }
+
 
 
 function initSchema(db) {
