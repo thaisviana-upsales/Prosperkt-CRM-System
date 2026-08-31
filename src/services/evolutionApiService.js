@@ -245,23 +245,27 @@ async function configurarWebhook() {
   if (!webhookUrl) {
     return { sucesso: false, erro: 'WEBHOOK_URL não configurada no .env e sem fallback público disponível.' };
   }
+  // Evolution API v2: payload deve ter wrapper 'webhook' (v1 usava campos flat)
   const payload = {
-    url: webhookUrl,
-    webhook_by_events: false,
-    // downloadMedia: true — Evolution baixa a midia e inclui mediaUrl no payload do webhook.
-    // SEM isso: arquivo_url = null para todo audio recebido. COM isso: arquivo_url = Evolution URL.
-    downloadMedia: true,
-    events: [
-      'MESSAGES_UPSERT',
-      'MESSAGES_UPDATE',
-      'MESSAGES_SET',
-      'CONNECTION_UPDATE',
-      'QRCODE_UPDATED',
-    ],
+    webhook: {
+      enabled: true,
+      url: webhookUrl,
+      webhookByEvents: false,
+      webhookBase64: false,
+      // downloadMedia não suportado via webhook config v2 — mídia buscada via getBase64FromMediaMessage
+      events: [
+        'MESSAGES_UPSERT',
+        'MESSAGES_UPDATE',
+        'MESSAGES_SET',
+        'CONNECTION_UPDATE',
+        'QRCODE_UPDATED',
+      ],
+    },
   };
   console.log(`[EVO] configurarWebhook: POST /webhook/set/${EVOLUTION_INSTANCE}`, JSON.stringify(payload));
   return call('POST', `/webhook/set/${EVOLUTION_INSTANCE}`, payload);
 }
+
 
 /**
  * Retorna a configuração atual do webhook da instância.
