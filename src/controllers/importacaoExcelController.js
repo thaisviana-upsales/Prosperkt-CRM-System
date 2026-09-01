@@ -701,7 +701,7 @@ async function importar(req, res) {
             conteudo: `Histórico inicial: ${d.observacoes_historico_inicial}`,
             criado_em: agora,
             enviado_em: agora,
-          }).catch(() => {});
+          }).then(() => {}).catch(() => {});
         }
 
         // Timeline: IMPORTACAO_LEAD
@@ -754,7 +754,8 @@ async function importar(req, res) {
 
   } catch (e) {
     console.error('[importacao-excel.importar]', e.message);
-    await sb.from('importacoes_leads').update({ status: 'erro' }).eq('id', importacaoId).catch(() => {});
+    const { error: _updErr } = await sb.from('importacoes_leads').update({ status: 'erro' }).eq('id', importacaoId);
+    void _updErr; // ignora erro (não crítico)
     return res.status(500).json({ sucesso: false, erro: e.message });
   }
 }

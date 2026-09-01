@@ -257,10 +257,12 @@ async function enviarArquivo(req, res, next) {
         console.warn('[wha.enviarArquivo] histórico warn:', e.message);
       }
 
-      await sb.from('conversas_whatsapp').update({
+      const { error: convUpdErr } = await sb.from('conversas_whatsapp').update({
         ultima_msg_em: agora, atualizado_em: agora,
         ultima_mensagem: `📎 ${nomeSeguro}`, status: 'ABERTA',
-      }).eq('id', conversaId).catch(() => {});
+      }).eq('id', conversaId);
+      // ignora erro de update da conversa (não crítico)
+      void convUpdErr;
     }
 
     return res.status(201).json({

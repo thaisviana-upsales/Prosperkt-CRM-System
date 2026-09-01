@@ -341,7 +341,7 @@ async function registrarManual(req, res) {
         destinatarios_json:  destJson,
         enviado_em:          agr,
         erro:                null,
-      }).catch(() => {}); // Ignora se tabela não existir ainda
+      }); // Ignora se tabela não existir ainda — insert fire-and-forget sem await
 
       // Atualiza status do lead
       await sb.from('leads').update({
@@ -349,7 +349,8 @@ async function registrarManual(req, res) {
         conta_azul_enviado_em: agr,
         conta_azul_enviado_por: usuario?.nome || 'Usuário',
         atualizado_em:        agr,
-      }).eq('id', leadId).catch(() => {});
+      }).eq('id', leadId);
+      // ignora erro de update do lead (não crítico)
 
       // Timeline
       try {

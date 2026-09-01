@@ -602,7 +602,9 @@ async function servirAudioAssinado(req, res) {
         const buf = Buffer.from(await blob.arrayBuffer());
         const mime = msg.mime_type || 'audio/ogg';
         // Fixa storage_path no banco para próximas chamadas irem pelo Caso 1
-        sb.from(MENSAGENS_TABLE).update({ storage_path: evoUrl, storage_bucket: BUCKET }).eq('id', msgId).catch(() => {});
+        // Fire-and-forget: atualiza storage_path sem bloquear resposta
+        // Sem .catch() — Supabase builder não é Promise completa
+        (async () => { await sb.from(MENSAGENS_TABLE).update({ storage_path: evoUrl, storage_bucket: BUCKET }).eq('id', msgId); })().catch(() => {});
         res.set('Content-Type',   mime);
         res.set('Content-Length', buf.length);
         res.set('Cache-Control',  'private, max-age=86400');
