@@ -2,19 +2,25 @@
 
 ## ⚠️ VERSÃO ESTÁVEL BLOQUEADA
 
-**Tag git:** `v-stable-whatsapp-audio-funcionando-2026-08-31`
-**Commit:** `d4f74a4`
+**Tag git:** `v-stable-arquivos-documentos-2026-08-31`
+**Commit:** `292c629`
 **Data:** 2026-08-31
 
-Esta versão foi confirmada com envio E recebimento de **texto E áudio** funcionando (21:42 BRT).
+Esta versão foi confirmada com envio E recebimento de **texto, áudio E documentos/imagens** funcionando (22:46 BRT).
 
-**Fixes incluídos nesta versão:**
-- Áudio LID: `resolverTelefone` busca JID em `whatsapp_conversa_aliases.remote_jid` (causa raiz do @lid ausente)
+**Fixes incluídos nesta versão (acumulados):**
+- Documentos LID: `conversa.telefone = 'LID:XXXX'` → JID `XXXX@lid` correto para Evolution API
+- Áudio LID: `resolverTelefone` busca JID em `whatsapp_conversa_aliases.remote_jid`
 - SQLite em produção: `SQLITE_NOOP` mock — zero crash, zero TypeError no Railway
 - Webhook Evolution API v2: payload com wrapper `webhook: {}` correto
-- AuditLog: `.catch()` inválido em PostgrestFilterBuilder corrigido para `await { error }`
+- `.catch()` inválido eliminado de TODOS os Supabase query builders:
+  - `arquivosWhatsappController.js` (linha 263 — causa raiz do erro de documento)
+  - `whatsappAudioController.js` (linha 605)
+  - `importacaoExcelController.js` (linha 757)
+  - `contaAzulController.js` (linhas 344, 352)
+  - `auditService.js` (linhas 37-45)
 
-**Tag anterior (texto funcionando, sem áudio LID):** `v-stable-whatsapp-enviando-recebendo-2026-08-29` (commit `b8ede98`)
+**Tag anterior (texto+áudio, sem documento):** `v-stable-whatsapp-audio-funcionando-2026-08-31` (commit `d4f74a4`)
 
 
 ---
@@ -57,8 +63,15 @@ Os seguintes fluxos estão funcionando e NÃO podem ser alterados:
 ### WhatsApp — Envio de áudio (BLOQUEADO — confirmado 2026-08-31)
 Os seguintes fluxos estão funcionando e NÃO podem ser alterados:
 - Envio de áudio para contatos LID (`@lid`) e contatos regulares
-- `resolverTelefone` em `src/controllers/whatsappAudioController.js` — busca JID em `whatsapp_conversa_aliases.remote_jid`
+- `resolverTelefone` em `src/controllers/whatsappAudioController.js` — prioridade: `LID:` prefix → alias table → dígitos
 - Conversão WebM → OGG Opus antes do envio
+
+### WhatsApp — Envio de documentos/imagens (BLOQUEADO — confirmado 2026-08-31)
+Os seguintes fluxos estão funcionando e NÃO podem ser alterados:
+- Envio de documentos, imagens e vídeos para contatos LID e regulares
+- `enviarArquivo` em `src/controllers/arquivosWhatsappController.js` — resolução JID: `LID:` prefix → `@lid`
+- **REGRA DE RESOLUÇÃO JID:** `conversa.telefone = 'LID:XXXX'` → JID = `XXXX@lid` (NÃO usar dígitos brutos para LID)
+- Endpoint temp URL para Evolution API baixar mídia: `GET /api/whatsapp/temp/:token`
 
 ### WhatsApp — Recebimento inbound (BLOQUEADO — confirmado 2026-08-29)
 Os seguintes fluxos estão funcionando e NÃO podem ser alterados:
@@ -81,6 +94,7 @@ Os seguintes blocos em `src/controllers/whatsappController.js` NÃO podem ser al
 - `src/services/evolutionApiService.js` — NÃO alterar sem autorização explícita
 - `src/database/db.js` — SQLITE_NOOP mock ativo para produção Railway — NÃO remover
 - `src/services/auditService.js` — padrão `await { error }` sem `.catch()` no builder — NÃO reverter para `.catch()`
+- **REGRA GLOBAL:** NUNCA usar `.catch()` encadeado em `sb.from().insert/update/delete/upsert()` — usa `await { error }` ou IIFE async
 - Variáveis de ambiente (`.env`, Railway vars): `WHATSAPP_OFFICIAL_NUMBER`, `EVOLUTION_API_KEY`, `EVOLUTION_INSTANCE`
 - Bucket `whatsapp-midias` no Supabase Storage
 
