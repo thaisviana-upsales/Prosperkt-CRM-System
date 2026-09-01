@@ -34,15 +34,19 @@ async function registrarLog({ acao, entidade, entidade_id, antes, depois, descri
         user_agent:    ua            || null,
       };
 
-      await sb.from('logs').insert(payload).catch(e => {
-        console.error('[AuditLog] logs insert error:', e.message);
-      });
+      // sb.from().insert() retorna PostgrestFilterBuilder (thenable mas sem .catch())
+      // Usar await com destructuring é a forma correta para Supabase JS v2
+      const { error: logErr } = await sb.from('logs').insert(payload);
+      if (logErr) console.error('[AuditLog] logs insert error:', logErr.message);
 
-      // audit_logs (imutável — hardening)
-      await sb.from('audit_logs').insert({
+      // audit_logs (imutável — silencioso se tabela não existir)
+      const { error: auditErr } = await sb.from('audit_logs').insert({
         ...payload,
         origem: origem || 'web',
-      }).catch(() => {}); // silencioso se tabela não existir
+      });
+      // ignora erro de audit_logs (tabela pode não existir)
+      void auditErr;
+
 
     } else {
       // SQLite
