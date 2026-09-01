@@ -120,7 +120,28 @@ async function resolverTelefone(sb, conversa) {
     }
   }
 
-  // 3. Fallback: dígitos de conversa.telefone
+  // 3. Fallback: mensagem inbound — armazena JID original (@lid) no campo telefone
+  const { data: inboundMsg } = await sb
+    .from('mensagens_whatsapp')
+    .select('telefone')
+    .eq('conversa_id', conversa.id)
+    .eq('direcao', 'recebida')
+    .not('telefone', 'is', null)
+    .order('criado_em', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (inboundMsg?.telefone) {
+    const mtel = inboundMsg.telefone.trim();
+    if (mtel.includes('@lid')) {
+      console.log('[resolverTelefone] LID JID via msg inbound:', mtel);
+      return mtel;
+    }
+    const mDigits = mtel.replace(/@s\.whatsapp\.net$/i, '').replace(/\D/g, '');
+    if (mDigits.length >= 8) return mDigits;
+  }
+
+  // 4. Fallback final: dígitos de conversa.telefone
   const digits = telSoDigitos(tel);
   if (digits && digits.length >= 8) return digits;
 
