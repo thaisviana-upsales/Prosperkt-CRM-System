@@ -136,6 +136,67 @@ async function resolverDestino() {
 let _cacheDestinoIg  = null;
 let _cacheDestinoIgTTL = 0;
 
+// ── Busca ID do usuário SDR para atribuição de leads inbound ──────────────────
+// Retorna o ID do SDR com menos leads ativos (round-robin por carga).
+// Resultado cacheado por 2 min para não sobrecarregar o DB a cada mensagem.
+let _cacheSDRId    = undefined; // undefined = não carregado ainda; null = nenhum SDR
+let _cacheSDRIdTTL = 0;
+
+async function resolverSDRId() {
+  const agora = Date.now();
+  if (_cacheSDRId !== undefined && agora < _cacheSDRIdTTL) return _cacheSDRId;
+
+  try {
+    const { sb } = getProvider();
+
+    // Busca usuários com role='SDR' e ativos
+    const { data: sdrs } = await sb
+      .from('usuarios')
+      .select('id')
+      .eq('role', 'SDR')
+      .eq('ativo', true);
+
+    if (!sdrs?.length) {
+      console.log('[resolverSDRId] Nenhum usuário SDR ativo encontrado.');
+      _cacheSDRId = null;
+      _cacheSDRIdTTL = agora + 2 * 60_000;
+      return null;
+    }
+
+    let sdrId = sdrs[0].id;
+
+    if (sdrs.length > 1) {
+      // Round-robin: SDR com menos leads ativos recebe o próximo
+      const { data: contagem } = await sb
+        .from('leads')
+        .select('responsavel_id')
+        .in('responsavel_id', sdrs.map(s => s.id))
+        .neq('status', 'PERDIDO');
+
+      const counts = {};
+      sdrs.forEach(s => { counts[s.id] = 0; });
+      (contagem || []).forEach(l => { if (l.responsavel_id) counts[l.responsavel_id] = (counts[l.responsavel_id] || 0) + 1; });
+
+      const sorted = Object.entries(counts).sort((a, b) => a[1] - b[1]);
+      sdrId = sorted[0][0];
+      console.log('[resolverSDRId] Round-robin SDR selecionado:', sdrId, '| cargas:', counts);
+    } else {
+      console.log('[resolverSDRId] SDR único selecionado:', sdrId);
+    }
+
+    _cacheSDRId    = sdrId;
+    _cacheSDRIdTTL = agora + 2 * 60_000; // cache por 2 min
+    return sdrId;
+
+  } catch (e) {
+    console.warn('[resolverSDRId] erro ao buscar SDR:', e.message);
+    _cacheSDRId = null;
+    _cacheSDRIdTTL = Date.now() + 60_000; // retry em 1 min
+    return null;
+  }
+}
+
+
 async function resolverDestinoInstagramDirect() {
   const agora = Date.now();
   if (_cacheDestinoIg && agora < _cacheDestinoIgTTL) return _cacheDestinoIg;
@@ -401,6 +462,7 @@ module.exports = {
   normTel,
   resolverDestino,
   resolverDestinoInstagramDirect,
+  resolverSDRId,
   CSV_URL,
   COLUNAS,
 };

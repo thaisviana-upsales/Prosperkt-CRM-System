@@ -3063,11 +3063,15 @@ async function webhookReceberMensagem(req, res) {
                 if (_destIgEvo) {
                   const _novoIdEvo = crypto.randomBytes(16).toString('hex');
                   const _nomeEvo = formatarTelefoneParaNome(_telViaEvo);
-                  console.log('WA_INBOUND_CREATE_LEAD_INSTAGRAM_DIRECT_START', { tel: _telViaEvo, lidNumero, funil: _destIgEvo.funil.nome, etapa: _destIgEvo.etapa.nome });
+                  // Resolve SDR para atribuição automática do lead inbound
+                  let _sdrIdEvo = null;
+                  try { _sdrIdEvo = await planilhaSvc.resolverSDRId(); } catch(_e) {}
+                  console.log('WA_INBOUND_CREATE_LEAD_INSTAGRAM_DIRECT_START', { tel: _telViaEvo, lidNumero, funil: _destIgEvo.funil.nome, etapa: _destIgEvo.etapa.nome, sdrId: _sdrIdEvo });
                   const { data: _nlEvo, error: _errNlEvo } = await sb.from('leads').insert({
                     id: _novoIdEvo, nome: _nomeEvo, telefone: _telViaEvo,
                     status: 'ABERTO', funil_id: _destIgEvo.funil.id,
                     pipeline_id: _destIgEvo.pipeline.id, etapa_id: _destIgEvo.etapa.id,
+                    responsavel_id: _sdrIdEvo || null,
                     origem: 'WhatsApp Recebido',
                     dados_extras: JSON.stringify({ criado_por_mensagem_whatsapp: true, remoteJid: rawJid, lid: lidNumero, pushName: nome || null, primeira_mensagem_em: agora, funil_entrada: 'Instagram - Direct' }),
                     data_entrada: agora, criado_em: agora, atualizado_em: agora,
@@ -3123,11 +3127,15 @@ async function webhookReceberMensagem(req, res) {
                 const _novoLidId = crypto.randomBytes(16).toString('hex');
                 const _nomeLid   = `WhatsApp LID ${lidNumero}`;
                 const _telLid    = `LID:${lidNumero}`; // placeholder NOT NULL — NÃO é telefone real
+                // Resolve SDR para atribuição automática do lead inbound
+                let _sdrIdLid = null;
+                try { _sdrIdLid = await planilhaSvc.resolverSDRId(); } catch(_e) {}
                 const { data: _nlLid, error: _errLid } = await sb.from('leads').insert({
                   id: _novoLidId, nome: _nomeLid,
                   telefone: _telLid,
                   status: 'ABERTO', funil_id: _destIgLid.funil.id,
                   pipeline_id: _destIgLid.pipeline.id, etapa_id: _destIgLid.etapa.id,
+                  responsavel_id: _sdrIdLid || null,
                   origem: 'WhatsApp Recebido',
                   dados_extras: JSON.stringify({
                     criado_por_mensagem_whatsapp: true,
@@ -3372,9 +3380,13 @@ async function webhookReceberMensagem(req, res) {
             // 2. Criar lead (se não existe e temos um funil)
             if (_fId && _pId && _eId && !leadId) {
               const _novoLeadId = crypto.randomBytes(16).toString('hex');
+              // Resolve SDR para atribuição automática do lead inbound
+              let _sdrIdGar = null;
+              try { _sdrIdGar = await planilhaSvc.resolverSDRId(); } catch(_e) {}
               const { data: _nl, error: _enl } = await sb.from('leads').insert({
                 id: _novoLeadId, nome: _nomeNovo, telefone: _telNovo,
                 status: 'ABERTO', funil_id: _fId, pipeline_id: _pId, etapa_id: _eId,
+                responsavel_id: _sdrIdGar || null,
                 origem: 'WhatsApp Recebido',
                 dados_extras: JSON.stringify({ criado_por_mensagem_whatsapp: true, lid: lidNumero || null, remoteJid: rawJid || null, pushName: nome || null, primeira_mensagem_em: agora, funil_entrada: _fNome }),
                 data_entrada: agora, criado_em: agora, atualizado_em: agora,
