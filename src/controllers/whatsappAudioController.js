@@ -84,21 +84,30 @@ async function buscarConversa(sb, conversaId, usuario) {
 }
 
 // ─── Helper: resolve JID real para envio (WhatsApp/LID) ──────────────────────
-// CAUSA RAIZ: conversa.telefone armazena só dígitos (ex: '148382630805756').
-// Para contatos LID (Instagram Direct), o JID real (@lid) está em
-// whatsapp_conversa_aliases.remote_jid. Sem @lid, Evolution API retorna 400.
+// CAUSA RAIZ DEFINITIVA: conversas_whatsapp.telefone para contatos LID é
+// armazenado como 'LID:148382630805756' (prefixo LID:, SEM sufixo @lid).
+// Evolution API v2 exige '148382630805756@lid' para rotear LID contacts.
 async function resolverTelefone(sb, conversa) {
   const tel = (conversa.telefone || '').trim();
 
-  // 1. conversa.telefone já tem @lid (caso raro mas possível)
-  if (tel.includes('@lid')) {
-    const jid = tel.startsWith('LID:') ? tel.slice(4) : tel;
-    console.log('[resolverTelefone] telefone já é LID JID:', jid);
-    return jid;
+  // 1. CASO PRINCIPAL — prefixo 'LID:' é o formato padrão para LID contacts
+  //    whatsappController.js armazena como 'LID:${lidNumero}' (linha 3356)
+  if (tel.startsWith('LID:')) {
+    const lidNumero = tel.slice(4).replace(/\D/g, '');
+    if (lidNumero) {
+      const jid = `${lidNumero}@lid`;
+      console.log('[resolverTelefone] LID via prefixo LID:', jid);
+      return jid; // '148382630805756@lid'
+    }
   }
 
-  // 2. Consulta whatsapp_conversa_aliases — fonte primária para contatos LID
-  //    Esta tabela tem o remote_jid real (ex: '148382630805756@lid')
+  // 2. Já tem sufixo @lid (caso raro)
+  if (tel.includes('@lid')) {
+    console.log('[resolverTelefone] telefone já é LID JID:', tel);
+    return tel;
+  }
+
+  // 3. Alias table (set pelo ECO quando CRM envia texto para o contato)
   const { data: alias } = await sb
     .from('whatsapp_conversa_aliases')
     .select('remote_jid')
@@ -110,43 +119,19 @@ async function resolverTelefone(sb, conversa) {
     const rjid = alias.remote_jid.trim();
     if (rjid.includes('@lid')) {
       console.log('[resolverTelefone] LID JID via alias:', rjid);
-      return rjid; // ex: '148382630805756@lid'
+      return rjid;
     }
-    // alias é número real (@s.whatsapp.net) — extrai só os dígitos
     const aDigits = rjid.replace(/@s\.whatsapp\.net$/i, '').replace(/\D/g, '');
-    if (aDigits.length >= 8) {
-      console.log('[resolverTelefone] número real via alias:', aDigits);
-      return aDigits;
-    }
+    if (aDigits.length >= 8) return aDigits;
   }
 
-  // 3. Fallback: mensagem inbound — armazena JID original (@lid) no campo telefone
-  const { data: inboundMsg } = await sb
-    .from('mensagens_whatsapp')
-    .select('telefone')
-    .eq('conversa_id', conversa.id)
-    .eq('direcao', 'recebida')
-    .not('telefone', 'is', null)
-    .order('criado_em', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (inboundMsg?.telefone) {
-    const mtel = inboundMsg.telefone.trim();
-    if (mtel.includes('@lid')) {
-      console.log('[resolverTelefone] LID JID via msg inbound:', mtel);
-      return mtel;
-    }
-    const mDigits = mtel.replace(/@s\.whatsapp\.net$/i, '').replace(/\D/g, '');
-    if (mDigits.length >= 8) return mDigits;
-  }
-
-  // 4. Fallback final: dígitos de conversa.telefone
+  // 4. Fallback final: dígitos de conversa.telefone (número WhatsApp regular)
   const digits = telSoDigitos(tel);
   if (digits && digits.length >= 8) return digits;
 
   return null;
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/whatsapp/audio/send
