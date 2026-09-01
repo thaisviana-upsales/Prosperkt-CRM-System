@@ -929,6 +929,17 @@ async function atualizar(req, res) {
         req.log({ acao:'UPDATE_RESPONSAVEL', entidade:'leads', entidade_id:id,
           antes:{ responsavel_id: atual.responsavel_id },
           depois:{ responsavel_id: upd.responsavel_id } });
+        // ── Sincroniza vendedor_id das conversas WhatsApp vinculadas ao lead ────
+        // Garante que o novo responsável enxerga as conversas no painel WhatsApp
+        try {
+          const { sb: _sbW } = getProvider();
+          const { error: errW } = await _sbW
+            .from('conversas_whatsapp')
+            .update({ vendedor_id: upd.responsavel_id, atualizado_em: new Date().toISOString() })
+            .eq('lead_id', id);
+          if (errW) console.warn('[SYNC_CONVERSA_VENDEDOR]', errW.message);
+          else console.log('SYNC_CONVERSA_VENDEDOR_OK', { lead_id: id, novo_vendedor_id: upd.responsavel_id });
+        } catch(eW) { console.error('[SYNC_CONVERSA_VENDEDOR]', eW.message); }
       }
       // Log: mudança de funil
       if (upd.funil_id && upd.funil_id !== atual.funil_id) {
@@ -1076,6 +1087,12 @@ async function atualizar(req, res) {
       req.log({ acao:'UPDATE_RESPONSAVEL', entidade:'leads', entidade_id:id,
         antes:{ responsavel_id: atual.responsavel_id },
         depois:{ responsavel_id: campos.responsavel_id } });
+      // ── Sincroniza vendedor_id das conversas WhatsApp vinculadas (SQLite) ────
+      try {
+        sqlite.prepare('UPDATE conversas_whatsapp SET vendedor_id=?, atualizado_em=? WHERE lead_id=?')
+          .run(campos.responsavel_id, new Date().toISOString(), id);
+        console.log('SYNC_CONVERSA_VENDEDOR_SQLITE_OK', { lead_id: id, novo_vendedor_id: campos.responsavel_id });
+      } catch(eW) { console.error('[SYNC_CONVERSA_VENDEDOR_SQLITE]', eW.message); }
     }
     return res.json({ sucesso:true, dados: sqlite.prepare('SELECT * FROM leads WHERE id=?').get(id) });
   } catch(e) {
@@ -1887,9 +1904,24 @@ async function transferir(req, res) {
     if (isSupa) {
       const { data, error } = await sb.from('leads').update({ responsavel_id, atualizado_em: new Date().toISOString() }).eq('id', req.params.id).select().single();
       if (error) throw error;
+      // ── Sincroniza vendedor_id das conversas WhatsApp vinculadas ao lead ────
+      try {
+        const { error: errW } = await sb
+          .from('conversas_whatsapp')
+          .update({ vendedor_id: responsavel_id, atualizado_em: new Date().toISOString() })
+          .eq('lead_id', req.params.id);
+        if (errW) console.warn('[TRANSFERIR_SYNC_CONVERSA]', errW.message);
+        else console.log('TRANSFERIR_SYNC_CONVERSA_OK', { lead_id: req.params.id, novo_vendedor_id: responsavel_id });
+      } catch(eW) { console.error('[TRANSFERIR_SYNC_CONVERSA]', eW.message); }
       return res.json({ sucesso:true, dados: normalizeLead(data) });
     }
     sqlite.prepare('UPDATE leads SET responsavel_id=?, atualizado_em=? WHERE id=?').run(responsavel_id, new Date().toISOString(), req.params.id);
+    // ── Sincroniza vendedor_id das conversas WhatsApp vinculadas (SQLite) ────
+    try {
+      sqlite.prepare('UPDATE conversas_whatsapp SET vendedor_id=?, atualizado_em=? WHERE lead_id=?')
+        .run(responsavel_id, new Date().toISOString(), req.params.id);
+      console.log('TRANSFERIR_SYNC_CONVERSA_SQLITE_OK', { lead_id: req.params.id, novo_vendedor_id: responsavel_id });
+    } catch(eW) { console.error('[TRANSFERIR_SYNC_CONVERSA_SQLITE]', eW.message); }
     return res.json({ sucesso:true, dados: sqlite.prepare('SELECT * FROM leads WHERE id=?').get(req.params.id) });
   } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
 }
