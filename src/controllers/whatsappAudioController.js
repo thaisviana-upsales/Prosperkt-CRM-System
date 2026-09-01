@@ -83,22 +83,48 @@ async function buscarConversa(sb, conversaId, usuario) {
   return data;
 }
 
-// ─── Helper: resolve telefone/JID real da conversa ────────────────────────────
+// ─── Helper: resolve JID real para envio (WhatsApp/LID) ──────────────────────
+// CAUSA RAIZ: conversa.telefone armazena só dígitos (ex: '148382630805756').
+// Para contatos LID (Instagram Direct), o JID real (@lid) está em
+// whatsapp_conversa_aliases.remote_jid. Sem @lid, Evolution API retorna 400.
 async function resolverTelefone(sb, conversa) {
-  let tel = conversa.telefone || '';
-  // Se ainda for LID após busca do lead, retorna o JID completo (ex: '148382630805756@lid')
-  // A Evolution API v2 exige o sufixo @lid para rotear corretamente
-  if (tel.startsWith('LID:') || tel.includes('@lid')) {
-    const lidJid = tel.startsWith('LID:') ? tel.replace('LID:', '') : tel;
-    if (lidJid.includes('@lid')) {
-      console.log('[resolverTelefone] LID JID detectado — retornando JID completo:', lidJid);
-      return lidJid; // ex: '148382630805756@lid'
+  const tel = (conversa.telefone || '').trim();
+
+  // 1. conversa.telefone já tem @lid (caso raro mas possível)
+  if (tel.includes('@lid')) {
+    const jid = tel.startsWith('LID:') ? tel.slice(4) : tel;
+    console.log('[resolverTelefone] telefone já é LID JID:', jid);
+    return jid;
+  }
+
+  // 2. Consulta whatsapp_conversa_aliases — fonte primária para contatos LID
+  //    Esta tabela tem o remote_jid real (ex: '148382630805756@lid')
+  const { data: alias } = await sb
+    .from('whatsapp_conversa_aliases')
+    .select('remote_jid')
+    .eq('conversa_id', conversa.id)
+    .limit(1)
+    .maybeSingle();
+
+  if (alias?.remote_jid) {
+    const rjid = alias.remote_jid.trim();
+    if (rjid.includes('@lid')) {
+      console.log('[resolverTelefone] LID JID via alias:', rjid);
+      return rjid; // ex: '148382630805756@lid'
+    }
+    // alias é número real (@s.whatsapp.net) — extrai só os dígitos
+    const aDigits = rjid.replace(/@s\.whatsapp\.net$/i, '').replace(/\D/g, '');
+    if (aDigits.length >= 8) {
+      console.log('[resolverTelefone] número real via alias:', aDigits);
+      return aDigits;
     }
   }
 
+  // 3. Fallback: dígitos de conversa.telefone
   const digits = telSoDigitos(tel);
-  if (!digits || digits.length < 8) return null;
-  return digits;
+  if (digits && digits.length >= 8) return digits;
+
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
