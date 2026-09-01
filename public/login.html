@@ -134,16 +134,13 @@
       justify-content: center;
     }
 
-    .logo-mark img {
-      height: 96px;
+    .logo-svg {
+      height: 82px;
       width: auto;
       max-width: 320px;
-      object-fit: contain;
       display: block;
       margin: 0 auto;
-      /* Nitidez: desabilita suavização que causa blur em logos PNG */
-      image-rendering: -webkit-optimize-contrast;
-      image-rendering: crisp-edges;
+      overflow: visible;
     }
 
     .brand-name {
@@ -486,8 +483,62 @@
       <div class="login-logo">
         <div class="brand">
           <div class="logo-mark" aria-hidden="true">
-            <!-- Logo original PROSPEKT PERSONALIZADOS — PNG transparente, neon -->
-            <img src="/img/logo_prospekt.png" alt="PROSPEKT Personalizados">
+            <!-- Logo SVG inline — cores neon exatas, sem fundo branco -->
+            <svg class="logo-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 298 84" aria-label="PROSPEKT Personalizados" role="img">
+              <defs>
+                <!-- Glow neon verde -->
+                <filter id="lg-glow-g" x="-40%" y="-40%" width="180%" height="180%">
+                  <feGaussianBlur stdDeviation="2.5" result="blur"/>
+                  <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                </filter>
+                <!-- Glow neon pink -->
+                <filter id="lg-glow-p" x="-40%" y="-40%" width="180%" height="180%">
+                  <feGaussianBlur stdDeviation="2" result="blur"/>
+                  <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                </filter>
+              </defs>
+
+              <!-- ── CUBO WIREFRAME ─────────────────────────────── -->
+              <!-- Vértices: A(40,4) B(6,23) C(74,23) D(40,42) E(6,59) F(74,59) G(40,78) -->
+
+              <!-- Face superior -->
+              <polygon points="40,4 74,23 40,42 6,23"
+                fill="rgba(57,255,20,0.09)"
+                stroke="#39FF14" stroke-width="1.8" stroke-linejoin="round"
+                filter="url(#lg-glow-g)"/>
+
+              <!-- Face esquerda -->
+              <polygon points="6,23 40,42 40,78 6,59"
+                fill="rgba(0,40,20,0.55)"
+                stroke="#39FF14" stroke-width="1.8" stroke-linejoin="round"
+                filter="url(#lg-glow-g)"/>
+
+              <!-- Face direita -->
+              <polygon points="74,23 74,59 40,78 40,42"
+                fill="rgba(0,30,15,0.45)"
+                stroke="#39FF14" stroke-width="1.8" stroke-linejoin="round"
+                filter="url(#lg-glow-g)"/>
+
+              <!-- Diamante pink — ponto de convergência das 3 faces -->
+              <polygon points="40,42 57,29 74,39 57,53"
+                fill="#FF0090"
+                filter="url(#lg-glow-p)"/>
+
+              <!-- ── TEXTO ──────────────────────────────────────── -->
+              <!-- PROSPEKT -->
+              <text x="92" y="48"
+                font-family="Inter, 'Arial Black', Helvetica, sans-serif"
+                font-weight="900" font-size="36"
+                fill="#39FF14" letter-spacing="-0.5"
+                filter="url(#lg-glow-g)">PROSPEKT</text>
+
+              <!-- PERSONALIZADOS -->
+              <text x="93" y="69"
+                font-family="Inter, Arial, Helvetica, sans-serif"
+                font-weight="700" font-size="14"
+                fill="#FF0090" letter-spacing="2.8"
+                filter="url(#lg-glow-p)">PERSONALIZADOS</text>
+            </svg>
           </div>
         </div>
         <p class="login-title">Entre na sua conta para continuar</p>
