@@ -126,18 +126,22 @@ async function enviarArquivo(req, res, next) {
     if (!conversa)
       return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
 
-    // Resolve JID real: conversa.telefone tem só dígitos (148382630805756).
-    // Para contatos LID, o JID correto (@lid) está em whatsapp_conversa_aliases.
-    // Mesma lógica de resolverTelefone em whatsappAudioController.js.
+    // ── Resolve JID real para envio via Evolution API ────────────────────────
+    // Ordem de prioridade:
+    //  1. conversa.telefone já contém @lid (caso raro, mas possível)
+    //  2. whatsapp_conversa_aliases.remote_jid (set quando CRM envia texto)
+    //  3. mensagens_whatsapp.telefone de msg recebida (JID original do contato)
+    //  4. Dígitos brutos de conversa.telefone (fallback para números reais)
     let telNorm = null;
     {
       const tel = (conversa.telefone || '').trim();
 
-      // 1. conversa.telefone já tem @lid (caso raro)
       if (tel.includes('@lid')) {
+        // 1. Já tem @lid
         telNorm = tel.startsWith('LID:') ? tel.slice(4) : tel;
+
       } else {
-        // 2. Consulta alias table — fonte primária para contatos LID
+        // 2. Alias table
         const { data: alias } = await sb
           .from('whatsapp_conversa_aliases')
           .select('remote_jid')
@@ -147,14 +151,31 @@ async function enviarArquivo(req, res, next) {
 
         if (alias?.remote_jid) {
           const rjid = alias.remote_jid.trim();
-          if (rjid.includes('@lid')) {
-            telNorm = rjid; // ex: '148382630805756@lid'
-          } else {
-            telNorm = rjid.replace(/@s\.whatsapp\.net$/i, '').replace(/\D/g, '');
-          }
+          telNorm = rjid.includes('@lid')
+            ? rjid
+            : rjid.replace(/@s\.whatsapp\.net$/i, '').replace(/\D/g, '');
+
         } else {
-          // 3. Fallback: só dígitos do conversa.telefone
-          telNorm = tel.replace(/\D/g, '') || null;
+          // 3. Mensagem inbound — armazena o JID original do contato (inclui @lid)
+          const { data: inboundMsg } = await sb
+            .from('mensagens_whatsapp')
+            .select('telefone')
+            .eq('conversa_id', conversaId)
+            .eq('direcao', 'recebida')
+            .not('telefone', 'is', null)
+            .order('criado_em', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (inboundMsg?.telefone) {
+            const mtel = inboundMsg.telefone.trim();
+            telNorm = mtel.includes('@lid')
+              ? mtel                                            // JID @lid completo
+              : mtel.replace(/@s\.whatsapp\.net$/i, '').replace(/\D/g, ''); // ou dígitos
+          }
+
+          // 4. Fallback final: só dígitos de conversa.telefone
+          if (!telNorm) telNorm = tel.replace(/\D/g, '') || null;
         }
       }
     }
