@@ -134,13 +134,37 @@
       justify-content: center;
     }
 
-    .logo-svg {
-      height: 82px;
+    /* Card branco premium — preserva a logo original (fundo branco da PNG) */
+    .logo-brand-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.97);
+      border-radius: 20px;
+      padding: 18px 32px;
+      box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.25),
+        0 8px 40px rgba(0, 0, 0, 0.55),
+        0 0 70px rgba(91, 222, 62, 0.22),
+        0 0 70px rgba(214, 0, 142, 0.16);
+      position: relative;
+      transition: box-shadow 0.3s ease;
+    }
+
+    .logo-brand-pill:hover {
+      box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.3),
+        0 12px 48px rgba(0, 0, 0, 0.6),
+        0 0 100px rgba(91, 222, 62, 0.32),
+        0 0 100px rgba(214, 0, 142, 0.22);
+    }
+
+    .logo-brand-pill img {
+      height: 76px;
       width: auto;
-      max-width: 320px;
+      max-width: 300px;
       display: block;
-      margin: 0 auto;
-      overflow: visible;
+      object-fit: contain;
     }
 
     .brand-name {
@@ -483,58 +507,11 @@
       <div class="login-logo">
         <div class="brand">
           <div class="logo-mark" aria-hidden="true">
-            <!-- Logo SVG inline — neon puro, sem fundo branco -->
-            <svg class="logo-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 305 88" aria-label="PROSPEKT Personalizados" role="img">
-              <defs>
-                <filter id="lg-drop-g" x="-30%" y="-30%" width="160%" height="160%">
-                  <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#39FF14" flood-opacity="0.55"/>
-                </filter>
-                <filter id="lg-drop-p" x="-30%" y="-30%" width="160%" height="160%">
-                  <feDropShadow dx="0" dy="0" stdDeviation="2.5" flood-color="#FF0090" flood-opacity="0.5"/>
-                </filter>
-              </defs>
-
-              <!-- ── CUBO WIREFRAME ───────────────────────────────────── -->
-              <!-- Vértices isométricos: A(40,4) B(5,24) C(75,24) D(40,44) E(5,62) F(75,62) G(40,80) -->
-
-              <!-- Face superior — fill leve verde -->
-              <polygon points="40,4 75,24 40,44 5,24"
-                fill="rgba(57,255,20,0.10)"
-                stroke="#39FF14" stroke-width="2" stroke-linejoin="round"
-                filter="url(#lg-drop-g)"/>
-
-              <!-- Face esquerda -->
-              <polygon points="5,24 40,44 40,80 5,62"
-                fill="rgba(0,50,25,0.6)"
-                stroke="#39FF14" stroke-width="2" stroke-linejoin="round"
-                filter="url(#lg-drop-g)"/>
-
-              <!-- Face direita -->
-              <polygon points="75,24 75,62 40,80 40,44"
-                fill="rgba(0,40,20,0.5)"
-                stroke="#39FF14" stroke-width="2" stroke-linejoin="round"
-                filter="url(#lg-drop-g)"/>
-
-              <!-- Diamante/gem pink na face direita -->
-              <polygon points="40,44 57,30 75,40 57,56"
-                fill="#FF0090"
-                filter="url(#lg-drop-p)"/>
-
-              <!-- ── TEXTO ────────────────────────────────────────────── -->
-              <!-- PROSPEKT — Inter 900, neon verde puro -->
-              <text x="92" y="50"
-                font-family="Inter, 'Arial Black', Helvetica, sans-serif"
-                font-weight="900" font-size="38"
-                fill="#39FF14">PROSPEKT</text>
-
-              <!-- PERSONALIZADOS — hot pink puro -->
-              <text x="94" y="72"
-                font-family="Inter, Arial, Helvetica, sans-serif"
-                font-weight="700" font-size="14.5"
-                fill="#FF0090" letter-spacing="2.6">PERSONALIZADOS</text>
-            </svg>
+            <!-- Logo ORIGINAL PROSPEKT PERSONALIZADOS — PNG exata sem alterações -->
+            <div class="logo-brand-pill">
+              <img src="/img/logo_prospekt.png" alt="PROSPEKT Personalizados">
+            </div>
           </div>
-
         </div>
         <p class="login-title">Entre na sua conta para continuar</p>
       </div>

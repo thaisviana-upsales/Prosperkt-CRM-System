@@ -429,16 +429,19 @@ textarea.input { resize: vertical; min-height: 80px; }
   box-shadow: 0 0 24px rgba(91,222,62,0.10), inset 0 1px 0 rgba(255,255,255,0.07);
 }
 
-/* Logo PNG: fundo transparente, neon verde/magenta */
+/* Cubo transparente da logo — fundo dark-safe */
 .sidebar-logo-img {
-  height: 48px;
+  height: 42px;
   width: auto;
-  max-width: 56px;
+  max-width: 48px;
   object-fit: contain;
-  object-position: left center;
   flex-shrink: 0;
-  /* Glow sutil que realiza o neon da logo */
-  filter: drop-shadow(0 0 6px rgba(91,222,62,0.25));
+  /* Glow neon verde+pink emanando do cubo */
+  filter: drop-shadow(0 0 8px rgba(91,222,62,0.35)) drop-shadow(0 0 4px rgba(214,0,142,0.2));
+  transition: filter 0.2s;
+}
+.brand-container:hover .sidebar-logo-img {
+  filter: drop-shadow(0 0 12px rgba(91,222,62,0.5)) drop-shadow(0 0 6px rgba(214,0,142,0.35));
 }
 
 /* Bloco de texto ao lado da logo */
@@ -489,9 +492,8 @@ textarea.input { resize: vertical; min-height: 80px; }
 }
 .sidebar.collapsed .brand-text-wrap { display: none; }
 .sidebar.collapsed .sidebar-logo-img {
-  height: 36px;
-  max-width: 36px;
-  object-position: left center; /* mostra só o cubo da logo */
+  height: 34px;
+  max-width: 34px;
 }
 
 /* Legacy (preserva compatibilidade caso algum template ainda use) */

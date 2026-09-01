@@ -75,9 +75,9 @@ const Sidebar = (() => {
         <div class="sidebar-logo">
           <!-- Container premium da marca — logo + tipografia executiva -->
           <div class="brand-container">
-            <!-- Ícone cubo da logo (parte esquerda da PNG — object-position corta o texto) -->
+            <!-- Ícone cubo da logo — PNG transparente, fundo dark-safe -->
             <img
-              src="/img/logo_prospekt.png"
+              src="/img/logo_original_backup.png"
               alt="PROSPEKT"
               class="sidebar-logo-img"
             >
