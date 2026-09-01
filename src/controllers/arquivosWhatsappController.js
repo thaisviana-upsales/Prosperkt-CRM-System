@@ -126,11 +126,44 @@ async function enviarArquivo(req, res, next) {
     if (!conversa)
       return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
 
-    const telNorm = conversa.telefone?.replace(/\D/g, '');
+    // Resolve JID real: conversa.telefone tem só dígitos (148382630805756).
+    // Para contatos LID, o JID correto (@lid) está em whatsapp_conversa_aliases.
+    // Mesma lógica de resolverTelefone em whatsappAudioController.js.
+    let telNorm = null;
+    {
+      const tel = (conversa.telefone || '').trim();
+
+      // 1. conversa.telefone já tem @lid (caso raro)
+      if (tel.includes('@lid')) {
+        telNorm = tel.startsWith('LID:') ? tel.slice(4) : tel;
+      } else {
+        // 2. Consulta alias table — fonte primária para contatos LID
+        const { data: alias } = await sb
+          .from('whatsapp_conversa_aliases')
+          .select('remote_jid')
+          .eq('conversa_id', conversaId)
+          .limit(1)
+          .maybeSingle();
+
+        if (alias?.remote_jid) {
+          const rjid = alias.remote_jid.trim();
+          if (rjid.includes('@lid')) {
+            telNorm = rjid; // ex: '148382630805756@lid'
+          } else {
+            telNorm = rjid.replace(/@s\.whatsapp\.net$/i, '').replace(/\D/g, '');
+          }
+        } else {
+          // 3. Fallback: só dígitos do conversa.telefone
+          telNorm = tel.replace(/\D/g, '') || null;
+        }
+      }
+    }
+
     if (!telNorm)
       return res.status(400).json({ sucesso: false, erro: 'Conversa sem telefone válido.' });
 
     const agora      = new Date().toISOString();
+
     const nomeSeguro = sanitizarNome(arqNome);
     const msgId      = crypto.randomBytes(16).toString('hex');
     const mediatype  = resolveMediatype(arqMime);
