@@ -83,19 +83,9 @@ async function buscarConversa(sb, conversaId, usuario) {
   return data;
 }
 
-// ─── Helper: resolve telefone real da conversa ────────────────────────────────
+// ─── Helper: resolve telefone/JID real da conversa ────────────────────────────
 async function resolverTelefone(sb, conversa) {
   let tel = conversa.telefone || '';
-  if (tel.startsWith('LID:') || tel.includes('@lid') || !tel) {
-    // Tenta buscar o telefone real pelo lead
-    if (conversa.lead_id) {
-      const { data: ld } = await sb.from('leads').select('telefone').eq('id', conversa.lead_id).single();
-      if (ld?.telefone && !ld.telefone.startsWith('LID:') && !ld.telefone.includes('@lid')) {
-        tel = ld.telefone;
-      }
-    }
-  }
-
   // Se ainda for LID após busca do lead, retorna o JID completo (ex: '148382630805756@lid')
   // A Evolution API v2 exige o sufixo @lid para rotear corretamente
   if (tel.startsWith('LID:') || tel.includes('@lid')) {
