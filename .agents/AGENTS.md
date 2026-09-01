@@ -2,13 +2,20 @@
 
 ## ⚠️ VERSÃO ESTÁVEL BLOQUEADA
 
-**Tag git:** `v-stable-whatsapp-enviando-recebendo-2026-08-29`
-**Commit:** `b8ede98`
-**Data:** 2026-08-29
+**Tag git:** `v-stable-whatsapp-audio-funcionando-2026-08-31`
+**Commit:** `d4f74a4`
+**Data:** 2026-08-31
 
-Esta versão foi confirmada com envio E recebimento funcionando (10:43 BRT — respostas aparecendo no CRM na conversa correta).
+Esta versão foi confirmada com envio E recebimento de **texto E áudio** funcionando (21:42 BRT).
 
-**Tag anterior (só envio):** `v-stable-whatsapp-enviando-2026-08-21` (commit `d0d0653`)
+**Fixes incluídos nesta versão:**
+- Áudio LID: `resolverTelefone` busca JID em `whatsapp_conversa_aliases.remote_jid` (causa raiz do @lid ausente)
+- SQLite em produção: `SQLITE_NOOP` mock — zero crash, zero TypeError no Railway
+- Webhook Evolution API v2: payload com wrapper `webhook: {}` correto
+- AuditLog: `.catch()` inválido em PostgrestFilterBuilder corrigido para `await { error }`
+
+**Tag anterior (texto funcionando, sem áudio LID):** `v-stable-whatsapp-enviando-recebendo-2026-08-29` (commit `b8ede98`)
+
 
 ---
 
@@ -47,6 +54,12 @@ Os seguintes fluxos estão funcionando e NÃO podem ser alterados:
 - Envio de arquivos/imagens
 - Qualquer lógica nos endpoints `POST /api/whatsapp/conversas/:id/mensagens`
 
+### WhatsApp — Envio de áudio (BLOQUEADO — confirmado 2026-08-31)
+Os seguintes fluxos estão funcionando e NÃO podem ser alterados:
+- Envio de áudio para contatos LID (`@lid`) e contatos regulares
+- `resolverTelefone` em `src/controllers/whatsappAudioController.js` — busca JID em `whatsapp_conversa_aliases.remote_jid`
+- Conversão WebM → OGG Opus antes do envio
+
 ### WhatsApp — Recebimento inbound (BLOQUEADO — confirmado 2026-08-29)
 Os seguintes fluxos estão funcionando e NÃO podem ser alterados:
 - Recebimento de texto de leads com LID (`@lid`)
@@ -66,12 +79,15 @@ Os seguintes blocos em `src/controllers/whatsappController.js` NÃO podem ser al
 
 ### Infraestrutura (BLOQUEADO)
 - `src/services/evolutionApiService.js` — NÃO alterar sem autorização explícita
+- `src/database/db.js` — SQLITE_NOOP mock ativo para produção Railway — NÃO remover
+- `src/services/auditService.js` — padrão `await { error }` sem `.catch()` no builder — NÃO reverter para `.catch()`
 - Variáveis de ambiente (`.env`, Railway vars): `WHATSAPP_OFFICIAL_NUMBER`, `EVOLUTION_API_KEY`, `EVOLUTION_INSTANCE`
 - Bucket `whatsapp-midias` no Supabase Storage
 
 ### Frontend WhatsApp (BLOQUEADO)
 - `public/js/whatsapp.js` — NÃO alterar sem autorização explícita
 - Player de áudio no frontend
+
 
 ---
 
