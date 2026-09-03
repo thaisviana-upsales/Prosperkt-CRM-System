@@ -738,12 +738,13 @@ function renderMensagem(msg) {
     if (msg.direcao === 'recebida' && msg.id) {
       // Recebida: lazy load via proxy autenticado (MutationObserver + fetch Bearer)
       // inline onclick/onerror violam CSP script-src-attr:none — usa event delegation
+      // NOTA: NÃO usar loading="lazy" — conflita com o lazy load manual via fetch Bearer
       const svgPH = encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><rect fill="#252525" width="200" height="120"/><text x="50%" y="50%" fill="#666" text-anchor="middle" dy=".3em" font-size="11" font-family="sans-serif">Carregando...</text></svg>');
       conteudo = `
         <div class="wa-img-wrap">
           <img class="wa-img wa-img-lazy" data-wa-imgmsgid="${msg.id}"
             src="data:image/svg+xml,${svgPH}"
-            alt="${escHtml(nome)}" loading="lazy"
+            alt="${escHtml(nome)}"
             style="border-radius:6px;cursor:zoom-in;display:block;max-width:100%;min-height:80px">
           <div class="wa-img-error" style="display:none;align-items:center;gap:6px;padding:10px;background:var(--surface-2);border-radius:8px;font-size:.72rem;color:var(--text-muted)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
@@ -781,7 +782,10 @@ function renderMensagem(msg) {
   } else if (msg.tipo === 'audio') {
     // Usa /api/whatsapp/audio/play/:msgId diretamente — endpoint robusto com fallbacks completos
     // IMPORTANTE: não usar /api/whatsapp/media/ pois servirMidia (frozen) falha com caminhos relativos Supabase
-    const audioSrc = msg.arquivo_url || msg.storage_path
+    // FIX: parênteses obrigatórios — sem eles o ternário tem precedência errada:
+    // msg.arquivo_url || msg.storage_path ? X : Y → msg.arquivo_url || (msg.storage_path ? X : Y)
+    // que retorna a URL Supabase externa (sem auth) quando arquivo_url existe mas storage_path não.
+    const audioSrc = (msg.arquivo_url || msg.storage_path)
       ? `/api/whatsapp/audio/play/${msg.id}`
       : '';
     const dur = msg.media_duration ? ` · ${Math.floor(msg.media_duration/60)}:${String(msg.media_duration%60).padStart(2,'0')}` : '';
@@ -1150,8 +1154,27 @@ async function salvarNovaConversa() {
   if (r?.ok) {
     fecharModal();
     Toast.show('Conversa iniciada!', 'success');
+
+    // FIX: injeta a nova conversa no topo da lista ANTES de carregarConversas,
+    // evitando race condition onde a conversa ainda não aparece na resposta da API
+    const novaConv = r.data?.dados;
+    if (novaConv?.id) {
+      _conversas = _conversas.filter(c => c.id !== novaConv.id);
+      _conversas.unshift(novaConv);
+    }
+
     await carregarConversas();
-    await abrirConversa(r.data.dados.id);
+
+    // Garante que a conversa existe na lista antes de abrir
+    const convId = novaConv?.id || r.data?.dados?.id;
+    if (convId) {
+      // Se após carregarConversas a conversa sumiu (latência), reinserimos
+      if (!_conversas.find(c => c.id === convId)) {
+        if (novaConv) _conversas.unshift(novaConv);
+        renderListaConversas();
+      }
+      await abrirConversa(convId);
+    }
   } else {
     alertEl.className = 'alert alert-error';
     alertEl.textContent = r?.data?.erro || 'Erro ao criar conversa.';
@@ -1534,8 +1557,11 @@ async function iniciarGravacao() {
   _audioBlob   = null;
   _recSeconds  = 0;
 
+  // FIX Safari: Safari suporta apenas audio/mp4 (AAC) no MediaRecorder.
+  // Ordem de preferência: ogg/opus (Firefox) → webm/opus (Chrome) → mp4 (Safari) → webm fallback
   const mimeType = MediaRecorder.isTypeSupported('audio/ogg;codecs=opus') ? 'audio/ogg;codecs=opus'
     : MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
+    : MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4'
     : 'audio/webm';
 
   _mediaRecorder = new MediaRecorder(stream, { mimeType });
