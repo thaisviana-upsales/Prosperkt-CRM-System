@@ -678,6 +678,11 @@ function renderMensagens() {
 
   el.innerHTML = html;
   scrollToBottom();
+
+  // Safety net: chama _waLoadImg explicitamente para TODOS os placeholders de imagem.
+  // Garante o carregamento mesmo que o MutationObserver perca o evento (race condition
+  // entre resolverConversaLead → abrirConversa → renderMensagens e o setup do observer).
+  el.querySelectorAll('.wa-img-lazy[data-wa-imgmsgid]').forEach(_waLoadImg);
 }
 
 function renderMensagem(msg) {
@@ -736,16 +741,17 @@ function renderMensagem(msg) {
   } else if (msg.tipo === 'imagem') {
     const nome   = msg.arquivo_nome || 'Imagem';
     if (msg.direcao === 'recebida' && msg.id) {
-      // Recebida: lazy load via proxy autenticado (MutationObserver + fetch Bearer)
-      // inline onclick/onerror violam CSP script-src-attr:none — usa event delegation
-      // NOTA: NÃO usar loading="lazy" — conflita com o lazy load manual via fetch Bearer
-      const svgPH = encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><rect fill="#252525" width="200" height="120"/><text x="50%" y="50%" fill="#666" text-anchor="middle" dy=".3em" font-size="11" font-family="sans-serif">Carregando...</text></svg>');
+      // Recebida: lazy load via proxy autenticado (fetch Bearer + _waLoadImg)
+      // NÃO usar data:image/svg+xml — bloqueado por CSP img-src do servidor (Railway).
+      // NÃO usar loading="lazy" — conflita com o lazy load manual via fetch Bearer.
+      // Usa div placeholder estilizado em CSS puro (sem src = sem imagem quebrada).
       conteudo = `
         <div class="wa-img-wrap">
-          <img class="wa-img wa-img-lazy" data-wa-imgmsgid="${msg.id}"
-            src="data:image/svg+xml,${svgPH}"
-            alt="${escHtml(nome)}"
-            style="border-radius:6px;cursor:zoom-in;display:block;max-width:100%;min-height:80px">
+          <div class="wa-img-lazy wa-img-ph" data-wa-imgmsgid="${msg.id}"
+            style="width:220px;height:130px;border-radius:8px;background:var(--surface-2,#1e2d3d);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;cursor:pointer;overflow:hidden">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.2)" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            <span style="font-size:.65rem;color:rgba(255,255,255,.2);letter-spacing:.04em">Carregando...</span>
+          </div>
           <div class="wa-img-error" style="display:none;align-items:center;gap:6px;padding:10px;background:var(--surface-2);border-radius:8px;font-size:.72rem;color:var(--text-muted)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
             Mídia indisponível.
@@ -1686,11 +1692,12 @@ async function waDownloadArquivo(msgId, nome) {
 }
 
 // ─── Lazy loading de imagens recebidas ─────────────────────────────────────────
-// Chamado pelo MutationObserver quando uma .wa-img-lazy entra no DOM.
-async function _waLoadImg(imgEl) {
-  if (!imgEl || imgEl.dataset.loaded) return;
-  imgEl.dataset.loaded = '1';
-  const msgId = imgEl.dataset.waImgmsgid;
+// Chamado pelo MutationObserver E explicitamente por renderMensagens().
+// Opera sobre div.wa-img-ph (placeholder CSS) — converte para <img> ao carregar.
+async function _waLoadImg(el) {
+  if (!el || el.dataset.loaded) return;
+  el.dataset.loaded = '1';
+  const msgId = el.dataset.waImgmsgid;
   if (!msgId) return;
   const token = (typeof Auth !== 'undefined' && Auth.getToken)
     ? Auth.getToken()
@@ -1700,14 +1707,25 @@ async function _waLoadImg(imgEl) {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const blob  = await resp.blob();
-    imgEl.src   = URL.createObjectURL(blob);
-    imgEl.style.minHeight  = '';
-    imgEl.style.background = '';
-    imgEl.style.cursor     = 'zoom-in';
-  } catch {
-    imgEl.style.display = 'none';
-    const errEl = imgEl.nextElementSibling;
+    const blob = await resp.blob();
+    const blobUrl = URL.createObjectURL(blob);
+
+    // Cria <img> e substitui o div placeholder no DOM
+    const img = document.createElement('img');
+    img.src = blobUrl;
+    img.className = 'wa-img';
+    img.style.cssText = 'border-radius:8px;cursor:zoom-in;display:block;max-width:100%;max-height:320px;object-fit:cover';
+    img.dataset.waImgopen = blobUrl;
+    img.alt = '';
+
+    // Substitui o placeholder pelo <img> carregado
+    el.replaceWith(img);
+    console.log('WA_IMG_LOADED', { msgId, bytes: blob.size, type: blob.type });
+  } catch(e) {
+    console.warn('WA_IMG_LOAD_FAIL', { msgId, err: e.message });
+    // Oculta placeholder e exibe card de erro
+    el.style.display = 'none';
+    const errEl = el.nextElementSibling;
     if (errEl && errEl.classList.contains('wa-img-error')) {
       errEl.style.display = 'flex';
     }
