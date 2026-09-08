@@ -19,8 +19,8 @@ const { getProvider } = require('../database/dbProvider');
 const evoSvc   = require('../services/evolutionApiService');
 const { extPermitida, sanitizarNome, fmtTamanho } = require('./arquivosController');
 
-const LIMITE_WA_BYTES = 64 * 1024 * 1024;
-const LIMITE_WA_MB    = 64;
+const LIMITE_WA_BYTES = 80 * 1024 * 1024;
+const LIMITE_WA_MB    = 80;
 
 // ── Armazenamento temporário em memória ────────────────────────────────────────
 const tempFiles = new Map(); // token → { buffer, mime, name, expires }

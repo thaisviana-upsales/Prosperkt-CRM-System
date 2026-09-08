@@ -1006,8 +1006,8 @@ async function enviarMensagem() {
 
 
 // ─── Upload de arquivo (WhatsApp) ────────────────────────────────────────────
-const WA_LIMITE_BYTES = 64 * 1024 * 1024; // 64 MB (máximo prático WhatsApp/Evolution)
-const WA_LIMITE_MB    = 64;
+const WA_LIMITE_BYTES = 80 * 1024 * 1024; // 80 MB (máximo prático WhatsApp/Evolution)
+const WA_LIMITE_MB    = 80;
 
 const WA_EXT_BLOQUEADAS = new Set([
   'exe','bat','cmd','sh','bash','msi','scr','vbs','ps1','reg','lnk','jar','hta',
@@ -1613,7 +1613,7 @@ function cancelarGravacao() {
 
 async function enviarAudio(blob) {
   if (!_convAtiva || !blob) return;
-  console.log('WHATSAPP_AUDIO_SEND_START', { conversaId: _convAtiva.id });
+  console.log('WHATSAPP_AUDIO_SEND_START', { conversaId: _convAtiva.id, blobSize: blob.size, blobType: blob.type });
 
   const sendBtn = document.getElementById('btn-send');
   if (sendBtn) {
@@ -1621,31 +1621,47 @@ async function enviarAudio(blob) {
     sendBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0D0D0D" stroke-width="2" style="animation:spin 1s linear infinite"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4" stroke-dashoffset="10"/></svg>`;
   }
 
-  const base64 = await new Promise((res, rej) => {
-    const reader = new FileReader();
-    reader.onloadend = () => res(reader.result);
-    reader.onerror   = rej;
-    reader.readAsDataURL(blob);
-  });
+  // Duração capturada do timer da gravação
+  const timerEl = document.getElementById('wa-rec-timer');
+  const durStr  = timerEl?.textContent || '0:00';
+  const [mm, ss] = durStr.split(':').map(Number);
+  const durSeg = ((mm || 0) * 60) + (ss || 0);
 
-  console.log('WHATSAPP_AUDIO_SEND_PAYLOAD_SAFE', { base64Length: base64.length });
+  // Obtém token para Bearer auth (multer não aceita JSON → FormData obrigatório)
+  const token = (typeof Auth !== 'undefined' && Auth.getToken)
+    ? Auth.getToken()
+    : (localStorage.getItem('token') || '');
+
+  // Monta FormData — campo 'audio' exigido pelo multer no backend
+  const fd = new FormData();
+  fd.append('audio',       blob, 'audio.webm');
+  fd.append('conversa_id', _convAtiva.id);
+  if (durSeg > 0) fd.append('duracao', String(durSeg));
+
+  console.log('WHATSAPP_AUDIO_SEND_FORMDATA', { conversaId: _convAtiva.id, durSeg, blobSize: blob.size });
 
   let r = null;
   try {
-    r = await Auth.api('POST', `/whatsapp/conversas/${_convAtiva.id}/mensagens`, {
-      mensagem: null, tipo: 'audio',
-      arquivo_url: base64, arquivo_nome: 'audio.ogg',
+    const resp = await fetch('/api/whatsapp/audio/send', {
+      method:  'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body:    fd,
     });
-  } catch (e) { console.error('WHATSAPP_AUDIO_SEND_ERROR', e); }
+    const data = await resp.json().catch(() => ({}));
+    r = { ok: resp.ok, status: resp.status, data };
+  } catch (e) {
+    console.error('WHATSAPP_AUDIO_SEND_FETCH_ERROR', e.message);
+    r = null;
+  }
 
-  console.log('WHATSAPP_AUDIO_SEND_RESPONSE_STATUS', r?.status || 'null');
+  console.log('WHATSAPP_AUDIO_SEND_RESPONSE', { status: r?.status, ok: r?.ok, sucesso: r?.data?.sucesso, evoOk: r?.data?._evo_ok });
 
-  if (r?.ok || r?.data?.sucesso) {
-    console.log('WHATSAPP_AUDIO_SEND_SUCCESS');
+  if (r?.ok && r.data?.sucesso) {
+    console.log('WHATSAPP_AUDIO_SEND_SUCCESS', { evoOk: r.data._evo_ok, msgId: r.data.dados?.id });
     Toast.show('Áudio enviado!', 'success');
-    const msgReal = r?.data?.dados || {
+    const msgReal = r.data.dados || {
       id: Date.now().toString(), conversa_id: _convAtiva.id,
-      mensagem: 'Áudio', tipo: 'audio', direcao: 'enviada',
+      mensagem: null, tipo: 'audio', direcao: 'enviada',
       status: 'enviado', criado_em: new Date().toISOString(),
     };
     _mensagens.push(msgReal);
@@ -1657,12 +1673,13 @@ async function enviarAudio(blob) {
     document.getElementById('conv-item-' + _convAtiva.id)?.classList.add('active');
   } else {
     const err = r?.data?.erro || 'Não foi possível enviar o áudio.';
-    console.error('WHATSAPP_AUDIO_SEND_ERROR', err);
+    console.error('WHATSAPP_AUDIO_SEND_FAIL', { status: r?.status, err, evoErr: r?.data?._evo_err });
     Toast.show(err, 'error');
   }
 
   cancelarGravacao();
 }
+
 
 // ─── Download autenticado de arquivos WhatsApp recebidos ──────────────────────
 // Usa fetch com Bearer token para contornar a limitação de <a href> sem auth.

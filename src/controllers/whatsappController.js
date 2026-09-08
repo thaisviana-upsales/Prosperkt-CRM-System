@@ -3569,6 +3569,52 @@ async function webhookReceberMensagem(req, res) {
           });
         }
 
+        // ── Imagens: armazena no Supabase Storage enquanto Evolution tem em cache ──
+        // Fire-and-forget — NÃO bloqueia resposta do webhook.
+        // Após sucesso: storage_path aponta para arquivo permanente no Supabase.
+        // Proxy usa storage_path como Layer 0 (antes de tentar Evolution re-fetch).
+        if (tipo === 'imagem' && evoMsgIdWebhook && evoSvc.isConfigured()) {
+          const _sbRef2     = sb;
+          const _imgBucket  = 'whatsapp-midias';
+          const _imgExt     = (mimeType || '').includes('png') ? 'png'
+            : (mimeType || '').includes('gif')  ? 'gif'
+            : (mimeType || '').includes('webp') ? 'webp'
+            : 'jpg';
+          const _imgNome    = (arquivoNome || `imagem.${_imgExt}`).replace(/[^a-zA-Z0-9._\-]/g, '_');
+          const _imgPath    = `images/${evoMsgIdWebhook}/${_imgNome}`;
+          const _imgTel     = (telFinal || '').replace(/\D/g, '');
+          const _imgJid     = (telFinal || '').includes('@') ? (telFinal || '') : `${_imgTel}@s.whatsapp.net`;
+          Promise.resolve().then(async () => {
+            try {
+              // Aguarda 2s para Evolution indexar a mensagem em seu banco interno
+              await new Promise(r => setTimeout(r, 2000));
+              const refetch = await evoSvc.getBase64Media(evoMsgIdWebhook, _imgJid);
+              if (!refetch.sucesso || !refetch.dados?.base64) {
+                console.warn('WA_IMG_STORE_BASE64_FAIL', { msgId: evoMsgIdWebhook, erro: refetch.erro });
+                return;
+              }
+              const pureB64 = refetch.dados.base64.replace(/^data:[^;]+;base64,/, '');
+              const buf     = Buffer.from(pureB64, 'base64');
+              const mimeImg = refetch.dados.mimetype || mimeType || 'image/jpeg';
+              const { error: upErr } = await _sbRef2.storage.from(_imgBucket).upload(_imgPath, buf, {
+                contentType: mimeImg, upsert: true,
+              });
+              if (upErr) {
+                console.warn('WA_IMG_STORE_UPLOAD_FAIL', { msgId: evoMsgIdWebhook, erro: upErr.message });
+                return;
+              }
+              // Atualiza mensagem com storage_path permanente (usa id da mensagem, não evoMsgId, para LID)
+              const { error: updErr } = await _sbRef2.from(MENSAGENS_TABLE).update({
+                storage_path: _imgPath, storage_bucket: _imgBucket, mime_type: mimeImg,
+              }).eq('evolution_message_id', evoMsgIdWebhook);
+              if (updErr) console.warn('WA_IMG_STORE_DB_FAIL', { evoMsgId: evoMsgIdWebhook, erro: updErr.message });
+              else console.log('WA_IMG_STORE_SUCCESS', { evoMsgId: evoMsgIdWebhook, path: _imgPath, size: buf.length, mime: mimeImg });
+            } catch (e) {
+              console.warn('WA_IMG_STORE_EXCEPTION', { msgId: evoMsgIdWebhook, erro: e.message });
+            }
+          });
+        }
+
         // Atualiza conversa — SOMENTE colunas que existem na tabela Supabase:
         // ultima_msg_em, atualizado_em, status (ultima_mensagem e ultima_direcao NÃO EXISTEM)
         const convUpdate = {
