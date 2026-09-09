@@ -221,38 +221,57 @@
 
   /* ── WhatsApp / Conversas mobile ───────────────────────────── */
 
-  /* Header de topbar do WA: esconder botões extras no mobile */
-  /* A main-content do WA tem padding:0, então só precisa compensar o header */
-  .main-content[style*="padding:0"] {
+  /* main-content do WA: zero padding — o whatsapp.css já cuida disso */
+  .main-content.wa-main {
     padding: 0 !important;
-    padding-top: 0 !important; /* o wa-layout já compensa */
+    padding-top: 0 !important;
+    height: calc(100dvh - var(--mobile-hdr-h) - var(--mobile-nav-h)) !important;
+    max-width: 100% !important;
+    margin-left: 0 !important;
+    overflow: hidden !important;
   }
 
-  /* Wrapper geral do WA: empilhar verticalmente */
+  /* wa-layout: empilha de forma simples, altura total da main-content */
   .wa-layout {
-    display: block !important;
-    height: auto !important;
-    overflow: visible !important;
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100% !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+    gap: 0 !important;
   }
 
-  /* Lista de conversas: tela cheia, altura fixa */
+  /* Lista de conversas: altura total sem overflow */
   .wa-sidebar {
     width: 100% !important;
-    height: calc(100dvh - var(--mobile-hdr-h) - var(--mobile-nav-h)) !important;
+    flex: 1 !important;
+    height: 100% !important;
+    min-height: 0 !important;
     border-right: none !important;
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    /* Sem ornamentos pesados no mobile — fica flat e nativo */
+    border-radius: 0 !important;
+    border-width: 0 !important;
+    box-shadow: none !important;
   }
 
-  /* Área de conv-list com scroll */
+  /* Remove notch pseudo-elementos no mobile */
+  .wa-sidebar::before,
+  .wa-sidebar::after { display: none !important; }
+
+  /* Header interno da sidebar: padding compacto sem notch */
+  .wa-sidebar-header { padding: 10px 14px 8px !important; }
+
+  /* Lista com scroll suave */
   .wa-conv-list {
     flex: 1;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }
 
-  /* Painel de chat: sobrepõe lista quando aberto */
+  /* Painel de chat: sobrepõe a lista em tela cheia ao abrir conversa */
   .wa-chat {
     position: fixed !important;
     top: var(--mobile-hdr-h) !important;
@@ -262,16 +281,20 @@
     width: 100% !important;
     z-index: 150 !important;
     display: none !important;
+    flex-direction: column !important;
     background: linear-gradient(160deg, #1e2130 0%, #181c28 100%);
+    /* Transição suave ao abrir */
+    transition: transform .25s cubic-bezier(.16,1,.3,1);
+    transform: translateX(100%);
   }
   .wa-chat.mobile-open {
     display: flex !important;
-    flex-direction: column;
+    transform: translateX(0);
   }
 
   /* Suporte a dynamic viewport height (iOS Safari) */
   @supports (height: 100dvh) {
-    .wa-chat.mobile-open {
+    .wa-chat {
       top: var(--mobile-hdr-h) !important;
       bottom: calc(var(--mobile-nav-h) + var(--safe-bottom)) !important;
       height: auto !important;
@@ -281,29 +304,32 @@
     }
   }
 
-  /* Input de mensagem: sticky no fundo */
+  /* Input de mensagem: sticky no fundo, com safe area */
   .wa-chat.mobile-open .wa-input-bar {
     position: sticky !important;
     bottom: 0;
-    padding-bottom: var(--safe-bottom);
+    padding-bottom: max(env(safe-area-inset-bottom, 0px), 4px) !important;
     flex-shrink: 0;
+    z-index: 10;
   }
 
-  /* Mensagens: scrollável */
+  /* Mensagens: flex coluna scrollável */
   .wa-chat.mobile-open .wa-messages {
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
-    padding: 14px 12px !important;
+    padding: 12px 12px 8px !important;
     display: flex;
+    flex-direction: column;
+    min-height: 0;
   }
 
   /* Balões de mensagem */
   .wa-bubble { max-width: 85% !important; font-size: .82rem !important; }
 
-  /* Botão voltar — visível só no mobile */
-  #btn-mobile-voltar { display: flex; }
+  /* Botão voltar — controlado pelo JS; inicia oculto */
+  #btn-mobile-voltar { display: none; }
 
   /* Topbar do WA: condensar no mobile */
   .wa-topbar-mobile-condensed {

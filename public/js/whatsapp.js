@@ -279,19 +279,25 @@ async function abrirConversa(id) {
   const waChat = document.getElementById('wa-chat');
   if (isMobile && waChat) {
     waChat.classList.add('mobile-open');
-    // Botão Voltar — injeta apenas uma vez no header
+    // Botão Voltar — injeta apenas uma vez no header do chat
+    // (mobile-nav.js também tenta injetar, mas usamos um guard pelo id)
     if (!document.getElementById('btn-mobile-voltar')) {
       const btnBack = document.createElement('button');
       btnBack.id = 'btn-mobile-voltar';
       btnBack.className = 'wa-icon-btn';
       btnBack.title = 'Voltar para conversas';
-      btnBack.style.cssText = 'margin-right:4px;color:var(--green)';
-      btnBack.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>`;
+      btnBack.style.cssText = 'margin-right:4px;color:#30D158;flex-shrink:0';
+      btnBack.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>`;
       btnBack.addEventListener('click', () => {
         waChat.classList.remove('mobile-open');
+        // Reseta scroll do viewport (iOS)
+        window.scrollTo(0, 0);
       });
       const chatHeader = document.getElementById('chat-header');
       chatHeader.insertBefore(btnBack, chatHeader.firstChild);
+    } else {
+      // Garante que o botão existente esteja visível
+      document.getElementById('btn-mobile-voltar').style.display = 'flex';
     }
   }
 
@@ -370,6 +376,11 @@ async function resolverConversaLead(leadId, tel, nome) {
   document.getElementById('chat-tel').textContent = telNorm || '—';
   document.getElementById('chat-status-text').innerHTML = '<span style="color:var(--text-muted)">Buscando conversa...</span>';
   document.getElementById('wa-messages').innerHTML = '<div style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:.85rem">Carregando...</div>';
+
+  // ── MOBILE: abre o painel de chat durante o loading (evita tela em branco) ──
+  const _isMobileRL = window.innerWidth <= 768;
+  const _waChatRL = document.getElementById('wa-chat');
+  if (_isMobileRL && _waChatRL) _waChatRL.classList.add('mobile-open');
 
   let conv = null;
 
@@ -736,9 +747,24 @@ function renderMensagem(msg) {
 
   // ── Conteúdo da mensagem ──────────────────────────────────────────────────
   let conteudo = '';
-  if (msg.tipo === 'texto' || msg.tipo === 'sistema') {
+
+  // Inferência de tipo: mensagens antigas salvas com tipo='texto' mas conteúdo
+  // é um placeholder de mídia ([Imagem], [Áudio], [Vídeo], [Documento]).
+  // Acontece quando o webhook não detectou o imageMessage/audioMessage etc.
+  let tipoEfetivo = msg.tipo || 'texto';
+  if (tipoEfetivo === 'texto' && msg.direcao === 'recebida') {
+    const txt = (msg.mensagem || '').trim();
+    if      (txt === '[Imagem]'    || txt === '[imagem]')    tipoEfetivo = 'imagem';
+    else if (txt === '[Áudio]'     || txt === '[audio]'  || txt === '[Áudio]') tipoEfetivo = 'audio';
+    else if (txt === '[Vídeo]'     || txt === '[video]')     tipoEfetivo = 'video';
+    else if (txt === '[Documento]' || txt === '[documento]') tipoEfetivo = 'arquivo';
+    else if (txt === '[arquivo]'   || txt === '[Arquivo]')   tipoEfetivo = 'arquivo';
+  }
+
+  if (tipoEfetivo === 'texto' || tipoEfetivo === 'sistema') {
     conteudo = `<div class="wa-bubble-text">${escHtml(msg.mensagem || '')}</div>`;
-  } else if (msg.tipo === 'imagem') {
+  } else if (tipoEfetivo === 'imagem') {
+
     const nome   = msg.arquivo_nome || 'Imagem';
     if (msg.direcao === 'recebida' && msg.id) {
       // Recebida: lazy load via proxy autenticado (fetch Bearer + _waLoadImg)
@@ -758,7 +784,8 @@ function renderMensagem(msg) {
             <button class="wa-file-dl-btn" data-wa-dl-msgid="${msg.id}" data-wa-dl-nome="${escHtml(nome)}" title="Baixar imagem" style="margin-left:4px;padding:2px 6px;font-size:.68rem">⬇ Baixar</button>
           </div>
         </div>
-        ${msg.mensagem && msg.mensagem !== nome ? `<div class="wa-bubble-text" style="margin-top:4px">${escHtml(msg.mensagem)}</div>` : ''}`;
+        ${msg.mensagem && !['[Imagem]','[imagem]','[Áudio]','[Vídeo]','[Documento]'].includes(msg.mensagem) && msg.mensagem !== nome ? `<div class="wa-bubble-text" style="margin-top:4px">${escHtml(msg.mensagem)}</div>` : ''}`;
+
     } else if (msg.arquivo_url) {
       // Enviada com URL pública disponível (Supabase Storage público)
       const imgSrc = msg.arquivo_url;
@@ -785,7 +812,7 @@ function renderMensagem(msg) {
         </div>
       </div>`;
     }
-  } else if (msg.tipo === 'audio') {
+  } else if (tipoEfetivo === 'audio') {
     // Usa /api/whatsapp/audio/play/:msgId diretamente — endpoint robusto com fallbacks completos
     // IMPORTANTE: não usar /api/whatsapp/media/ pois servirMidia (frozen) falha com caminhos relativos Supabase
     // FIX: parênteses obrigatórios — sem eles o ternário tem precedência errada:
@@ -812,7 +839,7 @@ function renderMensagem(msg) {
            <span style="font-size:.75rem;color:var(--text-muted)">Áudio não disponível</span>
          </div>`;
     console.log('WHATSAPP_AUDIO_RENDERED', { msgId: msg.id, hasSrc: !!audioSrc, dur });
-  } else if (msg.tipo === 'video') {
+  } else if (tipoEfetivo === 'video') {
     const nome  = msg.arquivo_nome || 'Vídeo';
     // Recebidos: botão JS com Bearer token. Enviados: sem download (não ficou salvo).
     const dlBtn = msg.direcao === 'recebida' && msg.id
@@ -832,7 +859,7 @@ function renderMensagem(msg) {
          ${dlBtn}
        </div>
      </div>`;
-  } else if (msg.tipo === 'arquivo' || msg.tipo === 'documento') {
+  } else if (tipoEfetivo === 'arquivo' || tipoEfetivo === 'documento') {
     const nome  = msg.arquivo_nome || 'Arquivo';
     const mime  = msg.mime_type || '';
     const icone = mime === 'application/pdf' ? '📄'
@@ -1435,6 +1462,28 @@ function bindEvents() {
         });
       }
     }).observe(_waMsgsEl, { childList: true, subtree: true });
+  }
+
+  // ── MOBILE: ajuste do layout quando teclado virtual abre (iOS/Android) ────
+  // O visualViewport reduz quando o teclado abre; ajustamos o bottom do wa-chat
+  if (window.visualViewport && window.innerWidth <= 768) {
+    const waChat = document.getElementById('wa-chat');
+    let _vvHandler = null;
+    _vvHandler = () => {
+      if (!waChat) return;
+      const vv = window.visualViewport;
+      // Calcula quanto o teclado está cobrindo (0 quando fechado)
+      const keyboardHeight = window.innerHeight - vv.height - vv.offsetTop;
+      if (keyboardHeight > 50) {
+        // Teclado aberto: eleva o chat para ficar acima do teclado
+        waChat.style.bottom = keyboardHeight + 'px';
+      } else {
+        // Teclado fechado: restaura posição normal
+        waChat.style.bottom = '';
+      }
+    };
+    window.visualViewport.addEventListener('resize', _vvHandler, { passive: true });
+    window.visualViewport.addEventListener('scroll', _vvHandler, { passive: true });
   }
 }
 

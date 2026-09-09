@@ -851,18 +851,43 @@ body.sidebar-collapsed .main-content.wa-main {
 
 /* ── Mobile ────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
+  /* Oculta topbar premium — mobile usa o mobile-header do mobile-nav.js */
   .wa-topbar { display: none !important; }
+
+  /* main-content.wa-main ocupa toda a altura disponível entre header e bottom nav */
   .main-content.wa-main {
     height: calc(100dvh - var(--mobile-hdr-h, 52px) - var(--mobile-nav-h, 64px));
+    padding: 0 !important;
+    margin-left: 0 !important;
+    max-width: 100% !important;
   }
-  .wa-layout { padding: 8px; gap: 8px; }
+
+  /* wa-layout: sem padding extra — o espaço é precioso no mobile */
+  .wa-layout {
+    padding: 0 !important;
+    gap: 0 !important;
+  }
+
+  /* Sidebar (lista de conversas): ocupa 100% da tela */
   .wa-sidebar {
     width: 100%;
-    border-radius: 24px;
-    border-width: 6px;
+    /* Reduz ornamentos do iPhone para economizar espaço vertical */
+    border-radius: 0 !important;
+    border-width: 0 !important;
+    box-shadow: none !important;
   }
-  .wa-sidebar::before { width: 80px; }
+
+  /* Remove o notch estético (pseudo-elemento ::before) no mobile */
+  .wa-sidebar::before { display: none; }
+  .wa-sidebar::after  { display: none; }
+
+  /* Header interno da sidebar: menos padding top (sem o notch) */
+  .wa-sidebar-header { padding: 12px 14px 10px !important; }
+
+  /* Título fica menor no mobile */
+  .wa-sidebar-title { font-size: 1.1rem !important; }
 }
+
 
 /* ═══════════════════════════════════════════════════════════════
    EMOJI PICKER PREMIUM — Prospekt CRM

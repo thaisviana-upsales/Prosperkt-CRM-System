@@ -264,35 +264,27 @@
     }
   }
 
-  // ── Botão "Voltar" no WhatsApp mobile ───────────────────────────────────────
-  // Injetado no header do chat quando uma conversa está aberta
+  // ── Botão "Voltar" no WhatsApp mobile ──────────────────────────────────────────
+  // O botão é criado pelo whatsapp.js ao abrir uma conversa.
+  // Este módulo apenas observa mudanças de classe no wa-chat para controlar
+  // a visibilidade do botão.
   function injetarBotaoVoltarWA() {
     if (!window.location.pathname.includes('whatsapp.html')) return;
 
-    // Aguarda o chat header existir (pode ser carregado dinamicamente)
-    const observer = new MutationObserver(() => {
-      const chatHeader = document.getElementById('chat-header');
-      if (chatHeader && !document.getElementById('btn-mobile-voltar')) {
-        const btnVoltar = document.createElement('button');
-        btnVoltar.id = 'btn-mobile-voltar';
-        btnVoltar.title = 'Voltar para lista';
-        btnVoltar.style.cssText = `
-          display:none;background:none;border:none;color:rgba(255,255,255,.7);
-          cursor:pointer;padding:6px;border-radius:8px;align-items:center;
-          flex-shrink:0;-webkit-tap-highlight-color:transparent;
-        `;
-        btnVoltar.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>`;
-        chatHeader.prepend(btnVoltar);
+    const tentarAtivar = () => {
+      const waChat = document.getElementById('wa-chat');
+      if (!waChat) { setTimeout(tentarAtivar, 300); return; }
 
-        btnVoltar.addEventListener('click', () => {
-          const waChat = document.getElementById('wa-chat');
-          if (waChat) {
-            waChat.classList.remove('mobile-open');
-          }
-        });
-      }
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
+      new MutationObserver(() => {
+        const btnVoltar = document.getElementById('btn-mobile-voltar');
+        if (!btnVoltar) return;
+        const isOpen = waChat.classList.contains('mobile-open');
+        if (isMobile()) {
+          btnVoltar.style.display = isOpen ? 'flex' : 'none';
+        }
+      }).observe(waChat, { attributes: true, attributeFilter: ['class'] });
+    };
+    tentarAtivar();
   }
 
   // Ativa botão voltar quando chat abre e esconde quando fecha
@@ -301,27 +293,21 @@
 
     const waChat = document.getElementById('wa-chat');
     if (!waChat) {
-      setTimeout(monitorarChatWA, 500);
+      setTimeout(monitorarChatWA, 300);
       return;
     }
 
-    const obs = new MutationObserver(() => {
-      const btnVoltar = document.getElementById('btn-mobile-voltar');
-      if (!btnVoltar) return;
-      const isOpen = waChat.classList.contains('mobile-open');
-      if (isMobile()) {
-        btnVoltar.style.display = isOpen ? 'flex' : 'none';
+    // Detecta se uma conversa já está ativa no carregamento (ex.: URL params)
+    // Aguarda um tick para o whatsapp.js ter tempo de inicializar
+    setTimeout(() => {
+      const chatHeader = document.getElementById('chat-header');
+      const waMsgs    = document.getElementById('wa-messages');
+      const jaAberto  = chatHeader && chatHeader.style.display !== 'none'
+                        && waMsgs  && waMsgs.style.display    !== 'none';
+      if (jaAberto && isMobile()) {
+        waChat.classList.add('mobile-open');
       }
-    });
-    obs.observe(waChat, { attributes: true, attributeFilter: ['class'] });
-
-    // Ao abrir conversa, adiciona classe mobile-open (hook para whatsapp.js)
-    // O whatsapp.js deve adicionar .mobile-open ao #wa-chat ao clicar em conversa
-    // Aqui garantimos que se já houver chat-header visível, ativamos o botão
-    const chatHeader = document.getElementById('chat-header');
-    if (chatHeader && chatHeader.style.display !== 'none') {
-      waChat.classList.add('mobile-open');
-    }
+    }, 800);
   }
 
   // ── Desregistro do Service Worker (Desktop) ─────────────────────────────────
