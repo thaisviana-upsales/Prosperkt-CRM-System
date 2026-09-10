@@ -221,6 +221,11 @@
 
   /* ── WhatsApp / Conversas mobile ───────────────────────────── */
 
+  /* Oculta topbar da página no mobile (substituído pelo mobile-header) */
+  .wa-topbar {
+    display: none !important;
+  }
+
   /* main-content do WA: zero padding — o whatsapp.css já cuida disso */
   .main-content.wa-main {
     padding: 0 !important;
@@ -271,7 +276,9 @@
     -webkit-overflow-scrolling: touch;
   }
 
-  /* Painel de chat: sobrepõe a lista em tela cheia ao abrir conversa */
+  /* Painel de chat: sobrepõe a lista em tela cheia ao abrir conversa.
+     IMPORTANTE: usa visibility+opacity em vez de display:none para que
+     a transição CSS de transform funcione no iOS/Android. */
   .wa-chat {
     position: fixed !important;
     top: var(--mobile-hdr-h) !important;
@@ -280,16 +287,19 @@
     bottom: calc(var(--mobile-nav-h) + var(--safe-bottom)) !important;
     width: 100% !important;
     z-index: 150 !important;
-    display: none !important;
+    display: flex !important;       /* sempre flex para transição funcionar */
     flex-direction: column !important;
     background: linear-gradient(160deg, #1e2130 0%, #181c28 100%);
-    /* Transição suave ao abrir */
-    transition: transform .25s cubic-bezier(.16,1,.3,1);
+    /* Oculto por transform — NÃO usar display:none (quebra a transição CSS) */
     transform: translateX(100%);
+    transition: transform .25s cubic-bezier(.16,1,.3,1);
+    visibility: hidden;             /* acessibilidade: não é focável quando fora da tela */
+    pointer-events: none;           /* não captura cliques quando fora da tela */
   }
   .wa-chat.mobile-open {
-    display: flex !important;
-    transform: translateX(0);
+    transform: translateX(0) !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
   }
 
   /* Suporte a dynamic viewport height (iOS Safari) */
@@ -302,6 +312,14 @@
     .wa-sidebar {
       height: calc(100dvh - var(--mobile-hdr-h) - var(--mobile-nav-h)) !important;
     }
+    .main-content.wa-main {
+      height: calc(100dvh - var(--mobile-hdr-h) - var(--mobile-nav-h)) !important;
+    }
+  }
+
+  /* Modal Nova Conversa: z-index acima do wa-chat (150) */
+  .modal-ov {
+    z-index: 400 !important;
   }
 
   /* Input de mensagem: sticky no fundo, com safe area */

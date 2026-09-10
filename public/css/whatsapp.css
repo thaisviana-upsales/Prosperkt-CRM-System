@@ -4,8 +4,16 @@
    ═══════════════════════════════════════════════════════════════ */
 
 /* ── Reset de layout para esta página ─────────────────────────── */
-html, body { overflow: hidden !important; height: 100%; }
-.app-layout { height: 100vh; overflow: hidden; }
+/* Desktop: overflow hidden para impedir scroll fora do chat */
+@media (min-width: 769px) {
+  html, body { overflow: hidden !important; height: 100%; }
+  .app-layout { height: 100vh; overflow: hidden; }
+}
+/* Mobile: o mobile.css controla o layout; apenas garantimos display correto */
+@media (max-width: 768px) {
+  html, body { height: 100%; overflow: hidden; }
+  .app-layout { height: 100%; }
+}
 .main-content.wa-main {
   height: 100vh;
   overflow: hidden;
