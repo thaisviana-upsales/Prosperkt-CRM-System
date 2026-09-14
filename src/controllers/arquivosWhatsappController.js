@@ -320,8 +320,10 @@ async function proxyArquivoRecebido(req, res, next) {
     } catch (e) { console.warn('[wha.proxy] DB:', e.message); }
 
     if (!msg) return res.status(404).json({ sucesso: false, erro: 'Mensagem não encontrada.' });
-    if (!msg.arquivo_url && msg.direcao !== 'recebida') {
-      return res.status(404).json({ sucesso: false, erro: 'Arquivo enviado pelo CRM — sem cópia armazenada. Veja no WhatsApp.' });
+    // Permite servir imagens enviadas SE têm storage_path ou evolution_message_id
+    // (o CRM salva imagens enviadas sem arquivo_url mas com storage_path no Supabase)
+    if (!msg.arquivo_url && msg.direcao !== 'recebida' && !msg.storage_path && !msg.evolution_message_id) {
+      return res.status(404).json({ sucesso: false, erro: 'Arquivo enviado pelo CRM — sem cópia armazenada.' });
     }
 
     const nomeArquivo = msg.arquivo_nome || 'arquivo';

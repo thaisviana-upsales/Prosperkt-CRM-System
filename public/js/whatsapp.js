@@ -800,8 +800,26 @@ function renderMensagem(msg) {
           </div>
         </div>
         ${msg.mensagem ? `<div class="wa-bubble-text" style="margin-top:4px">${escHtml(msg.mensagem)}</div>` : ''}`;
+    } else if (msg.id && (msg.storage_path || msg.evolution_message_id)) {
+      // Enviada com storage_path ou evolution_message_id — usa proxy autenticado igual às recebidas
+      const nome = msg.arquivo_nome || 'Imagem';
+      conteudo = `
+        <div class="wa-img-wrap">
+          <div class="wa-img-lazy wa-img-ph" data-wa-imgmsgid="${msg.id}"
+            style="width:220px;height:130px;border-radius:8px;background:var(--surface-2,#1e2d3d);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;cursor:pointer;overflow:hidden">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.2)" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            <span style="font-size:.65rem;color:rgba(255,255,255,.2);letter-spacing:.04em">Carregando...</span>
+          </div>
+          <div class="wa-img-error" style="display:none;align-items:center;gap:6px;padding:10px;background:var(--surface-2);border-radius:8px;font-size:.72rem;color:var(--text-muted)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            Imagem indisponível.
+            <button class="wa-file-dl-btn" data-wa-dl-msgid="${msg.id}" data-wa-dl-nome="${escHtml(nome)}" title="Baixar imagem" style="margin-left:4px;padding:2px 6px;font-size:.68rem">⬇ Baixar</button>
+          </div>
+        </div>
+        ${msg.mensagem ? `<div class="wa-bubble-text" style="margin-top:4px">${escHtml(msg.mensagem)}</div>` : ''}`;
     } else {
-      // Enviada sem URL — mostra como card de arquivo (arquivo não ficou salvo no CRM)
+      // Enviada sem nenhuma referência — mostra como card de arquivo
+      const nome = msg.arquivo_nome || 'Imagem';
       conteudo = `<div class="wa-file-card">
         <div style="display:flex;align-items:center;gap:10px">
           <div class="wa-file-icon"><span style="font-size:1.2rem;line-height:1">🖼️</span></div>
