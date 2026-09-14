@@ -27,15 +27,24 @@
     overflow-x: hidden;
   }
 
-  /* ── Esconde sidebar de navegação no mobile ─────────────────── */
-  /* IMPORTANTE: :not(.wa-sidebar):not(.wa-sidebar-header):not(.wa-sidebar-title)
-     garante que a lista de conversas do WhatsApp NÃO seja ocultada aqui.
-     O wa-sidebar tem suas próprias regras de layout em @media abaixo. */
+  /* ── Esconde sidebar de navegação do CRM no mobile ──────────── */
   .sidebar,
   #sidebar-container,
   [class*="sidebar"]:not(.wa-sidebar):not(.wa-sidebar-header):not(.wa-sidebar-title):not(.wa-sidebar-footer):not(.wa-compose-icon) {
     display: none !important;
   }
+
+  /* ── Restaura explicitamente todos os elementos do WhatsApp sidebar ──
+     Garante que o hide rule acima não afete a lista de conversas,
+     mesmo em browsers que tratam :not() com seletores de atributo
+     de forma inconsistente. Alta especificidade + !important. */
+  .wa-sidebar                  { display: flex !important; }
+  .wa-sidebar-header           { display: block !important; }
+  .wa-sidebar-title            { display: flex !important; }
+  .wa-sidebar .wa-search-wrap  { display: block !important; }
+  .wa-sidebar .wa-filters      { display: flex !important; }
+  .wa-sidebar .wa-conv-list    { display: block !important; }
+  .wa-sidebar .wa-compose-icon { display: flex !important; }
 
 
   /* ── Main content ocupa 100% ───────────────────────────────── */
