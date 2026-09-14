@@ -1313,15 +1313,25 @@ function bindEvents() {
         waDownloadArquivo(dlBtn.dataset.waDlMsgid, dlBtn.dataset.waDlNome);
         return;
       }
-      // ── Abrir imagem em nova aba (clique na img carregada) ────────────────
+      // ── Abrir imagem em lightbox (clique na img carregada) ──────────────
       const imgEl = e.target.closest('.wa-img');
-      if (imgEl && imgEl.src && imgEl.src.startsWith('blob:')) {
-        window.open(imgEl.src, '_blank');
-        return;
-      }
-      if (imgEl && imgEl.dataset.waImgopen) {
-        window.open(imgEl.dataset.waImgopen, '_blank');
-        return;
+      if (imgEl) {
+        e.preventDefault();
+        // Blob URL (imagem recebida já carregada em memória)
+        if (imgEl.src && imgEl.src.startsWith('blob:')) {
+          _waAbrirLightbox(imgEl.src, imgEl.dataset.waLightboxMsgid || null);
+          return;
+        }
+        // URL pública (imagem enviada)
+        if (imgEl.dataset.waImgopen) {
+          _waAbrirLightbox(imgEl.dataset.waImgopen, null);
+          return;
+        }
+        // Fallback: qualquer src disponível
+        if (imgEl.src && !imgEl.src.startsWith('data:')) {
+          _waAbrirLightbox(imgEl.src, null);
+          return;
+        }
       }
     });
   }
@@ -1781,8 +1791,12 @@ async function _waLoadImg(el) {
     img.src = blobUrl;
     img.className = 'wa-img';
     img.style.cssText = 'border-radius:8px;cursor:zoom-in;display:block;max-width:100%;max-height:320px;object-fit:cover';
-    img.dataset.waImgopen = blobUrl;
+    img.dataset.waImgopen  = blobUrl;
+    img.dataset.waLightboxMsgid = msgId; // guarda msgId para refetch se blob expirar
     img.alt = '';
+
+    // Clique diretamente na imagem → lightbox
+    img.addEventListener('click', () => _waAbrirLightbox(blobUrl, msgId));
 
     // Substitui o placeholder pelo <img> carregado
     el.replaceWith(img);
@@ -1795,6 +1809,135 @@ async function _waLoadImg(el) {
     if (errEl && errEl.classList.contains('wa-img-error')) {
       errEl.style.display = 'flex';
     }
+  }
+}
+
+// ─── Lightbox inline para imagens ─────────────────────────────────────────────
+// Exibe a imagem em overlay fullscreen na mesma página.
+// Aceita blob URL ou URL pública. Se a blob expirou e msgId está disponível,
+// re-faz o fetch autenticado para obter um novo blob.
+async function _waAbrirLightbox(src, msgId) {
+  // Remove lightbox anterior se existir
+  document.getElementById('wa-lightbox')?.remove();
+
+  const lb = document.createElement('div');
+  lb.id = 'wa-lightbox';
+  lb.style.cssText = [
+    'position:fixed;inset:0;z-index:9999',
+    'background:rgba(0,0,0,.92)',
+    'display:flex;align-items:center;justify-content:center',
+    'cursor:zoom-out',
+    'animation:waLbFadeIn .18s ease',
+    'padding:16px',
+  ].join(';');
+
+  // Keyframes (injeta só uma vez)
+  if (!document.getElementById('wa-lb-style')) {
+    const s = document.createElement('style');
+    s.id = 'wa-lb-style';
+    s.textContent = `
+      @keyframes waLbFadeIn  { from { opacity:0 } to { opacity:1 } }
+      @keyframes waLbImgIn   { from { opacity:0;transform:scale(.92) } to { opacity:1;transform:scale(1) } }
+      #wa-lightbox img       { max-width:100%;max-height:100%;border-radius:10px;
+                               box-shadow:0 24px 64px rgba(0,0,0,.7);
+                               animation:waLbImgIn .22s cubic-bezier(.16,1,.3,1); }
+      #wa-lightbox .wa-lb-close {
+        position:fixed;top:14px;right:16px;
+        background:rgba(255,255,255,.12);border:none;border-radius:50%;
+        width:36px;height:36px;display:flex;align-items:center;justify-content:center;
+        color:#fff;font-size:1.1rem;cursor:pointer;z-index:10000;
+        transition:background .15s;
+      }
+      #wa-lightbox .wa-lb-close:hover { background:rgba(255,59,92,.4); }
+      #wa-lightbox .wa-lb-dl {
+        position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+        background:rgba(255,255,255,.12);border:none;border-radius:10px;
+        padding:8px 18px;color:#fff;font-size:.8rem;font-weight:700;
+        cursor:pointer;z-index:10000;display:flex;align-items:center;gap:6px;
+        font-family:inherit;transition:background .15s;
+      }
+      #wa-lightbox .wa-lb-dl:hover { background:rgba(48,209,88,.3); }
+    `;
+    document.head.appendChild(s);
+  }
+
+  // Botão fechar
+  const btnClose = document.createElement('button');
+  btnClose.className = 'wa-lb-close';
+  btnClose.innerHTML = '✕';
+  btnClose.setAttribute('aria-label', 'Fechar');
+
+  // Botão download
+  const btnDl = document.createElement('button');
+  btnDl.className = 'wa-lb-dl';
+  btnDl.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Baixar imagem`;
+
+  const imgEl2 = document.createElement('img');
+  imgEl2.alt = 'Imagem';
+
+  // Fecha ao clicar no overlay ou no X
+  const fecharLb = () => lb.remove();
+  lb.addEventListener('click', e => { if (e.target === lb) fecharLb(); });
+  btnClose.addEventListener('click', fecharLb);
+  document.addEventListener('keydown', function escLb(e) {
+    if (e.key === 'Escape') { fecharLb(); document.removeEventListener('keydown', escLb); }
+  });
+
+  // Download
+  btnDl.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (msgId) {
+      await waDownloadArquivo(msgId, 'imagem');
+    } else {
+      // URL pública — download direto
+      const a = document.createElement('a');
+      a.href = src;
+      a.download = 'imagem';
+      a.click();
+    }
+  });
+
+  lb.appendChild(btnClose);
+  lb.appendChild(imgEl2);
+  lb.appendChild(btnDl);
+  document.body.appendChild(lb);
+
+  // Tenta carregar o src fornecido
+  const carregarSrc = (url) => {
+    imgEl2.src = url;
+  };
+
+  // Se src é blob, tenta direto. Se falhar e tiver msgId, refaz o fetch
+  if (src && src.startsWith('blob:')) {
+    imgEl2.onerror = async () => {
+      if (!msgId) { imgEl2.alt = 'Imagem indisponível'; return; }
+      // Blob expirou — refaz fetch autenticado
+      const token = (typeof Auth !== 'undefined' && Auth.getToken)
+        ? Auth.getToken() : (localStorage.getItem('token') || '');
+      try {
+        const r = await fetch(`/api/whatsapp/mensagens/${msgId}/arquivo`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const b = await r.blob();
+        carregarSrc(URL.createObjectURL(b));
+      } catch { imgEl2.alt = 'Imagem indisponível'; }
+    };
+    carregarSrc(src);
+  } else if (src) {
+    carregarSrc(src);
+  } else if (msgId) {
+    // Sem src — busca direto pelo msgId
+    const token = (typeof Auth !== 'undefined' && Auth.getToken)
+      ? Auth.getToken() : (localStorage.getItem('token') || '');
+    try {
+      const r = await fetch(`/api/whatsapp/mensagens/${msgId}/arquivo`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const b = await r.blob();
+      carregarSrc(URL.createObjectURL(b));
+    } catch { imgEl2.alt = 'Imagem indisponível'; }
   }
 }
 
