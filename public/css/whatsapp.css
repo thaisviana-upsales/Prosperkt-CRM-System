@@ -1218,3 +1218,195 @@ body.sidebar-collapsed .main-content.wa-main {
   .wa-messages { gap: 8px; padding: 16px 14px 10px; }
 }
 
+
+/* ═══════════════════════════════════════════════════════════════
+   MODAL — Nova Conversa
+   (pipeline.css não é incluído nesta página — estilos próprios)
+   ═══════════════════════════════════════════════════════════════ */
+
+.modal-ov {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+.modal-ov.open {
+  opacity: 1;
+  pointer-events: all;
+}
+.modal-ov.open .modal-box {
+  transform: translateY(0);
+}
+
+.modal-box {
+  background: linear-gradient(160deg, #0A3240 0%, #071E29 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  padding: 24px 26px;
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.55),
+    0 4px 20px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  transform: translateY(16px);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  color: rgba(235, 235, 245, 0.92);
+}
+
+/* Scrollbar do modal */
+.modal-box::-webkit-scrollbar { width: 4px; }
+.modal-box::-webkit-scrollbar-track { background: transparent; }
+.modal-box::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 4px; }
+
+/* Título do modal */
+.modal-box h3 {
+  font-size: 1rem;
+  font-weight: 800;
+  color: #FFFFFF;
+  letter-spacing: -.02em;
+  margin: 0;
+}
+
+/* Botão de fechar X */
+.modal-box .wa-icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+  flex-shrink: 0;
+}
+.modal-box .wa-icon-btn:hover {
+  background: rgba(255, 59, 92, 0.18);
+  color: #FF3B5C;
+  border-color: rgba(255, 59, 92, 0.3);
+}
+
+/* Labels dos inputs */
+.modal-box .input-label {
+  display: block;
+  font-size: .72rem;
+  font-weight: 600;
+  color: rgba(235, 235, 245, 0.5);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  margin-bottom: 6px;
+}
+
+/* Inputs e selects do modal */
+.modal-box .input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 10px 14px;
+  color: rgba(235, 235, 245, 0.92);
+  font-size: .875rem;
+  font-family: inherit;
+  outline: none;
+  transition: border-color .15s, background .15s;
+  box-sizing: border-box;
+}
+.modal-box .input:focus {
+  border-color: rgba(48, 209, 88, 0.5);
+  background: rgba(255, 255, 255, 0.09);
+  box-shadow: 0 0 0 3px rgba(48, 209, 88, 0.08);
+}
+.modal-box .input::placeholder {
+  color: rgba(235, 235, 245, 0.3);
+}
+.modal-box select.input option {
+  background: #071E29;
+  color: rgba(235, 235, 245, 0.92);
+}
+
+/* Grupo de inputs */
+.modal-box .input-group {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Alert de erro/sucesso dentro do modal */
+.modal-box .alert {
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: .8rem;
+  font-weight: 600;
+  border: 1px solid;
+}
+.modal-box .alert-danger {
+  background: rgba(255, 59, 92, 0.12);
+  border-color: rgba(255, 59, 92, 0.3);
+  color: #FF6B82;
+}
+.modal-box .alert-success {
+  background: rgba(48, 209, 88, 0.1);
+  border-color: rgba(48, 209, 88, 0.3);
+  color: #30D158;
+}
+
+/* Botões do modal */
+.modal-box .btn {
+  min-height: 40px;
+  padding: 9px 18px;
+  border-radius: 10px;
+  font-size: .82rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  transition: opacity .15s, transform .12s;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.modal-box .btn:hover { opacity: .88; transform: translateY(-1px); }
+.modal-box .btn:active { transform: translateY(0); }
+.modal-box .btn-primary {
+  background: #30D158;
+  color: #000;
+}
+.modal-box .btn-secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(235, 235, 245, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* ── Mobile: modal como bottom sheet ───────────────────────────── */
+@media (max-width: 768px) {
+  .modal-ov {
+    align-items: flex-end !important;
+    padding: 0 !important;
+    z-index: 400 !important;
+  }
+  .modal-box {
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: 88vh !important;
+    border-radius: 20px 20px 0 0 !important;
+    padding: 20px 18px !important;
+    padding-bottom: max(24px, env(safe-area-inset-bottom, 24px)) !important;
+    transform: translateY(100%) !important;
+  }
+  .modal-ov.open .modal-box {
+    transform: translateY(0) !important;
+  }
+}
