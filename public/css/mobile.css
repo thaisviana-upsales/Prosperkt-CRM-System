@@ -358,8 +358,23 @@
     min-height: 0;
   }
 
-  /* Balões de mensagem */
-  .wa-bubble { max-width: 85% !important; font-size: .82rem !important; }
+  /* Balões de mensagem: container + bubble com largura generosa no mobile */
+  .wa-msg {
+    max-width: 82% !important;    /* desktop é 62% — no mobile ocupa mais tela */
+  }
+  .wa-bubble {
+    max-width: 100% !important;   /* bubble preenche 100% do wa-msg acima */
+    font-size: .875rem !important; /* ligeiramente maior para legibilidade */
+    padding: 9px 13px 7px !important;
+    line-height: 1.45 !important;
+  }
+  .wa-bubble-text {
+    font-size: .875rem !important;
+    line-height: 1.45 !important;
+    word-break: break-word !important; /* previne overflow em palavras longas */
+    overflow-wrap: break-word !important;
+  }
+
 
   /* Botão voltar — controlado pelo JS; inicia oculto */
   #btn-mobile-voltar { display: none; }
