@@ -3537,8 +3537,21 @@ async function webhookReceberMensagem(req, res) {
           const _docBucket  = 'whatsapp-midias';
           const _docNome    = (arquivoNome || 'documento').replace(/[^a-zA-Z0-9._\-]/g, '_');
           const _docPath    = `docs/${evoMsgIdWebhook}/${_docNome}`;
-          const _docTel     = (telFinal || '').replace(/\D/g, '');
-          const _docJid     = (telFinal || '').includes('@') ? (telFinal || '') : `${_docTel}@s.whatsapp.net`;
+          // Resolve JID correto para LID e contatos regulares
+          // CAUSA RAIZ: 'LID:XXXX' → digits@s.whatsapp.net estava errado; deve ser XXXX@lid
+          let _docJid = null;
+          {
+            const _dt = (telFinal || '').trim();
+            if (_dt.startsWith('LID:')) {
+              const _dln = _dt.slice(4).replace(/\D/g, '');
+              if (_dln) _docJid = `${_dln}@lid`;
+            } else if (_dt.includes('@')) {
+              _docJid = _dt;
+            } else {
+              const _dd = _dt.replace(/\D/g, '');
+              if (_dd) _docJid = `${_dd}@s.whatsapp.net`;
+            }
+          }
           Promise.resolve().then(async () => {
             try {
               // Aguarda 2s para Evolution indexar a mensagem em seu banco interno
@@ -3582,8 +3595,21 @@ async function webhookReceberMensagem(req, res) {
             : 'jpg';
           const _imgNome    = (arquivoNome || `imagem.${_imgExt}`).replace(/[^a-zA-Z0-9._\-]/g, '_');
           const _imgPath    = `images/${evoMsgIdWebhook}/${_imgNome}`;
-          const _imgTel     = (telFinal || '').replace(/\D/g, '');
-          const _imgJid     = (telFinal || '').includes('@') ? (telFinal || '') : `${_imgTel}@s.whatsapp.net`;
+          // Resolve JID correto para LID e contatos regulares
+          // CAUSA RAIZ: 'LID:XXXX' → digits@s.whatsapp.net estava errado; deve ser XXXX@lid
+          let _imgJid = null;
+          {
+            const _it = (telFinal || '').trim();
+            if (_it.startsWith('LID:')) {
+              const _iln = _it.slice(4).replace(/\D/g, '');
+              if (_iln) _imgJid = `${_iln}@lid`;
+            } else if (_it.includes('@')) {
+              _imgJid = _it;
+            } else {
+              const _id2 = _it.replace(/\D/g, '');
+              if (_id2) _imgJid = `${_id2}@s.whatsapp.net`;
+            }
+          }
           Promise.resolve().then(async () => {
             try {
               // Aguarda 2s para Evolution indexar a mensagem em seu banco interno

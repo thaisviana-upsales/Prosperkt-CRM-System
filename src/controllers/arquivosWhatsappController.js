@@ -328,11 +328,24 @@ async function proxyArquivoRecebido(req, res, next) {
     const mimeType    = msg.mime_type || 'application/octet-stream';
     const evoKey      = process.env.EVOLUTION_API_KEY || '';
 
-    // Pré-computa remoteJid (necessário para Layer 2)
-    const telNumeros = (msg.telefone || '').replace(/\D/g, '');
-    const remoteJid  = telNumeros
-      ? (msg.telefone?.includes('@') ? msg.telefone : `${telNumeros}@s.whatsapp.net`)
-      : null;
+    // Pré-computa remoteJid correto para Layer 2 (getBase64Media)
+    // REGRA DE RESOLUÇÃO (mesma do envio — mantida em sync):
+    //   LID:XXXX  → XXXX@lid          (contatos Meta/WhatsApp Business)
+    //   já tem @  → usa direto         (JID completo já armazenado)
+    //   dígitos   → dígitos@s.whatsapp.net
+    let remoteJid = null;
+    {
+      const _tel = (msg.telefone || '').trim();
+      if (_tel.startsWith('LID:')) {
+        const _lidNum = _tel.slice(4).replace(/\D/g, '');
+        if (_lidNum) remoteJid = `${_lidNum}@lid`;
+      } else if (_tel.includes('@')) {
+        remoteJid = _tel;
+      } else {
+        const _digits = _tel.replace(/\D/g, '');
+        if (_digits) remoteJid = `${_digits}@s.whatsapp.net`;
+      }
+    }
 
     const _tiposMidia   = ['arquivo', 'imagem', 'video', 'documento'];
     const isReceivedMedia = msg.direcao === 'recebida' && _tiposMidia.includes(msg.tipo);
