@@ -1452,10 +1452,17 @@ function bindEvents() {
   // Painel info
   document.getElementById('btn-info-panel').addEventListener('click', () => {
     const panel = document.getElementById('info-panel');
-    panel.classList.toggle('open');
+    if (window.innerWidth <= 768) {
+      // Mobile: usa mobile-sheet-open (CSS mobile.css sobrescreve .open com !important)
+      panel.classList.toggle('mobile-sheet-open');
+    } else {
+      panel.classList.toggle('open');
+    }
   });
   document.getElementById('btn-fechar-info').addEventListener('click', () => {
-    document.getElementById('info-panel').classList.remove('open');
+    const panel = document.getElementById('info-panel');
+    panel.classList.remove('open');
+    panel.classList.remove('mobile-sheet-open');
   });
 
   // Fechar conversa (status FECHADA)

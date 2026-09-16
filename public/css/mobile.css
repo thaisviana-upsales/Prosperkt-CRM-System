@@ -443,6 +443,46 @@
     display: flex !important;
   }
 
+  /* ── Preview de áudio gravado: esconde <audio> nativo no mobile ─
+     iOS Safari não suporta WebM/OGG → mostra "Erro". Blob é
+     enviado normalmente pelo JS — o preview é só visual.         */
+  #wa-audio-prev-el {
+    display: none !important;
+  }
+  /* Indicador customizado que o JS injeta via #wa-mobile-rec-label */
+  #wa-mobile-rec-label {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: .82rem;
+    color: #30D158;
+    font-weight: 600;
+    font-family: inherit;
+  }
+  #wa-mobile-rec-label .wa-mrec-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 18px;
+  }
+  #wa-mobile-rec-label .wa-mrec-bars span {
+    display: inline-block;
+    width: 3px;
+    border-radius: 2px;
+    background: #30D158;
+    animation: waMrecBar .8s ease-in-out infinite;
+  }
+  #wa-mobile-rec-label .wa-mrec-bars span:nth-child(1) { height: 6px;  animation-delay: 0s; }
+  #wa-mobile-rec-label .wa-mrec-bars span:nth-child(2) { height: 14px; animation-delay: .15s; }
+  #wa-mobile-rec-label .wa-mrec-bars span:nth-child(3) { height: 10px; animation-delay: .3s; }
+  #wa-mobile-rec-label .wa-mrec-bars span:nth-child(4) { height: 16px; animation-delay: .1s; }
+  #wa-mobile-rec-label .wa-mrec-bars span:nth-child(5) { height: 8px;  animation-delay: .25s; }
+  @keyframes waMrecBar {
+    0%, 100% { transform: scaleY(1);   opacity: .85; }
+    50%       { transform: scaleY(.4); opacity: .45; }
+  }
+
 } /* fim @media 768px */
 
 /* ═══════════════════════════════════════════════════════════════

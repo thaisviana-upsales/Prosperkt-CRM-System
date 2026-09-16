@@ -129,6 +129,32 @@
       }, { once: true });
     }
 
+    // ── Fix mobile: injeta label customizado (evita <audio> nativo com "Erro") ─
+    // iOS/Android não suportam WebM/OGG no elemento <audio> → exibe "Erro"
+    // O CSS mobile.css já esconde #wa-audio-prev-el; aqui injetamos o label visual
+    if (window.innerWidth <= 768) {
+      const previewDiv = document.getElementById('wa-audio-preview');
+      if (previewDiv && !document.getElementById('wa-mobile-rec-label')) {
+        const durStr = _previewDuration > 0
+          ? `${Math.floor(_previewDuration / 60)}:${String(_previewDuration % 60).padStart(2,'0')}`
+          : '00:00';
+        const lbl = document.createElement('div');
+        lbl.id = 'wa-mobile-rec-label';
+        lbl.innerHTML = `
+          <div class="wa-mrec-bars">
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+          <span>Áudio gravado &nbsp;${durStr}</span>`;
+        // Insere após o SVG de nota musical (primeiro filho) e antes do <audio>
+        const audioEl = document.getElementById('wa-audio-prev-el');
+        if (audioEl) {
+          previewDiv.insertBefore(lbl, audioEl);
+        } else {
+          previewDiv.appendChild(lbl);
+        }
+      }
+    }
+
     // ── Fix 2: trocar ícone mic por paper-plane no sendBtn ───────────────────
     // Usa requestAnimationFrame para garantir que _setRecUI('preview') já finalizou
     requestAnimationFrame(() => {
@@ -145,6 +171,9 @@
   function _aoOcultarPreview() {
     _previewBlob     = null;
     _previewDuration = 0;
+    // Remove o label mobile se existir
+    const mbl = document.getElementById('wa-mobile-rec-label');
+    if (mbl) mbl.remove();
     console.log('FRONT_AUDIO_CANCEL');
   }
 
