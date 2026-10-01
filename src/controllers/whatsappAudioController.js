@@ -213,8 +213,9 @@ async function enviarAudio(req, res) {
       console.warn('WA_AUDIO_CONVERTER_UNAVAILABLE — enviando WebM como fallback');
     }
 
-    const base64Audio = audioBuffer.toString('base64');
-    console.log('WA_AUDIO_BASE64_READY', { mime: audioMime, bytes: audioBuffer.length, converted: audioConverted });
+    // OBRIGATÓRIO: Evolution API exige prefixo data URI para base64 (igual a arquivosWhatsappController.js linha 189)
+    const base64Audio = `data:${audioMime};base64,${audioBuffer.toString('base64')}`;
+    console.log('WA_AUDIO_BASE64_READY', { mime: audioMime, bytes: audioBuffer.length, converted: audioConverted, hasDataPrefix: true });
 
     // ── 5. Envia como mensagem de áudio via sendMedia ───────────────────────────
     let evoOk  = false;

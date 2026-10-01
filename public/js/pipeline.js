@@ -1047,8 +1047,24 @@ async function abrirLead(id) {
   document.getElementById('fl-id').value=l.id;
   document.getElementById('fl-nome').value=l.nome||'';
   document.getElementById('fl-empresa').value=l.empresa||'';
-  document.getElementById('fl-tel').value=l.telefone||'';
   document.getElementById('fl-email').value=l.email||'';
+  document.getElementById('fl-tel').value=l.telefone||'';
+  const btnAbrirWa = document.getElementById('btn-lead-abrir-wa');
+  if (btnAbrirWa) {
+    if (l.telefone) {
+      btnAbrirWa.style.display = 'inline-flex';
+      btnAbrirWa.onclick = () => {
+        let t = String(l.telefone || '').replace(/\D/g, '');
+        if (t.length === 10 || t.length === 11) t = '55' + t;
+        const urlDestino = `/whatsapp.html?lead_id=${encodeURIComponent(l.id)}&phone=${encodeURIComponent(t)}&nome=${encodeURIComponent(l.nome || '')}`;
+        console.log('ABRIR_WHATSAPP_DO_LEAD_MODAL:', { leadId: l.id, telefoneNormalizado: t, urlDestino });
+        window.location.href = urlDestino;
+      };
+    } else {
+      btnAbrirWa.style.display = 'none';
+      btnAbrirWa.onclick = null;
+    }
+  }
   document.getElementById('fl-cnpj').value=_mascaraCnpj(l.cnpj||'');
   document.getElementById('fl-valor').value=l.valor||'';
   document.getElementById('fl-status').value=l.status||'ABERTO';
@@ -1308,6 +1324,8 @@ function resetModal() {
   // Botão excluir e clonar: oculta no novo lead
   document.getElementById('ml-excluir').style.display = 'none';
   document.getElementById('ml-clonar').style.display  = 'none';
+  const btnAbrirWa = document.getElementById('btn-lead-abrir-wa');
+  if (btnAbrirWa) { btnAbrirWa.style.display = 'none'; btnAbrirWa.onclick = null; }
   // Timeline/tags reset
   const tl = document.getElementById('lead-timeline');
   if (tl) tl.innerHTML = '<p style="font-size:.72rem;color:var(--text-muted)">Selecione um lead para ver a timeline.</p>';

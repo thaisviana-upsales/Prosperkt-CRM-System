@@ -879,11 +879,25 @@ async function listarConversas(req, res) {
     const role = req.usuario.role;
 
     if (isSupa) {
+      console.log('WHATSAPP_CONVERSAS_LIST_START', { usuarioId: req.usuario.id, role });
       let q = sb.from(CONVERSAS_TABLE)
-        .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa)')
+        .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa,responsavel_id)')
         .order('ultima_msg_em', { ascending: false, nullsFirst: false })
         .range(Number(offset), Number(offset) + Number(limit) - 1);
-      if (role === 'VENDEDOR') q = q.eq('vendedor_id', req.usuario.id);
+
+      if (role === 'VENDEDOR') {
+        console.log('WHATSAPP_CONVERSAS_FILTER_BY_USER', { usuarioId: req.usuario.id });
+        const { data: meusLeads } = await sb.from('leads').select('id').eq('responsavel_id', req.usuario.id);
+        const leadIds = (meusLeads || []).map(l => l.id);
+        console.log('WHATSAPP_CONVERSAS_FILTER_BY_LEAD_RESPONSAVEL', { totalLeads: leadIds.length });
+
+        if (leadIds.length > 0) {
+          const leadIdsSafe = leadIds.slice(0, 100);
+          q = q.or(`vendedor_id.eq.${req.usuario.id},lead_id.in.(${leadIdsSafe.join(',')})`);
+        } else {
+          q = q.eq('vendedor_id', req.usuario.id);
+        }
+      }
       if (vendedor_id) q = q.eq('vendedor_id', vendedor_id);
       // Por padrão: exclui FECHADA e PENDENTE_IDENTIFICACAO
       if (status) {
@@ -910,7 +924,6 @@ async function listarConversas(req, res) {
         return true;
       });
 
-
       const conversas = rawData.map(c => ({
         ...c,
         vendedor_nome: c.usuarios?.nome || null,
@@ -934,6 +947,7 @@ async function listarConversas(req, res) {
         // nao_lidas: usa o campo do banco (incrementado pelo webhook ao receber, zerado ao abrir)
         nao_lidas: c.nao_lidas || 0,
       }));
+      console.log('WHATSAPP_CONVERSAS_LIST_SUCCESS', { total: comUltima.length });
       return res.json({ sucesso: true, dados: comUltima, total: comUltima.length });
     }
 
@@ -962,8 +976,10 @@ async function listarConversas(req, res) {
 
     // Filtro de permissão
     if (req.usuario.role === 'VENDEDOR') {
-      sql += ' AND c.vendedor_id = ?';
-      params.push(req.usuario.id);
+      console.log('WHATSAPP_CONVERSAS_FILTER_BY_USER', { usuarioId: req.usuario.id });
+      console.log('WHATSAPP_CONVERSAS_FILTER_BY_LEAD_RESPONSAVEL', { usuarioId: req.usuario.id });
+      sql += ' AND (c.vendedor_id = ? OR l.responsavel_id = ?)';
+      params.push(req.usuario.id, req.usuario.id);
     } else if (req.usuario.role === 'GESTOR') {
       // Gestor vê sua equipe — por ora vê todos ativos
     }
@@ -983,6 +999,7 @@ async function listarConversas(req, res) {
     const conversas = db.prepare(sql).all(...params);
     const total = db.prepare(`SELECT COUNT(*) as n FROM conversas_whatsapp WHERE 1=1`).get();
 
+    console.log('WHATSAPP_CONVERSAS_LIST_SUCCESS', { total: conversas.length });
     return res.json({ sucesso: true, dados: conversas, total: total.n });
   } catch (e) {
     console.error('[WA] listarConversas:', e);
@@ -1002,11 +1019,21 @@ async function listarMensagens(req, res) {
 
     if (isSupa) {
       const { data: conversa, error: errC } = await sb.from(CONVERSAS_TABLE)
-        .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa)')
+        .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa,responsavel_id)')
         .eq('id', id).single();
       if (errC || !conversa) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
-      if (req.usuario.role === 'VENDEDOR' && conversa.vendedor_id !== req.usuario.id)
+
+      const ehDonoDaConversa = conversa.vendedor_id === req.usuario.id;
+      const ehDonoDoLead     = conversa.leads?.responsavel_id === req.usuario.id;
+
+      if (req.usuario.role === 'VENDEDOR' && !ehDonoDaConversa && !ehDonoDoLead)
         return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
+
+      // Se é o responsável do lead mas a conversa estava sem vendedor_id ou com outro, auto-sincroniza
+      if (ehDonoDoLead && !ehDonoDaConversa) {
+        await sb.from(CONVERSAS_TABLE).update({ vendedor_id: req.usuario.id, atualizado_em: new Date().toISOString() }).eq('id', id);
+        conversa.vendedor_id = req.usuario.id;
+      }
 
       const { data: msgs, error: errM } = await sb.from(MENSAGENS_TABLE)
         .select('*, usuarios!mensagens_whatsapp_vendedor_id_fkey(nome)')
@@ -1033,10 +1060,16 @@ async function listarMensagens(req, res) {
     }
 
     const db = getDb();
-    const conversa = db.prepare('SELECT * FROM conversas_whatsapp WHERE id = ?').get(id);
+    const conversa = db.prepare('SELECT c.*, l.responsavel_id AS lead_responsavel_id FROM conversas_whatsapp c LEFT JOIN leads l ON c.lead_id = l.id WHERE c.id = ?').get(id);
     if (!conversa) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
-    if (req.usuario.role === 'VENDEDOR' && conversa.vendedor_id !== req.usuario.id)
+    const ehDonoDaConversa = conversa.vendedor_id === req.usuario.id;
+    const ehDonoDoLead     = conversa.lead_responsavel_id === req.usuario.id;
+    if (req.usuario.role === 'VENDEDOR' && !ehDonoDaConversa && !ehDonoDoLead)
       return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
+    if (ehDonoDoLead && !ehDonoDaConversa) {
+      db.prepare('UPDATE conversas_whatsapp SET vendedor_id = ?, atualizado_em = ? WHERE id = ?').run(req.usuario.id, new Date().toISOString(), id);
+      conversa.vendedor_id = req.usuario.id;
+    }
     const msgs = db.prepare(`SELECT m.*, u.nome AS vendedor_nome FROM mensagens_whatsapp m LEFT JOIN usuarios u ON m.vendedor_id = u.id WHERE m.conversa_id = ? ORDER BY m.criado_em ASC LIMIT ? OFFSET ?`).all(id, Number(limit), Number(offset));
     db.prepare(`UPDATE mensagens_whatsapp SET status = 'lido' WHERE conversa_id = ? AND direcao = 'recebida' AND status != 'lido'`).run(id);
     return res.json({ sucesso: true, dados: msgs, conversa });
@@ -1507,88 +1540,46 @@ async function criarOuAbrirConversa(req, res) {
     const { sb, isSupa } = getProvider();
     const { telefone, lead_id, nome_contato, vendedor_id } = req.body;
     if (!telefone) return res.status(400).json({ sucesso: false, erro: 'Telefone obrigatório.' });
-    const tel = normalizePhone(telefone);
+
+    const waLeadSvc = require('../services/whatsappConversaLeadService');
+    const tel = waLeadSvc.normalizarTelefoneParaWhatsApp(telefone);
     if (!tel || tel.length < 10) return res.status(400).json({ sucesso: false, erro: 'Telefone inválido ou muito curto.' });
-    const agora = new Date().toISOString();
-    const nomeContato = nome_contato || null;
 
-    console.log('WHATSAPP_CONVERSA_RESOLVE_START', { tel, lead_id, nomeContato });
+    let responsavelId = vendedor_id || null;
+    let nomeContato = nome_contato || null;
 
-    if (isSupa) {
-      // ── Busca por todas as variantes de telefone para evitar duplicatas ──────
-      let conversa = null;
-      const variantes = phoneVariants(tel);
-      for (const v of variantes) {
-        const { data } = await sb.from(CONVERSAS_TABLE)
-          .select('*').eq('telefone', v).neq('status', 'FECHADA')
-          .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
-        if (data?.[0]) { conversa = data[0]; break; }
-      }
-
-      // Se ainda não existe, tenta por lead_id
-      if (!conversa && lead_id) {
-        const { data: byLead } = await sb.from(CONVERSAS_TABLE)
-          .select('*').eq('lead_id', lead_id).neq('status', 'FECHADA')
-          .order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(1);
-        if (byLead?.[0]) { conversa = byLead[0]; console.log('WHATSAPP_CONVERSA_FOUND_BY_LEAD', conversa.id); }
-      }
-
-      if (!conversa) {
-        // Cria nova conversa vinculada ao lead e telefone
-        const novaId = crypto.randomBytes(16).toString('hex');
-        const { data: nova, error } = await sb.from(CONVERSAS_TABLE).insert({
-          id: novaId, lead_id: lead_id || null, telefone: tel,
-          nome_contato: nomeContato,
-          vendedor_id: vendedor_id || req.usuario.id,
-          origem: 'MANUAL', status: 'ABERTA', criado_em: agora, atualizado_em: agora,
-        }).select().single();
-        if (error) throw error;
-        conversa = nova;
-        console.log('WHATSAPP_CONVERSA_CREATED', { id: conversa.id, tel, lead_id });
-      } else {
-        // Atualiza lead_id e/ou nome_contato se estiverem ausentes
-        const upd = {};
-        if (lead_id && !conversa.lead_id)         upd.lead_id      = lead_id;
-        if (nomeContato && !conversa.nome_contato) upd.nome_contato = nomeContato;
-        if (Object.keys(upd).length) {
-          await sb.from(CONVERSAS_TABLE).update({ ...upd, atualizado_em: agora }).eq('id', conversa.id);
-          Object.assign(conversa, upd);
+    if (lead_id) {
+      if (isSupa) {
+        const { data: ld } = await sb.from('leads').select('nome,responsavel_id').eq('id', lead_id).single();
+        if (ld) {
+          if (!responsavelId) responsavelId = ld.responsavel_id;
+          if (!nomeContato)   nomeContato   = ld.nome;
         }
-        console.log('WHATSAPP_CONVERSA_FOUND_BY_PHONE', { id: conversa.id, tel: conversa.telefone });
+      } else {
+        const ld = getDb().prepare('SELECT nome,responsavel_id FROM leads WHERE id = ?').get(lead_id);
+        if (ld) {
+          if (!responsavelId) responsavelId = ld.responsavel_id;
+          if (!nomeContato)   nomeContato   = ld.nome;
+        }
       }
+    }
+    if (!responsavelId) responsavelId = req.usuario.id;
 
-      req.log({ acao: 'WHATSAPP_OPEN', entidade: 'conversas_whatsapp', entidade_id: conversa.id, depois: { telefone: tel, lead_id } });
-      return res.json({ sucesso: true, dados: conversa });
-    }
+    console.log('WHATSAPP_CONVERSA_RESOLVE_START', { tel, lead_id, nomeContato, responsavelId });
 
-    // ── SQLite path ────────────────────────────────────────────────────────────
-    const db = getDb();
-    let conversa = null;
-    // Tenta variantes de telefone
-    const variantesSql = phoneVariants(tel);
-    for (const v of variantesSql) {
-      const row = db.prepare(`SELECT * FROM conversas_whatsapp WHERE telefone = ? AND status != 'FECHADA' ORDER BY COALESCE(ultima_msg_em, criado_em) DESC LIMIT 1`).get(v);
-      if (row) { conversa = row; break; }
-    }
-    // Tenta por lead_id
-    if (!conversa && lead_id) {
-      conversa = db.prepare(`SELECT * FROM conversas_whatsapp WHERE lead_id = ? AND status != 'FECHADA' ORDER BY COALESCE(ultima_msg_em, criado_em) DESC LIMIT 1`).get(lead_id);
-      if (conversa) console.log('WHATSAPP_CONVERSA_FOUND_BY_LEAD (SQLite):', conversa.id);
-    }
+    const conversa = await waLeadSvc.vincularOuCriarConversaParaLead({
+      leadId: lead_id,
+      telefone: tel,
+      nome: nomeContato,
+      vendedorId: responsavelId,
+      contexto: 'LEAD_OPEN'
+    });
+
     if (!conversa) {
-      const id = crypto.randomBytes(16).toString('hex');
-      db.prepare(`INSERT INTO conversas_whatsapp (id, lead_id, telefone, nome_contato, vendedor_id, origem, status, criado_em, atualizado_em) VALUES (?,?,?,?,?,?,?,?,?)`)
-        .run(id, lead_id || null, tel, nomeContato, vendedor_id || req.usuario.id, 'MANUAL', 'ABERTA', agora, agora);
-      conversa = db.prepare('SELECT * FROM conversas_whatsapp WHERE id = ?').get(id);
-      console.log('WHATSAPP_CONVERSA_CREATED (SQLite):', id);
-    } else {
-      if (lead_id && !conversa.lead_id)
-        db.prepare('UPDATE conversas_whatsapp SET lead_id = ?, atualizado_em = ? WHERE id = ?').run(lead_id, agora, conversa.id);
-      if (nomeContato && !conversa.nome_contato)
-        db.prepare('UPDATE conversas_whatsapp SET nome_contato = ?, atualizado_em = ? WHERE id = ?').run(nomeContato, agora, conversa.id);
-      console.log('WHATSAPP_CONVERSA_FOUND_BY_PHONE (SQLite):', conversa.id);
+      return res.status(500).json({ sucesso: false, erro: 'Erro ao abrir conversa.' });
     }
-    req.log({ acao: 'WHATSAPP_OPEN', entidade: 'conversas_whatsapp', entidade_id: conversa.id, depois: { telefone: tel, lead_id } });
+
+    req.log?.({ acao: 'WHATSAPP_OPEN', entidade: 'conversas_whatsapp', entidade_id: conversa.id, depois: { telefone: tel, lead_id } });
     return res.json({ sucesso: true, dados: conversa });
   } catch (e) {
     console.error('[WA] criarOuAbrirConversa:', e);
@@ -1771,14 +1762,24 @@ async function buscarConversa(req, res) {
     const { sb, isSupa } = getProvider();
     if (isSupa) {
       const { data, error } = await sb.from(CONVERSAS_TABLE)
-        .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa)')
+        .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa,responsavel_id)')
         .eq('id', req.params.id).single();
       if (error || !data) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
+
+      if (req.usuario.role === 'VENDEDOR' && data.leads?.responsavel_id === req.usuario.id && data.vendedor_id !== req.usuario.id) {
+        await sb.from(CONVERSAS_TABLE).update({ vendedor_id: req.usuario.id, atualizado_em: new Date().toISOString() }).eq('id', data.id);
+        data.vendedor_id = req.usuario.id;
+      }
+
       return res.json({ sucesso: true, dados: { ...data, vendedor_nome: data.usuarios?.nome, lead_nome: data.leads?.nome, lead_empresa: data.leads?.empresa } });
     }
     const db = getDb();
-    const conversa = db.prepare(`SELECT c.*, u.nome AS vendedor_nome, l.nome AS lead_nome, l.empresa AS lead_empresa FROM conversas_whatsapp c LEFT JOIN usuarios u ON c.vendedor_id = u.id LEFT JOIN leads l ON c.lead_id = l.id WHERE c.id = ?`).get(req.params.id);
+    const conversa = db.prepare(`SELECT c.*, u.nome AS vendedor_nome, l.nome AS lead_nome, l.empresa AS lead_empresa, l.responsavel_id AS lead_responsavel_id FROM conversas_whatsapp c LEFT JOIN usuarios u ON c.vendedor_id = u.id LEFT JOIN leads l ON c.lead_id = l.id WHERE c.id = ?`).get(req.params.id);
     if (!conversa) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
+    if (req.usuario.role === 'VENDEDOR' && conversa.lead_responsavel_id === req.usuario.id && conversa.vendedor_id !== req.usuario.id) {
+      db.prepare('UPDATE conversas_whatsapp SET vendedor_id = ?, atualizado_em = ? WHERE id = ?').run(req.usuario.id, new Date().toISOString(), conversa.id);
+      conversa.vendedor_id = req.usuario.id;
+    }
     return res.json({ sucesso: true, dados: conversa });
   } catch (e) {
     return res.status(500).json({ sucesso: false, erro: e.message });
@@ -1787,102 +1788,66 @@ async function buscarConversa(req, res) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/whatsapp/lead/:lead_id
-// Busca conversa de um lead específico
+// Busca conversa de um lead específico (ou cria com segurança se não existir)
 // ─────────────────────────────────────────────────────────────────────────────
 async function conversaPorLead(req, res) {
+  const leadId = req.params.lead_id;
   try {
+    console.log('LEAD_OPEN_CONVERSA_START', { leadId, usuarioId: req.usuario?.id });
+    if (!leadId) return res.status(400).json({ sucesso: false, erro: 'ID do lead obrigatório.' });
+
+    const waLeadSvc = require('../services/whatsappConversaLeadService');
     const { sb, isSupa } = getProvider();
-    const leadId = req.params.lead_id;
 
+    let lead = null;
     if (isSupa) {
-      // ── Fase 1: busca por lead_id ──────────────────────────────────────────
-      const { data: byLeadId } = await sb.from(CONVERSAS_TABLE)
-        .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa)')
-        .eq('lead_id', leadId)
-        .neq('status', 'FECHADA')
-        .order('criado_em', { ascending: false })
-        .limit(1);
-
-      if (byLeadId?.[0]) {
-        const c = byLeadId[0];
-        console.log(`[WA] conversaPorLead: encontrou por lead_id=${leadId} conv=${c.id}`);
-        return res.json({ sucesso: true, dados: { ...c, vendedor_nome: c.usuarios?.nome, lead_nome: c.leads?.nome, lead_empresa: c.leads?.empresa } });
+      const { data, error } = await sb.from('leads').select('id,nome,telefone,responsavel_id,empresa').eq('id', leadId).single();
+      if (error || !data) {
+        console.warn('LEAD_OPEN_CONVERSA_ERROR', { leadId, motivo: 'lead_nao_encontrado' });
+        return res.status(404).json({ sucesso: false, erro: 'Lead não encontrado.' });
       }
-
-      // ── Fase 2: busca pelo telefone NORMALIZADO do lead ────────────────────
-      // Cenário: conversa chegou via webhook sem lead_id vinculado ainda
-      const { data: lead } = await sb.from('leads').select('telefone').eq('id', leadId).single();
-      if (!lead?.telefone) {
-        console.log(`[WA] conversaPorLead: lead ${leadId} sem telefone`);
-        return res.json({ sucesso: true, dados: null });
+      lead = data;
+    } else {
+      const db = getDb();
+      lead = db.prepare('SELECT id,nome,telefone,responsavel_id,empresa FROM leads WHERE id = ?').get(leadId);
+      if (!lead) {
+        console.warn('LEAD_OPEN_CONVERSA_ERROR', { leadId, motivo: 'lead_nao_encontrado' });
+        return res.status(404).json({ sucesso: false, erro: 'Lead não encontrado.' });
       }
-
-      // USA normalizePhone com prefixo 55 — igual ao formato salvo pelo webhook
-      const telNorm = normalizePhone(lead.telefone);
-      console.log(`[WA] conversaPorLead: buscando por telefone normalizado ${telNorm}`);
-
-      const { data: byTel } = await sb.from(CONVERSAS_TABLE)
-        .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa)')
-        .eq('telefone', telNorm)
-        .order('criado_em', { ascending: false })
-        .limit(1);
-
-      if (byTel?.[0]) {
-        const c = byTel[0];
-        console.log(`[WA] conversaPorLead: encontrou por telefone=${telNorm} conv=${c.id}`);
-        // Vincula lead_id automaticamente se ainda não vinculado
-        if (!c.lead_id) {
-          await sb.from(CONVERSAS_TABLE)
-            .update({ lead_id: leadId, atualizado_em: new Date().toISOString() })
-            .eq('id', c.id);
-        }
-        return res.json({ sucesso: true, dados: { ...c, lead_id: c.lead_id || leadId, vendedor_nome: c.usuarios?.nome, lead_nome: c.leads?.nome, lead_empresa: c.leads?.empresa } });
-      }
-
-      console.log(`[WA] conversaPorLead: nenhuma conversa para lead=${leadId} tel=${telNorm}`);
-      return res.json({ sucesso: true, dados: null });
     }
 
-    // SQLite fallback
-    const db = getDb();
+    console.log('LEAD_OPEN_CONVERSA_LEAD_FOUND', { leadId: lead.id, nome: lead.nome, responsavel_id: lead.responsavel_id });
 
-    // Fase 1: por lead_id
-    const conversa = db.prepare(
-      `SELECT c.*, u.nome AS vendedor_nome, l.nome AS lead_nome, l.empresa AS lead_empresa
-       FROM conversas_whatsapp c
-       LEFT JOIN usuarios u ON c.vendedor_id = u.id
-       LEFT JOIN leads l ON c.lead_id = l.id
-       WHERE c.lead_id = ? AND c.status != 'FECHADA'
-       ORDER BY c.criado_em DESC LIMIT 1`
-    ).get(leadId);
-
-    if (conversa) return res.json({ sucesso: true, dados: conversa });
-
-    // Fase 2 SQLite: busca por telefone normalizado (com 55)
-    const lead = db.prepare('SELECT telefone FROM leads WHERE id = ?').get(leadId);
-    if (!lead?.telefone) return res.json({ sucesso: true, dados: null });
-
-    const telNorm = normalizePhone(lead.telefone);
-    const convByTel = db.prepare(
-      `SELECT c.*, u.nome AS vendedor_nome, l.nome AS lead_nome, l.empresa AS lead_empresa
-       FROM conversas_whatsapp c
-       LEFT JOIN usuarios u ON c.vendedor_id = u.id
-       LEFT JOIN leads l ON c.lead_id = l.id
-       WHERE c.telefone = ? AND c.status != 'FECHADA'
-       ORDER BY c.criado_em DESC LIMIT 1`
-    ).get(telNorm);
-
-    if (convByTel) {
-      if (!convByTel.lead_id) {
-        db.prepare('UPDATE conversas_whatsapp SET lead_id = ?, atualizado_em = ? WHERE id = ?').run(leadId, new Date().toISOString(), convByTel.id);
-      }
-      return res.json({ sucesso: true, dados: { ...convByTel, lead_id: convByTel.lead_id || leadId } });
+    if (!lead.telefone) {
+      console.warn('LEAD_OPEN_CONVERSA_ERROR', { leadId, motivo: 'lead_sem_telefone' });
+      return res.status(400).json({ sucesso: false, erro: 'Este lead não possui telefone WhatsApp cadastrado.' });
     }
 
-    return res.json({ sucesso: true, dados: null });
+    const conversa = await waLeadSvc.vincularOuCriarConversaParaLead({
+      leadId: lead.id,
+      telefone: lead.telefone,
+      nome: lead.nome,
+      vendedorId: lead.responsavel_id || req.usuario?.id,
+      contexto: 'LEAD_OPEN'
+    });
+
+    if (!conversa) {
+      console.error('LEAD_OPEN_CONVERSA_ERROR', { leadId, motivo: 'falha_criar_ou_vincular_conversa' });
+      return res.status(500).json({ sucesso: false, erro: 'Erro ao abrir ou vincular conversa do lead.' });
+    }
+
+    console.log('LEAD_OPEN_CONVERSA_SUCCESS', { leadId, conversaId: conversa.id });
+    return res.json({
+      sucesso: true,
+      dados: {
+        ...conversa,
+        lead_nome: lead.nome,
+        lead_empresa: lead.empresa
+      }
+    });
   } catch (e) {
-    console.error('[WA] conversaPorLead:', e.message);
-    return res.status(500).json({ sucesso: false, erro: e.message });
+    console.error('LEAD_OPEN_CONVERSA_ERROR', { leadId, erro: e.message });
+    return res.status(500).json({ sucesso: false, erro: 'Erro ao buscar conversa do lead.', detalhe: e.message });
   }
 }
 

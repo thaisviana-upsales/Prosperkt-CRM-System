@@ -526,4 +526,8 @@ router.post('/conta-azul/registrar-manual/:leadId', autenticar, contaAzulCtrl.re
 //   Zera dados operacionais de teste. Exige SUPER_ADMIN + confirmacao explícita.
 router.post('/admin/reset-dados-teste', autenticar, adminCtrl.resetDadosTeste);
 
+// POST /api/admin/reconciliar-conversas-leads-importados
+//   Reconcilia leads já importados com suas conversas WhatsApp (idempotente).
+router.post('/admin/reconciliar-conversas-leads-importados', autenticar, exigirSuperAdmin, adminCtrl.reconciliarConversasLeadsImportados);
+
 module.exports = router;

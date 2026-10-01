@@ -50,7 +50,9 @@ const UFS_VALIDAS = [
 // ── Helper: normaliza telefone ────────────────────────────────────────────────────
 function normalizarTelefone(tel) {
   if (!tel) return '';
-  return String(tel).replace(/\D/g, '');
+  let t = String(tel).trim().replace(/\D/g, '');
+  if (t.length === 10 || t.length === 11) t = '55' + t;
+  return t;
 }
 
 // ── Helper: remove acentos e normaliza para comparação fuzzy ───────────────────────
@@ -724,6 +726,26 @@ async function importar(req, res) {
           },
           origem: 'importacao_excel',
         }).catch(e => console.warn('[TIMELINE_IMPORT]', e.message));
+
+        // ── Vincula ou cria conversa WhatsApp com vendedor responsável ──────────
+        if (d.telefone_whatsapp && d.vendedor_id) {
+          try {
+            const waLeadSvc = require('../services/whatsappConversaLeadService');
+            console.log('IMPORT_LEAD_RESPONSAVEL_ASSIGNED', { leadId, vendedorId: d.vendedor_id });
+            const convResult = await waLeadSvc.vincularOuCriarConversaParaLead({
+              leadId,
+              telefone: d.telefone_whatsapp,
+              nome: d.nome_lead,
+              vendedorId: d.vendedor_id,
+              contexto: 'IMPORT'
+            });
+            if (convResult) {
+              console.log('IMPORT_LEAD_WHATSAPP_CONVERSA_SYNC_SUCCESS', { leadId, conversaId: convResult.id });
+            }
+          } catch (eConv) {
+            console.error('IMPORT_LEAD_WHATSAPP_LINK_ERROR', { leadId, erro: eConv.message });
+          }
+        }
 
         // Atualiza linha como importado
         await sb.from('importacao_lead_linhas').update({ status: 'importado', lead_id: leadId }).eq('id', linha.id);

@@ -308,4 +308,18 @@ async function resetDadosTeste(req, res) {
   }
 }
 
-module.exports = { resetDadosTeste };
+// ── POST /api/admin/reconciliar-conversas-leads-importados ─────────────────────
+// Reconcilia leads com conversas ativas (idempotente)
+async function reconciliarConversasLeadsImportados(req, res) {
+  try {
+    const { vendedor_id } = req.body || {};
+    const svc = require('../services/whatsappConversaLeadService');
+    const resultado = await svc.reconciliarConversasLeadsImportados({ vendedorId: vendedor_id });
+    return res.json({ sucesso: true, dados: resultado });
+  } catch (e) {
+    console.error('[ADMIN] reconciliarConversasLeadsImportados:', e);
+    return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}
+
+module.exports = { resetDadosTeste, reconciliarConversasLeadsImportados };

@@ -395,6 +395,19 @@ async function importarUmLead(row, linha, opts = {}) {
     return { ok: false, status: 'erro', motivo: error.message };
   }
 
+  if (data?.telefone && data?.responsavel_id) {
+    try {
+      const waLeadSvc = require('./whatsappConversaLeadService');
+      await waLeadSvc.vincularOuCriarConversaParaLead({
+        leadId: leadId,
+        telefone: data.telefone,
+        nome: data.nome,
+        vendedorId: data.responsavel_id,
+        contexto: 'IMPORT'
+      });
+    } catch (_) {}
+  }
+
   await registrarImportacao({ linha, telefone: tel, email, nome, lead_id: leadId, status: 'criado', hash, fonte });
   return { ok: true, status: 'criado', lead_id: leadId, lead: data };
 }
