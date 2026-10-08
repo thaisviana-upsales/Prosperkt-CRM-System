@@ -72,6 +72,9 @@ function handleUploadError(err, req, res, next) {
   next(err);
 }
 
+const LIMITE_VIDEO_BYTES = 16 * 1024 * 1024; // 16 MB — limite oficial do WhatsApp para vídeo
+const LIMITE_VIDEO_MB    = 16;
+
 function resolveMediatype(mime) {
   if (!mime) return 'document';
   if (mime.startsWith('image/'))  return 'image';
@@ -103,11 +106,66 @@ async function enviarArquivo(req, res, next) {
       return res.status(400).json({ sucesso: false, erro: 'Nenhum arquivo enviado.' });
     }
 
+    const extNome = (arqNome.split('.').pop() || '').toLowerCase();
+    const isVideo = arqMime.startsWith('video/') || ['mp4', 'mov', 'webm', 'avi', 'mkv'].includes(extNome);
+
     // 2. Validações
-    if (!extPermitida(arqNome))
-      return res.status(400).json({ sucesso: false, erro: 'Tipo de arquivo não permitido.' });
-    if (arqBuffer.length > LIMITE_WA_BYTES)
-      return res.status(413).json({ sucesso: false, erro: `Arquivo excede ${LIMITE_WA_MB} MB.` });
+    if (isVideo) {
+      console.log('WA_VIDEO_SEND_START', {
+        conversa_id: conversaId,
+        nome_arquivo: sanitizarNome(arqNome),
+        tamanho: arqBuffer.length,
+        mimetype: arqMime,
+        mediatype: 'video',
+      });
+      console.log('WA_VIDEO_SEND_FILE_RECEIVED', {
+        conversa_id: conversaId,
+        nome_arquivo: sanitizarNome(arqNome),
+        tamanho: arqBuffer.length,
+        mimetype: arqMime,
+      });
+
+      // Validação de formato (WhatsApp exige contêiner MP4 para videoMessage)
+      if (extNome !== 'mp4' && arqMime !== 'video/mp4') {
+        console.warn('WA_VIDEO_SEND_VALIDATION_ERROR', {
+          conversa_id: conversaId,
+          nome_arquivo: sanitizarNome(arqNome),
+          ext: extNome,
+          mimetype: arqMime,
+          erro: 'Formato de vídeo não suportado. Envie em MP4.',
+        });
+        return res.status(400).json({ sucesso: false, erro: 'Formato de vídeo não suportado. Envie em MP4.' });
+      }
+
+      // Validação de tamanho (16 MB)
+      if (arqBuffer.length > LIMITE_VIDEO_BYTES) {
+        console.warn('WA_VIDEO_SEND_VALIDATION_ERROR', {
+          conversa_id: conversaId,
+          nome_arquivo: sanitizarNome(arqNome),
+          tamanho: arqBuffer.length,
+          limite: LIMITE_VIDEO_BYTES,
+          erro: 'Vídeo muito grande para envio pelo WhatsApp. Reduza o tamanho e tente novamente.',
+        });
+        return res.status(413).json({
+          sucesso: false,
+          erro: 'Vídeo muito grande para envio pelo WhatsApp. Reduza o tamanho e tente novamente.',
+        });
+      }
+
+      console.log('WA_VIDEO_SEND_VALIDATION_OK', {
+        conversa_id: conversaId,
+        nome_arquivo: sanitizarNome(arqNome),
+        tamanho: arqBuffer.length,
+        mimetype: 'video/mp4',
+        mediatype: 'video',
+      });
+    } else {
+      if (!extPermitida(arqNome))
+        return res.status(400).json({ sucesso: false, erro: 'Tipo de arquivo não permitido.' });
+      if (arqBuffer.length > LIMITE_WA_BYTES)
+        return res.status(413).json({ sucesso: false, erro: `Arquivo excede ${LIMITE_WA_MB} MB.` });
+    }
+
     if (!evoSvc.isConfigured())
       return res.status(503).json({ sucesso: false, erro: 'Evolution API não configurada.' });
 
@@ -127,30 +185,18 @@ async function enviarArquivo(req, res, next) {
       return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
 
     // ── Resolve JID real para envio via Evolution API ────────────────────────
-    // CAUSA RAIZ: conversas_whatsapp.telefone para contatos LID é armazenado
-    // como 'LID:148382630805756' (prefixo LID:, SEM sufixo @lid).
-    // Evolution API v2 exige '148382630805756@lid' — sem isso retorna 400.
-    //
-    // Ordem de resolução:
-    //  1. conversa.telefone começa com 'LID:' → constrói JID com @lid
-    //  2. conversa.telefone já contém '@lid'  → usa diretamente
-    //  3. whatsapp_conversa_aliases.remote_jid → fonte do alias de texto enviado
-    //  4. Dígitos brutos (números reais WhatsApp)
     let telNorm = null;
     {
       const tel = (conversa.telefone || '').trim();
 
       if (tel.startsWith('LID:')) {
-        // 1. CASO PRINCIPAL: 'LID:148382630805756' → '148382630805756@lid'
         const lidNumero = tel.slice(4).replace(/\D/g, '');
         if (lidNumero) telNorm = `${lidNumero}@lid`;
 
       } else if (tel.includes('@lid')) {
-        // 2. Já tem sufixo @lid (caso raro)
         telNorm = tel;
 
       } else {
-        // 3. Alias table (contato que já recebeu texto pelo CRM)
         const { data: alias } = await sb
           .from('whatsapp_conversa_aliases')
           .select('remote_jid')
@@ -164,7 +210,6 @@ async function enviarArquivo(req, res, next) {
             ? rjid
             : rjid.replace(/@s\.whatsapp\.net$/i, '').replace(/\D/g, '');
         } else {
-          // 4. Fallback: dígitos de conversa.telefone (número WhatsApp regular)
           telNorm = tel.replace(/\D/g, '') || null;
         }
       }
@@ -174,18 +219,36 @@ async function enviarArquivo(req, res, next) {
       return res.status(400).json({ sucesso: false, erro: 'Conversa sem telefone válido.' });
 
     const agora      = new Date().toISOString();
-
     const nomeSeguro = sanitizarNome(arqNome);
     const msgId      = crypto.randomBytes(16).toString('hex');
-    const mediatype  = resolveMediatype(arqMime);
+    const mediatype  = isVideo ? 'video' : resolveMediatype(arqMime);
 
     // 4. Monta media para Evolution
-    //    REGRA: audio → base64 (funciona)
-    //           image/video/document → URL pública (base64 retorna 400 nesses tipos)
+    //    REGRA: video → Base64 puro (sem prefixo data URI — Evolution API v2.3.7 aceita perfeitamente)
+    //           audio → data URI base64
+    //           image/document → URL temporária pública /api/whatsapp/temp/:token
     let media;
     let tempToken = null;
 
-    if (mediatype === 'audio') {
+    if (isVideo) {
+      media = arqBuffer.toString('base64');
+      console.log('WA_VIDEO_SEND_STORAGE_OK', {
+        conversa_id: conversaId,
+        lead_id: conversa?.lead_id || null,
+        metodo: 'pure_base64_memory',
+        tamanho: arqBuffer.length,
+      });
+      console.log('WA_VIDEO_SEND_PAYLOAD_READY', {
+        conversa_id: conversaId,
+        lead_id: conversa?.lead_id || null,
+        nome_arquivo: nomeSeguro,
+        tamanho: arqBuffer.length,
+        mimetype: 'video/mp4',
+        mediatype: 'video',
+        usa_base64: true,
+        usa_url: false,
+      });
+    } else if (mediatype === 'audio') {
       media = `data:${arqMime};base64,${arqBuffer.toString('base64')}`;
       console.log('[wha.enviarArquivo] audio→base64', nomeSeguro, fmtTamanho(arqBuffer.length));
     } else {
@@ -197,7 +260,7 @@ async function enviarArquivo(req, res, next) {
         expires: Date.now() + 5 * 60 * 1000, // 5 min TTL
       });
       media = `${getBaseUrl()}/api/whatsapp/temp/${tempToken}`;
-      console.log('[wha.enviarArquivo] doc/img/vid→URL', nomeSeguro, mediatype, fmtTamanho(arqBuffer.length));
+      console.log('[wha.enviarArquivo] doc/img→URL', nomeSeguro, mediatype, fmtTamanho(arqBuffer.length));
     }
 
     // 5. Envia à Evolution
@@ -205,74 +268,149 @@ async function enviarArquivo(req, res, next) {
     let evoErro  = null;
     let evoMsgId = null;
 
+    if (isVideo) {
+      console.log('WA_VIDEO_SEND_EVOLUTION_REQUEST', {
+        conversa_id: conversaId,
+        lead_id: conversa?.lead_id || null,
+        destinatario: telNorm,
+        mediatype: 'video',
+        mimetype: 'video/mp4',
+        usa_base64: true,
+      });
+    }
+
     try {
       const evoRes = await evoSvc.enviarMidia(telNorm, {
         mediatype,
-        mimetype: arqMime,
-        caption:  req.body?.caption || nomeSeguro,
+        mimetype: isVideo ? 'video/mp4' : arqMime,
+        caption:  req.body?.caption || (isVideo ? '' : nomeSeguro),
         media,
-        fileName: nomeSeguro,
+        fileName: isVideo ? (nomeSeguro.toLowerCase().endsWith('.mp4') ? nomeSeguro : `${nomeSeguro}.mp4`) : nomeSeguro,
       });
 
-      if (evoRes.sucesso || evoRes.dados?.key?.id) {
-        evoOk    = true;
-        evoMsgId = evoRes.dados?.key?.id || null;
-        console.log('[wha.enviarArquivo] Evolution OK', { evoMsgId, nomeSeguro });
+      const candId = evoRes.dados?.key?.id || evoRes.dados?.messageId || evoRes.dados?.id || null;
+
+      if (isVideo) {
+        // REGRA DE SUCESSO REAL PARA VÍDEO:
+        // O vídeo só é aceito se a Evolution retornou sucesso HTTP E um messageId real!
+        if (evoRes.sucesso && candId) {
+          evoOk    = true;
+          evoMsgId = candId;
+          console.log('WA_VIDEO_SEND_EVOLUTION_SUCCESS', {
+            conversa_id: conversaId,
+            lead_id: conversa?.lead_id || null,
+            status: evoRes.status,
+            messageId: evoMsgId,
+          });
+        } else {
+          evoErro = evoRes.erro || JSON.stringify(evoRes.dados) || 'Evolution não confirmou o envio do vídeo.';
+          console.error('WA_VIDEO_SEND_EVOLUTION_ERROR', {
+            conversa_id: conversaId,
+            lead_id: conversa?.lead_id || null,
+            erro: evoErro,
+            status: evoRes.status,
+          });
+          console.error('WA_VIDEO_SEND_REAL_ERROR', {
+            conversa_id: conversaId,
+            lead_id: conversa?.lead_id || null,
+            motivo: 'sem_messageId_ou_rejeitado',
+            erro: evoErro,
+            status: evoRes.status,
+          });
+        }
       } else {
-        evoErro = evoRes.erro || JSON.stringify(evoRes.dados) || 'Evolution rejeitou.';
-        console.error('[wha.enviarArquivo] Evolution rejeitou:', evoErro, 'status:', evoRes.status);
+        // REGRA B02: Qualquer mídia (documento ou imagem) exige confirmação real com candId/messageId
+        if (evoRes.sucesso && candId) {
+          evoOk    = true;
+          evoMsgId = candId;
+          console.log('[wha.enviarArquivo] Evolution OK', { evoMsgId, nomeSeguro });
+        } else {
+          evoOk    = false;
+          evoErro  = evoRes.erro || JSON.stringify(evoRes.dados) || 'Evolution não confirmou o envio (sem messageId).';
+          console.error('[wha.enviarArquivo] Evolution rejeitou:', evoErro, 'status:', evoRes.status);
+        }
       }
     } catch (e) {
       evoErro = e.message;
-      console.error('[wha.enviarArquivo] Evolution exception:', e.message);
+      if (isVideo) {
+        console.error('WA_VIDEO_SEND_EVOLUTION_ERROR', { conversa_id: conversaId, erro: e.message });
+        console.error('WA_VIDEO_SEND_REAL_ERROR', { conversa_id: conversaId, erro: e.message });
+      } else {
+        console.error('[wha.enviarArquivo] Evolution exception:', e.message);
+      }
     } finally {
       // Limpa temp file 60s após envio (Evolution já baixou)
       if (tempToken) setTimeout(() => tempFiles.delete(tempToken), 60 * 1000);
     }
 
-    if (!evoOk)
-      return res.status(502).json({ sucesso: false, erro: evoErro || 'Falha ao enviar pelo WhatsApp.' });
+    if (!evoOk) {
+      return res.status(502).json({
+        sucesso: false,
+        enviado: false,
+        erro: isVideo ? (evoErro || 'Não foi possível enviar o vídeo.') : (evoErro || 'Falha ao enviar arquivo pelo WhatsApp.'),
+        evo_ok: false,
+      });
+    }
 
     // 6. Salva histórico
     let mensagemSalva = null;
     if (isSupa) {
       try {
-        const tipoDb = mediatype === 'image' ? 'imagem' : mediatype === 'video' ? 'video' : 'arquivo';
+        const tipoDb = isVideo ? 'video' : (mediatype === 'image' ? 'imagem' : 'arquivo');
         const { data: msgData } = await sb.from('mensagens_whatsapp').insert({
           id: msgId, conversa_id: conversaId,
-          lead_id:     conversa.lead_id || null,
-          telefone:    conversa.telefone,
-          mensagem:    req.body?.caption || nomeSeguro,
-          tipo:        tipoDb,
-          direcao:     'enviada',
-          status:      'enviado',
-          vendedor_id: req.usuario?.id || null,
-          arquivo_url: null,
-          arquivo_nome: nomeSeguro,
-          mime_type:   arqMime,
-          criado_em:   agora,
+          lead_id:              conversa.lead_id || null,
+          telefone:             conversa.telefone,
+          mensagem:             req.body?.caption || (isVideo ? '🎥 Vídeo' : nomeSeguro),
+          tipo:                 tipoDb,
+          direcao:              'enviada',
+          status:               'enviado',
+          vendedor_id:          req.usuario?.id || null,
+          arquivo_url:          null,
+          arquivo_nome:         nomeSeguro,
+          mime_type:            isVideo ? 'video/mp4' : arqMime,
+          evolution_message_id: evoMsgId,
+          criado_em:            agora,
         }).select().single();
         if (msgData) mensagemSalva = { ...msgData, vendedor_nome: req.usuario?.nome || null };
       } catch (e) {
         console.warn('[wha.enviarArquivo] histórico warn:', e.message);
       }
 
+      const ultimaMsgTexto = isVideo ? '🎥 Vídeo' : `📎 ${nomeSeguro}`;
       const { error: convUpdErr } = await sb.from('conversas_whatsapp').update({
         ultima_msg_em: agora, atualizado_em: agora,
-        ultima_mensagem: `📎 ${nomeSeguro}`, status: 'ABERTA',
+        ultima_mensagem: ultimaMsgTexto, status: 'ABERTA',
       }).eq('id', conversaId);
-      // ignora erro de update da conversa (não crítico)
       void convUpdErr;
+    }
+
+    if (isVideo) {
+      console.log('WA_VIDEO_SEND_DB_SAVE_SUCCESS', {
+        conversa_id: conversaId,
+        lead_id: conversa?.lead_id || null,
+        msgId,
+        evolution_message_id: evoMsgId,
+      });
+      console.log('WA_VIDEO_SEND_UI_SUCCESS', {
+        conversa_id: conversaId,
+        lead_id: conversa?.lead_id || null,
+        msgId,
+        evolution_message_id: evoMsgId,
+      });
     }
 
     return res.status(201).json({
       sucesso: true,
+      enviado: true,
       dados: mensagemSalva || {
         id: msgId, conversa_id: conversaId,
-        tipo: mediatype === 'image' ? 'imagem' : mediatype === 'video' ? 'video' : 'arquivo',
+        tipo: isVideo ? 'video' : (mediatype === 'image' ? 'imagem' : 'arquivo'),
         arquivo_url: null, arquivo_nome: nomeSeguro,
-        mime_type: arqMime, mensagem: nomeSeguro,
+        mime_type: isVideo ? 'video/mp4' : arqMime,
+        mensagem: req.body?.caption || (isVideo ? '🎥 Vídeo' : nomeSeguro),
         direcao: 'enviada', status: 'enviado', criado_em: agora,
+        evolution_message_id: evoMsgId,
       },
       evo_ok: true, evo_msg: evoMsgId, aviso: null,
     });

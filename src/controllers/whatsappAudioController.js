@@ -218,17 +218,20 @@ async function enviarAudio(req, res) {
     console.log('WA_AUDIO_BASE64_READY', { mime: audioMime, bytes: audioBuffer.length, converted: audioConverted, hasDataPrefix: true });
 
     // ── 5. Envia como mensagem de áudio via sendMedia ───────────────────────────
-    let evoOk  = false;
-    let evoErr = null;
+    let evoOk    = false;
+    let evoErr   = null;
+    let evoMsgId = null;
 
     if (evoSvc.isConfigured()) {
       const evoResult = await evoSvc.enviarAudio(telNormalizado, base64Audio, audioMime);
-      evoOk  = !!(evoResult.sucesso || evoResult.dados?.key?.id);
-      evoErr = evoOk ? null : (evoResult.erro || 'Evolution rejeitou the áudio');
+      const candId    = evoResult.dados?.key?.id || evoResult.dados?.messageId || evoResult.dados?.id || null;
+      evoOk           = !!(evoResult.sucesso && candId);
+      evoMsgId        = candId;
+      evoErr          = evoOk ? null : (evoResult.erro || 'Evolution não confirmou o envio do áudio (sem messageId).');
 
       if (evoOk) {
         console.log('WA_AUDIO_EVOLUTION_SEND_SUCCESS', {
-          msgId:     evoResult.dados?.key?.id,
+          msgId:     evoMsgId,
           mime:      audioMime,
           converted: audioConverted,
         });
@@ -241,10 +244,9 @@ async function enviarAudio(req, res) {
         });
       }
     } else {
+      evoErr = 'Evolution API não configurada.';
       console.warn('WA_AUDIO_EVOLUTION_NOT_CONFIGURED');
     }
-
-
 
     // ── 6. Gera signed URL longa para banco (1 ano) ───────────────────────────────────────────────────────────────────────────────
     const longSignedUrl = await gerarSignedUrl(sb, storagePath, 3600 * 24 * 365);
@@ -253,18 +255,19 @@ async function enviarAudio(req, res) {
     const agora       = new Date().toISOString();
     const arquivoNome = `audio_${ts}.${ext}`;
     const coreInsert  = {
-      id:           msgId,
-      conversa_id:  conversaId,
-      lead_id:      conversa.lead_id || null,
-      telefone:     telNormalizado,
-      mensagem:     null,
-      tipo:         'audio',
-      direcao:      'enviada',
-      status:       evoOk ? 'enviado' : 'erro',
-      vendedor_id:  req.usuario.id,
-      arquivo_url:    longSignedUrl || storagePath,
-      arquivo_nome: arquivoNome,
-      criado_em:    agora,
+      id:                   msgId,
+      conversa_id:          conversaId,
+      lead_id:              conversa.lead_id || null,
+      telefone:             telNormalizado,
+      mensagem:             null,
+      tipo:                 'audio',
+      direcao:              'enviada',
+      status:               evoOk ? 'enviado' : 'erro',
+      vendedor_id:          req.usuario.id,
+      arquivo_url:          longSignedUrl || storagePath,
+      arquivo_nome:         arquivoNome,
+      evolution_message_id: evoMsgId,
+      criado_em:            agora,
       ...(duracaoSeg ? { media_duration: duracaoSeg } : {}),
     };
 
@@ -277,9 +280,10 @@ async function enviarAudio(req, res) {
 
       // ── 7b. UPDATE colunas opcionais (patch v44+) — best-effort, falha silenciosa ─
       const optCols = {
-        mime_type:      arquivo.mimetype,
-        storage_bucket: BUCKET,
-        storage_path:   storagePath,
+        mime_type:            arquivo.mimetype,
+        storage_bucket:       BUCKET,
+        storage_path:         storagePath,
+        evolution_message_id: evoMsgId,
       };
       const { error: optErr } = await sb.from(MENSAGENS_TABLE).update(optCols).eq('id', msgId);
       if (optErr) {
@@ -303,28 +307,49 @@ async function enviarAudio(req, res) {
 
     console.log('WA_AUDIO_SEND_DONE', { msgId, conversaId, evoOk });
 
-    // ── 9. Retorna mensagem para o frontend renderizar ───────────────────────────────────────────────────────────────────────────────
+    // ── 9. Retorna resposta com diferenciação real de sucesso ou erro ────────
+    if (!evoOk) {
+      return res.status(502).json({
+        sucesso:  false,
+        enviado:  false,
+        erro:     evoErr || 'Não foi possível enviar o áudio.',
+        _evo_ok:  false,
+        _evo_err: evoErr,
+        dados: {
+          id:           msgId,
+          conversa_id:  conversaId,
+          status:       'erro',
+          arquivo_url:  longSignedUrl || storagePath,
+          arquivo_nome: arquivoNome,
+          criado_em:    agora,
+        },
+      });
+    }
+
     return res.status(201).json({
-      sucesso: true,
+      sucesso:  true,
+      enviado:  true,
       dados: {
-        id:              msgId,
-        conversa_id:     conversaId,
-        lead_id:         conversa.lead_id || null,
-        mensagem:        null,
-        tipo:            'audio',
-        direcao:         'enviada',
-        status:          evoOk ? 'enviado' : 'erro',
-        vendedor_id:     req.usuario.id,
-        arquivo_url:     longSignedUrl || storagePath,
-        arquivo_nome:    arquivoNome,
-        mime_type:       arquivo.mimetype,
-        storage_path:    storagePath,
-        storage_bucket:  BUCKET,
-        media_duration:  duracaoSeg || null,
-        criado_em:       agora,
+        id:                   msgId,
+        conversa_id:          conversaId,
+        lead_id:              conversa.lead_id || null,
+        mensagem:             null,
+        tipo:                 'audio',
+        direcao:              'enviada',
+        status:               'enviado',
+        vendedor_id:          req.usuario.id,
+        arquivo_url:          longSignedUrl || storagePath,
+        arquivo_nome:         arquivoNome,
+        mime_type:            arquivo.mimetype,
+        storage_path:         storagePath,
+        storage_bucket:       BUCKET,
+        media_duration:       duracaoSeg || null,
+        evolution_message_id: evoMsgId,
+        criado_em:            agora,
       },
-      _evo_ok: evoOk,
-      _evo_err: evoErr,
+      _evo_ok:  true,
+      _evo_err: null,
+      evo_msg:  evoMsgId,
     });
 
   } catch (e) {

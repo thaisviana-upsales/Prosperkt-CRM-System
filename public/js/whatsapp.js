@@ -820,12 +820,20 @@ function renderMensagem(msg) {
     } else {
       // Enviada sem nenhuma referência — mostra como card de arquivo
       const nome = msg.arquivo_nome || 'Imagem';
-      conteudo = `<div class="wa-file-card">
+      let subtexto = 'Imagem enviada';
+      if (msg.status === 'pending') {
+        subtexto = `<span style="display:inline-flex;align-items:center;gap:4px;color:var(--text-muted)"><span class="wa-pulse-dot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#FFB800"></span>Enviando imagem...</span>`;
+      } else if (msg.status === 'failed' || msg.status === 'erro') {
+        subtexto = `<span style="color:#ef4444;font-weight:500">Falha no envio da imagem</span>`;
+      }
+      conteudo = `<div class="wa-file-card${msg.status === 'failed' || msg.status === 'erro' ? ' wa-card-error' : ''}">
         <div style="display:flex;align-items:center;gap:10px">
-          <div class="wa-file-icon"><span style="font-size:1.2rem;line-height:1">🖼️</span></div>
+          <div class="wa-file-icon" style="background:${msg.status === 'failed' || msg.status === 'erro' ? 'rgba(239,68,68,.12)' : 'rgba(255,184,0,.12)'};border-color:${msg.status === 'failed' || msg.status === 'erro' ? 'rgba(239,68,68,.2)' : 'rgba(255,184,0,.2)'}">
+            <span style="font-size:1.2rem;line-height:1">🖼️</span>
+          </div>
           <div style="flex:1;min-width:0">
             <p style="font-size:.78rem;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0" title="${escHtml(nome)}">${escHtml(nome)}</p>
-            <p style="font-size:.67rem;color:var(--text-muted);margin:2px 0 0">Imagem enviada</p>
+            <p style="font-size:.67rem;color:var(--text-muted);margin:2px 0 0">${subtexto}</p>
           </div>
         </div>
       </div>`;
@@ -840,8 +848,14 @@ function renderMensagem(msg) {
       ? `/api/whatsapp/audio/play/${msg.id}`
       : '';
     const dur = msg.media_duration ? ` · ${Math.floor(msg.media_duration/60)}:${String(msg.media_duration%60).padStart(2,'0')}` : '';
+    let audioSubtexto = '';
+    if (msg.status === 'pending') {
+      audioSubtexto = `<div style="font-size:.72rem;color:var(--text-muted);margin-top:4px;display:flex;align-items:center;gap:4px"><span class="wa-pulse-dot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#FFB800"></span>Enviando áudio...</div>`;
+    } else if (msg.status === 'failed' || msg.status === 'erro') {
+      audioSubtexto = `<div style="font-size:.72rem;color:#ef4444;margin-top:4px;font-weight:500">Falha no envio do áudio</div>`;
+    }
     conteudo = audioSrc
-      ? `<div class="wa-audio-player" data-src="${escHtml(audioSrc)}" data-id="${msg.id}">
+      ? `<div class="wa-audio-player${msg.status === 'failed' || msg.status === 'erro' ? ' wa-card-error' : ''}" data-src="${escHtml(audioSrc)}" data-id="${msg.id}">
            <button class="wa-audio-play-btn" title="Play/Pause">
              <svg class="ico-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
              <svg class="ico-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="display:none"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
@@ -851,10 +865,12 @@ function renderMensagem(msg) {
            </div>
            <span class="wa-audio-time">0:00${dur}</span>
            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.5;flex-shrink:0"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
-         </div>`
-      : `<div class="wa-audio-player" style="opacity:.6">
-           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/></svg>
-           <span style="font-size:.75rem;color:var(--text-muted)">Áudio não disponível</span>
+         </div>${audioSubtexto}`
+      : `<div class="wa-audio-player${msg.status === 'failed' || msg.status === 'erro' ? ' wa-card-error' : ''}" style="${msg.status === 'failed' || msg.status === 'erro' ? 'border:1px solid rgba(239,68,68,.3);' : ''}opacity:.8">
+           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${msg.status === 'failed' || msg.status === 'erro' ? '#ef4444' : 'currentColor'}" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/></svg>
+           <span style="font-size:.75rem;color:${msg.status === 'failed' || msg.status === 'erro' ? '#ef4444' : 'var(--text-muted)'}">
+             ${msg.status === 'pending' ? 'Enviando áudio...' : (msg.status === 'failed' || msg.status === 'erro' ? 'Falha no envio do áudio' : 'Áudio não disponível')}
+           </span>
          </div>`;
     console.log('WHATSAPP_AUDIO_RENDERED', { msgId: msg.id, hasSrc: !!audioSrc, dur });
   } else if (tipoEfetivo === 'video') {
@@ -865,14 +881,21 @@ function renderMensagem(msg) {
            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 13 7 8"/><line x1="12" y1="3" x2="12" y2="13"/></svg>
          </button>`
       : '';
-    conteudo = `<div class="wa-file-card">
+    let subtexto = `Vídeo${msg.direcao === 'enviada' ? ' enviado' : ''}`;
+    if (msg.status === 'pending') {
+      subtexto = `<span style="display:inline-flex;align-items:center;gap:4px;color:var(--text-muted)"><span class="wa-pulse-dot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#FFB800"></span>Enviando vídeo...</span>`;
+    } else if (msg.status === 'failed' || msg.status === 'erro') {
+      subtexto = `<span style="color:#ef4444;font-weight:500">Não foi possível enviar o vídeo.</span>`;
+    }
+
+    conteudo = `<div class="wa-file-card${msg.status === 'failed' || msg.status === 'erro' ? ' wa-card-error' : ''}">
        <div style="display:flex;align-items:center;gap:10px">
-         <div class="wa-file-icon" style="background:rgba(255,184,0,.12);border-color:rgba(255,184,0,.2)">
-           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FFB800" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+         <div class="wa-file-icon" style="background:${msg.status === 'failed' || msg.status === 'erro' ? 'rgba(239,68,68,.12)' : 'rgba(255,184,0,.12)'};border-color:${msg.status === 'failed' || msg.status === 'erro' ? 'rgba(239,68,68,.2)' : 'rgba(255,184,0,.2)'}">
+           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${msg.status === 'failed' || msg.status === 'erro' ? '#ef4444' : '#FFB800'}" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
          </div>
          <div style="flex:1;min-width:0">
            <p style="font-size:.78rem;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0" title="${escHtml(nome)}">${escHtml(nome)}</p>
-           <p style="font-size:.67rem;color:var(--text-muted);margin:2px 0 0">Vídeo${msg.direcao === 'enviada' ? ' enviado' : ''}</p>
+           <p style="font-size:.67rem;color:var(--text-muted);margin:2px 0 0">${subtexto}</p>
          </div>
          ${dlBtn}
        </div>
@@ -893,14 +916,20 @@ function renderMensagem(msg) {
            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 13 7 8"/><line x1="12" y1="3" x2="12" y2="13"/></svg>
          </button>`
       : '';
-    conteudo = `<div class="wa-file-card">
+    let subtexto = `Documento${msg.direcao === 'enviada' ? ' enviado' : ''}`;
+    if (msg.status === 'pending') {
+      subtexto = `<span style="display:inline-flex;align-items:center;gap:4px;color:var(--text-muted)"><span class="wa-pulse-dot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#FFB800"></span>Enviando documento...</span>`;
+    } else if (msg.status === 'failed' || msg.status === 'erro') {
+      subtexto = `<span style="color:#ef4444;font-weight:500">Falha no envio do documento</span>`;
+    }
+    conteudo = `<div class="wa-file-card${msg.status === 'failed' || msg.status === 'erro' ? ' wa-card-error' : ''}">
        <div style="display:flex;align-items:center;gap:10px">
-         <div class="wa-file-icon">
+         <div class="wa-file-icon" style="background:${msg.status === 'failed' || msg.status === 'erro' ? 'rgba(239,68,68,.12)' : ''};border-color:${msg.status === 'failed' || msg.status === 'erro' ? 'rgba(239,68,68,.2)' : ''}">
            <span style="font-size:1.2rem;line-height:1">${icone}</span>
          </div>
          <div style="flex:1;min-width:0">
            <p style="font-size:.78rem;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0" title="${escHtml(nome)}">${escHtml(nome)}</p>
-           <p style="font-size:.67rem;color:var(--text-muted);margin:2px 0 0">Documento${msg.direcao === 'enviada' ? ' enviado' : ''}</p>
+           <p style="font-size:.67rem;color:var(--text-muted);margin:2px 0 0">${subtexto}</p>
          </div>
          ${dlBtn}
        </div>
@@ -1091,16 +1120,50 @@ function _waFileToBase64(file) {
 async function waEnviarArquivo(file) {
   if (!_convAtiva) { Toast.show('Selecione uma conversa primeiro.', 'error'); return; }
 
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  const isVideo = (file.type && file.type.startsWith('video/')) || ['mp4', 'mov', 'webm', 'avi', 'mkv'].includes(ext);
+
   // Validações front-end
-  if (!waExtPermitida(file.name)) {
-    Toast.show('Tipo de arquivo não permitido por segurança.', 'error'); return;
-  }
-  if (file.size > WA_LIMITE_BYTES) {
-    Toast.show(`O arquivo excede o limite de ${WA_LIMITE_MB} MB.`, 'error'); return;
+  if (isVideo) {
+    if (ext !== 'mp4' && file.type !== 'video/mp4') {
+      Toast.show('Formato de vídeo não suportado. Envie em MP4.', 'error');
+      return;
+    }
+    const WA_VIDEO_LIMITE_BYTES = 16 * 1024 * 1024; // 16 MB — limite oficial do WhatsApp para vídeo
+    if (file.size > WA_VIDEO_LIMITE_BYTES) {
+      Toast.show('Vídeo muito grande para envio pelo WhatsApp. Reduza o tamanho e tente novamente.', 'error');
+      return;
+    }
+  } else {
+    if (!waExtPermitida(file.name)) {
+      Toast.show('Tipo de arquivo não permitido por segurança.', 'error'); return;
+    }
+    if (file.size > WA_LIMITE_BYTES) {
+      Toast.show(`O arquivo excede o limite de ${WA_LIMITE_MB} MB.`, 'error'); return;
+    }
   }
 
-  // Estágio 1: lendo arquivo (igual ao áudio que já funciona)
-  Toast.show(`📂 Lendo "${file.name}" (${waFmtBytes(file.size)})…`, 'info');
+  // Cria mensagem temporária com status 'pending' para feedback visual imediato
+  const tipoMidia = isVideo ? 'video' : ((file.type && file.type.startsWith('image/')) ? 'imagem' : 'arquivo');
+  const tempMsgId = 'temp_file_' + Date.now();
+  const pendingMsg = {
+    id:           tempMsgId,
+    conversa_id:  _convAtiva.id,
+    mensagem:     file.name,
+    tipo:         tipoMidia,
+    arquivo_url:  null,
+    arquivo_nome: file.name,
+    mime_type:    file.type || 'application/octet-stream',
+    direcao:      'enviada',
+    status:       'pending',
+    criado_em:    new Date().toISOString(),
+  };
+  _mensagens.push(pendingMsg);
+  renderMensagens();
+
+  // Estágio 1: lendo arquivo
+  const labelTipo = isVideo ? 'vídeo' : (tipoMidia === 'imagem' ? 'imagem' : 'arquivo');
+  Toast.show(`📂 Lendo ${labelTipo} "${file.name}" (${waFmtBytes(file.size)})…`, 'info');
 
   let base64;
   try {
@@ -1108,55 +1171,74 @@ async function waEnviarArquivo(file) {
   } catch (e) {
     console.error('[waEnviarArquivo] Falha ao ler arquivo:', e);
     Toast.show(`Erro ao ler arquivo: ${e.message}`, 'error');
+    pendingMsg.status = 'erro';
+    renderMensagens();
     return;
   }
 
-  // Estágio 2: enviando via Auth.api() + JSON (mesmo que áudio — token auto-renovado)
-  Toast.show(`📤 Enviando "${file.name}"…`, 'info');
+  // Estágio 2: enviando via Auth.api() + JSON
+  Toast.show(`📤 Enviando ${labelTipo} "${file.name}"…`, 'info');
 
   let r;
   try {
     r = await Auth.api('POST', `/whatsapp/conversas/${_convAtiva.id}/arquivos`, {
       arquivo_base64: base64,       // "data:mime;base64,..."
       arquivo_nome:   file.name,
-      mime_type:      file.type || 'application/octet-stream',
+      mime_type:      isVideo ? 'video/mp4' : (file.type || 'application/octet-stream'),
     });
   } catch (e) {
     console.error('[waEnviarArquivo] Exceção na requisição:', e);
     Toast.show(`Erro de rede ao enviar: ${e.message}`, 'error');
+    pendingMsg.status = 'erro';
+    renderMensagens();
     return;
   }
 
-  if (r?.ok && r.data?.sucesso) {
+  // REGRA B02: Só considera enviado se o backend confirmou sucesso, enviado: true E retornou evo_msg (messageId)
+  const isRealSuccess = r?.ok && r.data?.sucesso && r.data?.enviado === true && r.data?.evo_msg;
+
+  if (isRealSuccess) {
     Toast.show(`✅ "${file.name}" enviado!`, 'success');
     if (r.data.aviso) Toast.show(r.data.aviso, 'info');
 
     const msgData = r.data.dados || {
-      id:           Date.now().toString(),
-      conversa_id:  _convAtiva.id,
-      mensagem:     file.name,
-      tipo:         file.type.startsWith('image/') ? 'imagem'
-                  : file.type.startsWith('video/') ? 'video'
-                  : 'arquivo',
-      arquivo_url:  null,
-      arquivo_nome: file.name,
-      mime_type:    file.type,
-      direcao:      'enviada',
-      status:       'enviado',
-      criado_em:    new Date().toISOString(),
+      id:                   Date.now().toString(),
+      conversa_id:          _convAtiva.id,
+      mensagem:             isVideo ? '🎥 Vídeo' : file.name,
+      tipo:                 tipoMidia,
+      arquivo_url:          null,
+      arquivo_nome:         file.name,
+      mime_type:            isVideo ? 'video/mp4' : file.type,
+      direcao:              'enviada',
+      status:               'enviado',
+      evolution_message_id: r.data?.evo_msg || null,
+      criado_em:            new Date().toISOString(),
     };
-    _mensagens.push(msgData);
+
+    const idx = _mensagens.findIndex(m => m.id === tempMsgId);
+    if (idx !== -1) {
+      _mensagens[idx] = { ...msgData, status: 'enviado' };
+    } else {
+      _mensagens.push({ ...msgData, status: 'enviado' });
+    }
+
     renderMensagens();
+    const ultTexto = isVideo ? '🎥 Vídeo' : (tipoMidia === 'imagem' ? '🖼️ Imagem' : `📎 ${file.name}`);
     _conversas = _conversas.map(c => c.id === _convAtiva.id
-      ? { ...c, ultima_mensagem: `📎 ${file.name}`, ultima_msg_em: new Date().toISOString() }
+      ? { ...c, ultima_mensagem: ultTexto, ultima_msg_em: new Date().toISOString() }
       : c);
     renderListaConversas();
     document.getElementById('conv-item-' + _convAtiva.id)?.classList.add('active');
 
   } else {
     const erro = r?.data?.erro || `Erro HTTP ${r?.status || 'desconhecido'}`;
-    console.error('[waEnviarArquivo] Falha:', { status: r?.status, erro, data: r?.data });
-    Toast.show(`❌ Erro ao enviar "${file.name}": ${erro}`, 'error');
+    console.error('[waEnviarArquivo] Falha no envio de mídia:', { status: r?.status, erro, data: r?.data });
+    const idx = _mensagens.findIndex(m => m.id === tempMsgId);
+    if (idx !== -1) {
+      _mensagens[idx].status = 'erro';
+      renderMensagens();
+    }
+    Toast.show(`❌ Falha ao enviar "${file.name}": ${erro}`, 'error');
   }
 }
 
@@ -1724,6 +1806,21 @@ async function enviarAudio(blob) {
 
   console.log('WHATSAPP_AUDIO_SEND_FORMDATA', { conversaId: _convAtiva.id, durSeg, blobSize: blob.size });
 
+  // Insere mensagem temporária pending para feedback imediato
+  const tempAudId = 'temp_aud_' + Date.now();
+  const pendingAudioMsg = {
+    id:           tempAudId,
+    conversa_id:  _convAtiva.id,
+    mensagem:     null,
+    tipo:         'audio',
+    direcao:      'enviada',
+    status:       'pending',
+    media_duration: durSeg || null,
+    criado_em:    new Date().toISOString(),
+  };
+  _mensagens.push(pendingAudioMsg);
+  renderMensagens();
+
   let r = null;
   try {
     const resp = await fetch('/api/whatsapp/audio/send', {
@@ -1738,9 +1835,12 @@ async function enviarAudio(blob) {
     r = null;
   }
 
-  console.log('WHATSAPP_AUDIO_SEND_RESPONSE', { status: r?.status, ok: r?.ok, sucesso: r?.data?.sucesso, evoOk: r?.data?._evo_ok });
+  console.log('WHATSAPP_AUDIO_SEND_RESPONSE', { status: r?.status, ok: r?.ok, sucesso: r?.data?.sucesso, enviado: r?.data?.enviado, evoOk: r?.data?._evo_ok });
 
-  if (r?.ok && r.data?.sucesso) {
+  // REGRA B02: Só considera enviado com sucesso real da Evolution (enviado: true e _evo_ok: true)
+  const isAudioSuccess = r?.ok && r.data?.sucesso && r.data?.enviado === true && r.data?._evo_ok;
+
+  if (isAudioSuccess) {
     console.log('WHATSAPP_AUDIO_SEND_SUCCESS', { evoOk: r.data._evo_ok, msgId: r.data.dados?.id });
     Toast.show('Áudio enviado!', 'success');
     const msgReal = r.data.dados || {
@@ -1748,7 +1848,12 @@ async function enviarAudio(blob) {
       mensagem: null, tipo: 'audio', direcao: 'enviada',
       status: 'enviado', criado_em: new Date().toISOString(),
     };
-    _mensagens.push(msgReal);
+    const idx = _mensagens.findIndex(m => m.id === tempAudId);
+    if (idx !== -1) {
+      _mensagens[idx] = { ...msgReal, status: 'enviado' };
+    } else {
+      _mensagens.push({ ...msgReal, status: 'enviado' });
+    }
     renderMensagens();
     _conversas = _conversas.map(c => c.id === _convAtiva.id
       ? { ...c, ultima_mensagem: 'Áudio 🎤', ultima_direcao: 'enviada', ultima_msg_em: new Date().toISOString() }
@@ -1758,7 +1863,12 @@ async function enviarAudio(blob) {
   } else {
     const err = r?.data?.erro || 'Não foi possível enviar o áudio.';
     console.error('WHATSAPP_AUDIO_SEND_FAIL', { status: r?.status, err, evoErr: r?.data?._evo_err });
-    Toast.show(err, 'error');
+    const idx = _mensagens.findIndex(m => m.id === tempAudId);
+    if (idx !== -1) {
+      _mensagens[idx].status = 'erro';
+      renderMensagens();
+    }
+    Toast.show(`❌ Falha no envio do áudio: ${err}`, 'error');
   }
 
   cancelarGravacao();
