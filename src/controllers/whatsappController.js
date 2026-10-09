@@ -1358,13 +1358,10 @@ async function enviarMensagem(req, res) {
 
     const msgId = crypto.randomBytes(16).toString('hex');
     // ID retornado pela Evolution — agora evoRes está acessível no escopo correto
-    const evoMsgId = evoRes?.dados?.key?.id || null;
+    const evoMsgId = evoRes?.dados?.key?.id || evoRes?.dados?.messageId || null;
 
     if (isSupa) {
-      // ── Payload Supabase: SOMENTE colunas que existem na tabela ─────────────
-      // Colunas reais: id, conversa_id, lead_id, telefone, mensagem, tipo,
-      //                direcao, status, vendedor_id, arquivo_url, arquivo_nome, criado_em
-      // NÃO EXISTEM: atualizado_em, evolution_message_id
+      // ── Payload Supabase ──────────────────────────────────────────────────
       const dbPayload = {
         id: msgId,
         conversa_id: id,
@@ -1379,7 +1376,7 @@ async function enviarMensagem(req, res) {
         arquivo_url: arquivo_url || null,
         arquivo_nome: arquivo_nome || null,
         criado_em: agora,
-        // atualizado_em: NÃO EXISTE NA TABELA — removido
+        evolution_message_id: evoMsgId || null,
       };
 
       console.log('SUPA_INSERT_PAYLOAD_KEYS', Object.keys(dbPayload));
@@ -2287,6 +2284,7 @@ async function processarStatusMensagem(body, req, res) {
       'READ':         'lido',
       'PLAYED':       'lido',
       'ERROR':        'erro',
+      'FAILED':       'erro',
       // Variantes lowercase
       'pending':      'enviado',
       'sent':         'enviado',
@@ -2294,23 +2292,34 @@ async function processarStatusMensagem(body, req, res) {
       'read':         'lido',
       'played':       'lido',
       'error':        'erro',
+      'failed':       'erro',
+      // Baileys / WPP acks numéricos
+      1:              'enviado',
+      2:              'entregue',
+      3:              'lido',
+      4:              'lido',
+      '1':            'enviado',
+      '2':            'entregue',
+      '3':            'lido',
+      '4':            'lido',
     };
 
     let atualizadas = 0;
 
     for (const upd of updates) {
-      const evoMsgId = upd.key?.id || upd.id || null;
+      // Evolution v2 envia upd.keyId diretamente; v1 envia upd.key.id; alguns eventos enviam upd.id ou upd.messageId
+      const evoMsgId = upd.keyId || upd.key?.id || upd.id || upd.messageId || null;
       const evoStatus = upd.update?.status || upd.status || null;
       const remoteJid = upd.key?.remoteJid || upd.remoteJid || null;
 
-      if (!evoMsgId || !evoStatus) {
+      if (!evoMsgId || evoStatus === null || evoStatus === undefined) {
         console.log('[WA Status] Update sem messageId ou status:', JSON.stringify(upd));
         continue;
       }
 
       const statusCRM = EVO_STATUS_MAP[evoStatus] || null;
       if (!statusCRM) {
-        console.log('[WA Status] Status desconhecido:', evoStatus);
+        console.log('[WA Status] Status desconhecido:', evoStatus, 'upd:', JSON.stringify(upd));
         continue;
       }
 
@@ -2324,32 +2333,53 @@ async function processarStatusMensagem(body, req, res) {
       };
 
       if (isSupa) {
-        // Busca por evolution_message_id (coluna nova) OU por id (coluna existente)
+        // Busca por evolution_message_id (coluna canônica) OU por id (fallback)
         let updated = false;
 
-        // Tenta por evolution_message_id primeiro (coluna adicionada via migração)
+        // Tenta por evolution_message_id primeiro
         try {
-          const { data: byEvoId, error: errEvo } = await sb.from(MENSAGENS_TABLE)
+          let qEvo = sb.from(MENSAGENS_TABLE)
             .update(updatePayload)
-            .eq('evolution_message_id', evoMsgId)
-            .select('id');
+            .eq('evolution_message_id', evoMsgId);
+
+          // Não regredir status se já estiver lido ou entregue
+          if (statusCRM === 'entregue') {
+            qEvo = qEvo.neq('status', 'lido');
+          } else if (statusCRM === 'enviado') {
+            qEvo = qEvo.not('status', 'in', '("entregue","lido")');
+          }
+
+          const { data: byEvoId, error: errEvo } = await qEvo.select('id, status');
           if (!errEvo && byEvoId?.length) {
             updated = true;
             atualizadas += byEvoId.length;
             console.log('WEBHOOK_STATUS_SALVO:', { por: 'evolution_message_id', evoMsgId, statusCRM, ids: byEvoId.map(r=>r.id) });
           }
-        } catch(e) { /* coluna pode não existir ainda */ }
+        } catch(e) {
+          console.warn('[WA Status] Erro ao atualizar por evolution_message_id:', e.message);
+        }
 
-        // Fallback: busca por id (o campo id da mensagem = messageId da Evolution quando salvo)
+        // Fallback: busca por id (o campo id da mensagem = messageId da Evolution quando salvo via webhook ou eco)
         if (!updated) {
-          const { data: byId, error: errId } = await sb.from(MENSAGENS_TABLE)
-            .update(updatePayload)
-            .eq('id', evoMsgId)
-            .select('id');
-          if (!errId && byId?.length) {
-            updated = true;
-            atualizadas += byId.length;
-            console.log('WEBHOOK_STATUS_SALVO:', { por: 'id', evoMsgId, statusCRM, ids: byId.map(r=>r.id) });
+          try {
+            let qId = sb.from(MENSAGENS_TABLE)
+              .update(updatePayload)
+              .eq('id', evoMsgId);
+
+            if (statusCRM === 'entregue') {
+              qId = qId.neq('status', 'lido');
+            } else if (statusCRM === 'enviado') {
+              qId = qId.not('status', 'in', '("entregue","lido")');
+            }
+
+            const { data: byId, error: errId } = await qId.select('id, status');
+            if (!errId && byId?.length) {
+              updated = true;
+              atualizadas += byId.length;
+              console.log('WEBHOOK_STATUS_SALVO:', { por: 'id', evoMsgId, statusCRM, ids: byId.map(r=>r.id) });
+            }
+          } catch(e) {
+            console.warn('[WA Status] Erro ao atualizar por id:', e.message);
           }
         }
 
@@ -2359,18 +2389,19 @@ async function processarStatusMensagem(body, req, res) {
       } else {
         // SQLite fallback
         const db = getDb();
-        try {
-          const byEvoId = db.prepare('UPDATE mensagens_whatsapp SET status=?, atualizado_em=? WHERE evolution_message_id=?')
-            .run(statusCRM, agora, evoMsgId);
-          if (!byEvoId.changes) {
-            db.prepare('UPDATE mensagens_whatsapp SET status=?, atualizado_em=? WHERE id=?')
+        if (db && !db.isNoop) {
+          try {
+            const byEvoId = db.prepare('UPDATE mensagens_whatsapp SET status=?, atualizado_em=? WHERE evolution_message_id=?')
               .run(statusCRM, agora, evoMsgId);
+            if (!byEvoId.changes) {
+              db.prepare('UPDATE mensagens_whatsapp SET status=?, atualizado_em=? WHERE id=?')
+                .run(statusCRM, agora, evoMsgId);
+            }
+            atualizadas++;
+          } catch(e) {
+            db.prepare('UPDATE mensagens_whatsapp SET status=? WHERE id=?').run(statusCRM, evoMsgId);
+            atualizadas++;
           }
-          atualizadas++;
-        } catch(e) {
-          // Coluna evolution_message_id pode não existir no SQLite ainda — usa só id
-          db.prepare('UPDATE mensagens_whatsapp SET status=? WHERE id=?').run(statusCRM, evoMsgId);
-          atualizadas++;
         }
       }
     }

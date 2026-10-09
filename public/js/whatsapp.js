@@ -634,9 +634,38 @@ async function carregarMensagens(convId, silencioso = false) {
 }
 
 
+// ─── Renderizador de ícone de status de mensagem ───────────────────────────
+function renderStatusIcon(status) {
+  const s = (status || 'sent').toLowerCase();
+  if (s === 'pending') {
+    return `<span class="wa-bubble-status pending" title="Enviando...">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+    </span>`;
+  } else if (s === 'sent' || s === 'enviado') {
+    return `<span class="wa-bubble-status sent" title="Enviado">
+      <svg width="13" height="9" viewBox="0 0 16 10" fill="none"><path d="M1 5L5.5 9L15 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </span>`;
+  } else if (s === 'delivered' || s === 'entregue') {
+    return `<span class="wa-bubble-status delivered" title="Entregue">
+      <svg width="17" height="9" viewBox="0 0 20 10" fill="none"><path d="M1 5L5.5 9L15 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 5L10.5 9L20 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </span>`;
+  } else if (s === 'read' || s === 'lido') {
+    return `<span class="wa-bubble-status read" title="Lida">
+      <svg width="17" height="9" viewBox="0 0 20 10" fill="none"><path d="M1 5L5.5 9L15 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 5L10.5 9L20 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </span>`;
+  } else if (s === 'failed' || s === 'erro') {
+    return `<span class="wa-bubble-status failed" title="Falha no envio">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+    </span>`;
+  }
+  return `<span class="wa-bubble-status sent" title="Enviado">
+    <svg width="13" height="9" viewBox="0 0 16 10" fill="none"><path d="M1 5L5.5 9L15 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </span>`;
+}
+
 // ─── Poll silencioso de mensagens novas ─────────────────────────────────────
 // Chamado pelo setInterval — só re-renderiza se houver mensagens novas,
-// evitando reset de scroll desnecessário.
+// ou atualiza o status dos checks pontualmente sem reset de scroll.
 async function pollMensagens(convId) {
   try {
     const r = await Auth.api('GET', `/whatsapp/conversas/${convId}/mensagens?limit=200`);
@@ -645,10 +674,33 @@ async function pollMensagens(convId) {
     const qtdAntes = _mensagens.length;
     const idAnterior = _mensagens[_mensagens.length - 1]?.id;
     const idNovo     = novas[novas.length - 1]?.id;
+
+    // Detecta se houve mudança de status em qualquer mensagem existente
+    const teveMudancaStatus = novas.some((m, idx) => {
+      const antigo = _mensagens[idx];
+      return antigo && (antigo.id === m.id) && (antigo.status !== m.status);
+    });
+
     if (novas.length !== qtdAntes || idAnterior !== idNovo) {
       _mensagens = novas;
       renderMensagens(); // scrollToBottom interno
       console.log('CONVERSA_MESSAGES_HAS_RECEIVED', novas.filter(m => m.direcao === 'recebida').length);
+    } else if (teveMudancaStatus) {
+      // Atualiza somente os badges/checks de status no DOM preservando o scroll do usuário
+      _mensagens = novas;
+      novas.forEach(m => {
+        if (m.direcao === 'enviada') {
+          const msgEl = document.querySelector(`.wa-msg[data-id="${m.id}"]`);
+          if (msgEl) {
+            msgEl.dataset.status = m.status || '';
+            const statusContainer = msgEl.querySelector('.wa-bubble-status');
+            if (statusContainer) {
+              statusContainer.outerHTML = renderStatusIcon(m.status);
+            }
+          }
+        }
+      });
+      console.log('CONVERSA_MESSAGES_STATUS_UPDATED');
     }
     console.log('CONVERSA_MESSAGES_LOAD_COUNT', novas.length);
   } catch(e) {
@@ -702,42 +754,13 @@ function renderMensagem(msg) {
 
   // ── Ícones de status (apenas mensagens enviadas pelo CRM) ─────────────────
   // pending  → relógio (enfileirado)
-  // sent     → 1 check cinza (Evolution confirmou, ainda não entregue)
-  // enviado  → idem (nome antigo no banco)
-  // delivered → 2 checks cinza (entregue no aparelho)
-  // entregue → idem (nome antigo)
-  // read     → 2 checks turquesa (lida)
-  // lido     → idem (nome antigo)
+  // sent / enviado → 1 check cinza (Evolution confirmou, ainda não entregue)
+  // delivered / entregue → 2 checks cinza (entregue no aparelho)
+  // read / lido → 2 checks destacados/azuis (lida)
   // failed / erro → X vermelho
   let statusStr = '';
   if (dir === 'enviada') {
-    const s = (msg.status || 'sent').toLowerCase();
-    if (s === 'pending') {
-      statusStr = `<span class="wa-bubble-status pending" title="Enviando...">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-      </span>`;
-    } else if (s === 'sent' || s === 'enviado') {
-      statusStr = `<span class="wa-bubble-status sent" title="Enviado">
-        <svg width="13" height="9" viewBox="0 0 16 10" fill="none"><path d="M1 5L5.5 9L15 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </span>`;
-    } else if (s === 'delivered' || s === 'entregue') {
-      statusStr = `<span class="wa-bubble-status delivered" title="Entregue">
-        <svg width="17" height="9" viewBox="0 0 20 10" fill="none"><path d="M1 5L5.5 9L15 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 5L10.5 9L20 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </span>`;
-    } else if (s === 'read' || s === 'lido') {
-      statusStr = `<span class="wa-bubble-status read" title="Lida">
-        <svg width="17" height="9" viewBox="0 0 20 10" fill="none"><path d="M1 5L5.5 9L15 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 5L10.5 9L20 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </span>`;
-    } else if (s === 'failed' || s === 'erro') {
-      statusStr = `<span class="wa-bubble-status failed" title="Falha no envio">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-      </span>`;
-    } else {
-      // fallback → 1 check cinza
-      statusStr = `<span class="wa-bubble-status sent" title="Enviado">
-        <svg width="13" height="9" viewBox="0 0 16 10" fill="none"><path d="M1 5L5.5 9L15 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </span>`;
-    }
+    statusStr = renderStatusIcon(msg.status);
   }
 
   // ── Rótulo de autoria (interno CRM — não vai para o cliente) ─────────────
