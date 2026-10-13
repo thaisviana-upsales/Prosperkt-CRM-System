@@ -72,6 +72,11 @@ function phonesMatch(a, b) {
 // ─── Estado ───────────────────────────────────────────────────────────────────
 let _usuario   = null;
 let _conversas = [];
+let _totalConversas = 0;
+let _offsetConversas = 0;
+const _LIMIT_CONVERSAS = 50;
+let _carregandoMaisConversas = false;
+let _temMaisConversas = false;
 let _convAtiva = null;   // objeto conversa
 let _mensagens = [];
 let _filtroStatus = '';
@@ -158,27 +163,76 @@ async function carregarStatusConexao() {
 }
 
 // ─── Carregar conversas ───────────────────────────────────────────────────────
-async function carregarConversas(silencioso = false) {
+function atualizarContadorConversas() {
+  const el = document.getElementById('conv-count');
+  if (!el) return;
+  if (_totalConversas > 0) {
+    if (_conversas.length < _totalConversas) {
+      el.textContent = `(${_conversas.length} de ${_totalConversas})`;
+    } else {
+      el.textContent = `(${_totalConversas})`;
+    }
+  } else {
+    el.textContent = `(${_conversas.length})`;
+  }
+}
+
+async function carregarConversas(silencioso = false, append = false) {
+  if (append) {
+    if (_carregandoMaisConversas) return;
+    _carregandoMaisConversas = true;
+    _offsetConversas = _conversas.length;
+  } else {
+    _offsetConversas = 0;
+  }
+
   const qs = [];
-  if (_filtroStatus) qs.push('status=' + _filtroStatus);
-  // IMPORTANTE: _busca NÃO vai ao servidor — aplicado client-side em renderListaConversas
-  // Isso garante que _conversas sempre tenha a lista completa do status ativo,
-  // evitando que a busca "filtre" permanentemente a lista lateral
-  qs.push('limit=100');
+  if (_filtroStatus) qs.push('status=' + encodeURIComponent(_filtroStatus));
+  if (_busca && _busca.trim()) qs.push('busca=' + encodeURIComponent(_busca.trim()));
+
+  // Em polling silencioso (sem append), se o usuário já rolou mais páginas, busca o volume atual (até 200)
+  const limitAtual = (silencioso && !append && _conversas.length > _LIMIT_CONVERSAS)
+    ? Math.min(_conversas.length, 200)
+    : _LIMIT_CONVERSAS;
+
+  qs.push('limit=' + limitAtual);
+  qs.push('offset=' + (append ? _offsetConversas : 0));
 
   const r = await Auth.api('GET', '/whatsapp/conversas' + (qs.length ? '?' + qs.join('&') : ''));
-  if (!r?.ok) { if (!silencioso) Toast.show('Erro ao carregar conversas.', 'error'); return; }
+  if (append) _carregandoMaisConversas = false;
+
+  if (!r?.ok) {
+    if (!silencioso) Toast.show('Erro ao carregar conversas.', 'error');
+    return;
+  }
 
   const novas = r.data.dados || [];
-  // Proteção contra polling retornar vazio por falha de rede quando já há dados na lista
-  // Só substitui com vazio se: filtro de status ativo (resultado válido) OU lista ainda não carregada
-  if (novas.length > 0 || _filtroStatus || _conversas.length === 0) {
-    _conversas = novas;
+  _totalConversas = (r.data.total !== undefined && r.data.total !== null) ? Number(r.data.total) : novas.length;
+
+  if (append) {
+    const idsExistentes = new Set(_conversas.map(c => c.id));
+    const unicas = novas.filter(c => !idsExistentes.has(c.id));
+    _conversas = _conversas.concat(unicas);
+    _temMaisConversas = (r.data.has_more !== undefined) ? r.data.has_more : (_conversas.length < _totalConversas);
+  } else {
+    if (novas.length > 0 || _filtroStatus || _busca || _conversas.length === 0) {
+      _conversas = novas;
+    }
+    _temMaisConversas = (r.data.has_more !== undefined) ? r.data.has_more : (_conversas.length < _totalConversas);
   }
+
   renderListaConversas();
 
-  document.getElementById('ultima-att').textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'});
-  document.getElementById('conv-count').textContent = `${_conversas.length} conversa${_conversas.length !== 1 ? 's' : ''}`;
+  const elAtt = document.getElementById('ultima-att');
+  if (elAtt) elAtt.textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'});
+  atualizarContadorConversas();
+}
+
+async function carregarMaisConversas() {
+  if (_carregandoMaisConversas || !_temMaisConversas) return;
+  const btn = document.getElementById('btn-carregar-mais-conv');
+  if (btn) btn.textContent = 'Carregando mais...';
+  await carregarConversas(true, true);
 }
 
 async function carregarLeads() {
@@ -189,6 +243,7 @@ async function carregarLeads() {
 
 function popularSelectLeads() {
   const sel = document.getElementById('nc-lead');
+  if (!sel) return;
   const opts = _leads.map(l => `<option value="${l.id}">${l.nome}${l.telefone ? ' — ' + l.telefone : ''}</option>`).join('');
   sel.innerHTML = '<option value="">— sem lead —</option>' + opts;
 }
@@ -196,24 +251,11 @@ function popularSelectLeads() {
 // ─── Render lista ─────────────────────────────────────────────────────────────
 function renderListaConversas() {
   const el = document.getElementById('conv-list');
+  if (!el) return;
 
-  // Aplica filtro de busca CLIENT-SIDE sobre a lista mestra
-  // Garante que a sidebar sempre mostre todas as conversas quando não há busca ativa
   let lista = _conversas;
-  if (_busca) {
-    const q = _busca.toLowerCase().trim();
-    lista = lista.filter(c =>
-      (c.nome_contato || '').toLowerCase().includes(q) ||
-      (c.lead_nome    || '').toLowerCase().includes(q) ||
-      (c.telefone     || '').includes(q) ||
-      (c.lead_empresa || '').toLowerCase().includes(q)
-    );
-  }
 
   if (!lista.length) {
-    // "Nenhuma conversa encontrada" SOMENTE quando:
-    // 1) busca/filtro ativo retornou 0 resultados, OU
-    // 2) realmente não existem conversas carregadas
     el.innerHTML = `<div class="wa-empty-list">
       <div style="font-size:2rem;opacity:.3;margin-bottom:8px">💬</div>
       ${_busca
@@ -226,7 +268,7 @@ function renderListaConversas() {
     return;
   }
 
-  el.innerHTML = lista.map(c => {
+  let html = lista.map(c => {
     const nome      = c.nome_contato || c.lead_nome || c.telefone;
     const initials  = (nome || '??').slice(0, 2).toUpperCase();
     const preview   = c.ultima_mensagem ? escHtml(c.ultima_mensagem.slice(0, 50)) : '<em>Sem mensagens</em>';
@@ -253,10 +295,26 @@ function renderListaConversas() {
     </div>`;
   }).join('');
 
+  if (_temMaisConversas) {
+    html += `
+    <div id="wa-carregar-mais-wrap" style="padding:12px;text-align:center;">
+      <button type="button" id="btn-carregar-mais-conv" class="btn-secondary" style="font-size:0.75rem;padding:6px 14px;border-radius:14px;background:#2c2c2e;color:#fff;border:1px solid #3a3a3c;cursor:pointer;">
+        ${_carregandoMaisConversas ? 'Carregando mais...' : `Carregar mais conversas (${_conversas.length} de ${_totalConversas})`}
+      </button>
+    </div>`;
+  }
+
+  el.innerHTML = html;
+
   // Bind clicks
   el.querySelectorAll('.wa-conv-item').forEach(item => {
     item.addEventListener('click', () => abrirConversa(item.dataset.id));
   });
+
+  const btnMais = document.getElementById('btn-carregar-mais-conv');
+  if (btnMais) {
+    btnMais.addEventListener('click', () => carregarMaisConversas());
+  }
 }
 
 // ─── Abrir conversa ───────────────────────────────────────────────────────────
@@ -1571,6 +1629,7 @@ function bindEvents() {
       document.querySelectorAll('[data-status]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       _filtroStatus = btn.dataset.status;
+      _offsetConversas = 0;
       carregarConversas();
     });
   });
@@ -1580,8 +1639,23 @@ function bindEvents() {
   document.getElementById('busca-conv').addEventListener('input', e => {
     _busca = e.target.value;
     clearTimeout(buscaTimer);
-    buscaTimer = setTimeout(() => carregarConversas(), 300);
+    buscaTimer = setTimeout(() => {
+      _offsetConversas = 0;
+      carregarConversas();
+    }, 350);
   });
+
+  // Rolagem infinita na lista de conversas
+  const convListEl = document.getElementById('conv-list');
+  if (convListEl) {
+    convListEl.addEventListener('scroll', () => {
+      if (_temMaisConversas && !_carregandoMaisConversas) {
+        if (convListEl.scrollTop + convListEl.clientHeight >= convListEl.scrollHeight - 100) {
+          carregarMaisConversas();
+        }
+      }
+    });
+  }
 
   // Modal
   document.getElementById('modal-close').addEventListener('click', fecharModal);

@@ -876,14 +876,15 @@ async function listarConversas(req, res) {
   try {
     const { sb, isSupa } = getProvider();
     const { vendedor_id, status, busca, limit = 50, offset = 0 } = req.query;
+    const limitNum  = Math.min(Math.max(Number(limit) || 50, 1), 200);
+    const offsetNum = Math.max(Number(offset) || 0, 0);
     const role = req.usuario.role;
 
     if (isSupa) {
-      console.log('WHATSAPP_CONVERSAS_LIST_START', { usuarioId: req.usuario.id, role });
+      console.log('WHATSAPP_CONVERSAS_LIST_START', { usuarioId: req.usuario.id, role, limit: limitNum, offset: offsetNum, busca: busca || null });
       let q = sb.from(CONVERSAS_TABLE)
-        .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa,responsavel_id)')
-        .order('ultima_msg_em', { ascending: false, nullsFirst: false })
-        .range(Number(offset), Number(offset) + Number(limit) - 1);
+        .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa,responsavel_id)', { count: 'exact' })
+        .order('ultima_msg_em', { ascending: false, nullsFirst: false });
 
       if (role === 'VENDEDOR') {
         console.log('WHATSAPP_CONVERSAS_FILTER_BY_USER', { usuarioId: req.usuario.id });
@@ -907,8 +908,13 @@ async function listarConversas(req, res) {
       }
       // Exclui conversas explicitamente invisíveis (visivel=false)
       q = q.neq('visivel', false);
-      if (busca) q = q.or(`telefone.ilike.%${busca}%,nome_contato.ilike.%${busca}%`);
-      const { data, error } = await q;
+      if (busca && busca.trim()) {
+        const termo = busca.trim();
+        q = q.or(`telefone.ilike.%${termo}%,nome_contato.ilike.%${termo}%`);
+      }
+
+      q = q.range(offsetNum, offsetNum + limitNum - 1);
+      const { data, count, error } = await q;
       if (error) throw error;
 
       // FIX DEFINITIVO (2026-08-29): incluir conversas de novos contatos WhatsApp
@@ -947,8 +953,16 @@ async function listarConversas(req, res) {
         // nao_lidas: usa o campo do banco (incrementado pelo webhook ao receber, zerado ao abrir)
         nao_lidas: c.nao_lidas || 0,
       }));
-      console.log('WHATSAPP_CONVERSAS_LIST_SUCCESS', { total: comUltima.length });
-      return res.json({ sucesso: true, dados: comUltima, total: comUltima.length });
+      const totalReal = (count !== null && count !== undefined) ? count : comUltima.length;
+      console.log('WHATSAPP_CONVERSAS_LIST_SUCCESS', { total: totalReal, retornadas: comUltima.length, offset: offsetNum });
+      return res.json({
+        sucesso: true,
+        dados: comUltima,
+        total: totalReal,
+        offset: offsetNum,
+        limit: limitNum,
+        has_more: (offsetNum + comUltima.length) < totalReal,
+      });
     }
 
     const db = getDb();
