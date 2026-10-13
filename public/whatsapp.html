@@ -248,6 +248,46 @@
   </div>
 </div>
 
+<!-- Modal Confirmar Envio de Anexo (B05) -->
+<div class="modal-ov" id="modal-anexo-ov">
+  <div class="modal-box" style="max-width:440px;width:92%">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h3 style="font-size:1rem;font-weight:700;margin:0;display:flex;align-items:center;gap:8px">
+        <span>📎</span> Confirmar Envio de Anexo
+      </h3>
+      <button class="wa-icon-btn" id="btn-fechar-modal-anexo" style="cursor:pointer">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <!-- Preview Container -->
+    <div id="anexo-preview-container" style="background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:12px;margin-bottom:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:130px;max-height:240px;overflow:hidden">
+    </div>
+
+    <!-- Detalhes do Arquivo -->
+    <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,.04);padding:8px 12px;border-radius:8px;margin-bottom:12px;font-size:.78rem">
+      <span id="anexo-info-nome" style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:250px" title="">arquivo</span>
+      <span id="anexo-info-tamanho" style="color:var(--text-muted);flex-shrink:0">0 KB</span>
+    </div>
+
+    <!-- Legenda Opcional -->
+    <div style="margin-bottom:18px">
+      <input type="text" id="anexo-legenda-input" placeholder="Adicionar legenda... (opcional)" style="width:100%;box-sizing:border-box;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:9px 12px;color:var(--text-primary);font-family:inherit;font-size:.82rem;outline:none" autocomplete="off">
+    </div>
+
+    <!-- Ações -->
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button type="button" id="btn-cancelar-anexo" class="btn btn-secondary">
+        Cancelar
+      </button>
+      <button type="button" id="btn-confirmar-anexo" class="btn btn-primary" style="display:inline-flex;align-items:center;gap:6px">
+        <span>Enviar</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- ── Picker de Mensagens Padrão ── -->
 <div class="picker-ov" id="picker-ov">
   <div class="picker-box">

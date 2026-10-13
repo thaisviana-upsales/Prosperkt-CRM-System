@@ -1140,7 +1140,7 @@ function _waFileToBase64(file) {
  * MESMO padrão do áudio: FileReader → base64 → Auth.api() → backend → Evolution.
  * Não usa XHR + multipart (que tinha problemas de autenticação e CSP).
  */
-async function waEnviarArquivo(file) {
+async function waEnviarArquivo(file, caption = '') {
   if (!_convAtiva) { Toast.show('Selecione uma conversa primeiro.', 'error'); return; }
 
   const ext = (file.name.split('.').pop() || '').toLowerCase();
@@ -1183,10 +1183,11 @@ async function waEnviarArquivo(file) {
   // Cria mensagem temporária com status 'pending' para feedback visual imediato
   const tipoMidia = isVideo ? 'video' : ((file.type && file.type.startsWith('image/')) ? 'imagem' : 'arquivo');
   const tempMsgId = 'temp_file_' + Date.now();
+  const textoMsg = caption || (isVideo ? '🎥 Vídeo' : file.name);
   const pendingMsg = {
     id:           tempMsgId,
     conversa_id:  _convAtiva.id,
-    mensagem:     file.name,
+    mensagem:     textoMsg,
     tipo:         tipoMidia,
     arquivo_url:  null,
     arquivo_nome: file.name,
@@ -1222,6 +1223,7 @@ async function waEnviarArquivo(file) {
       arquivo_base64: base64,       // "data:mime;base64,..."
       arquivo_nome:   file.name,
       mime_type:      isVideo ? 'video/mp4' : (file.type || 'application/octet-stream'),
+      caption:        caption || undefined,
     });
   } catch (e) {
     console.error('[waEnviarArquivo] Exceção na requisição:', e);
@@ -1241,7 +1243,7 @@ async function waEnviarArquivo(file) {
     const msgData = r.data.dados || {
       id:                   Date.now().toString(),
       conversa_id:          _convAtiva.id,
-      mensagem:             isVideo ? '🎥 Vídeo' : file.name,
+      mensagem:             textoMsg,
       tipo:                 tipoMidia,
       arquivo_url:          null,
       arquivo_nome:         file.name,
@@ -1260,7 +1262,7 @@ async function waEnviarArquivo(file) {
     }
 
     renderMensagens();
-    const ultTexto = isVideo ? '🎥 Vídeo' : (tipoMidia === 'imagem' ? '🖼️ Imagem' : `📎 ${file.name}`);
+    const ultTexto = caption || (isVideo ? '🎥 Vídeo' : (tipoMidia === 'imagem' ? '🖼️ Imagem' : `📎 ${file.name}`));
     _conversas = _conversas.map(c => c.id === _convAtiva.id
       ? { ...c, ultima_mensagem: ultTexto, ultima_msg_em: new Date().toISOString() }
       : c);
@@ -1279,13 +1281,100 @@ async function waEnviarArquivo(file) {
   }
 }
 
+// ─── Modal de Confirmação e Pré-Visualização de Anexos (B05) ─────────────────
+let _arquivoPendenteAnexo = null;
+let _previewUrlAnexo = null;
+
+function abrirModalConfirmacaoAnexo(file) {
+  if (!_convAtiva) {
+    Toast.show('Selecione uma conversa primeiro.', 'error');
+    const fi = document.getElementById('file-input');
+    if (fi) fi.value = '';
+    return;
+  }
+  _arquivoPendenteAnexo = file;
+  const modal = document.getElementById('modal-anexo-ov');
+  if (!modal) return;
+
+  const nomeEl = document.getElementById('anexo-info-nome');
+  const tamEl = document.getElementById('anexo-info-tamanho');
+  const legInput = document.getElementById('anexo-legenda-input');
+  const prevContainer = document.getElementById('anexo-preview-container');
+
+  if (nomeEl) {
+    nomeEl.textContent = file.name;
+    nomeEl.title = file.name;
+  }
+  if (tamEl) tamEl.textContent = waFmtBytes(file.size);
+  if (legInput) legInput.value = '';
+
+  if (_previewUrlAnexo) {
+    URL.revokeObjectURL(_previewUrlAnexo);
+    _previewUrlAnexo = null;
+  }
+
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  const isImg = file.type && file.type.startsWith('image/');
+  const isVid = (file.type && file.type.startsWith('video/')) || ['mp4', 'mov', 'webm'].includes(ext);
+
+  if (isImg) {
+    _previewUrlAnexo = URL.createObjectURL(file);
+    prevContainer.innerHTML = `<img src="${_previewUrlAnexo}" alt="Preview" style="max-width:100%;max-height:220px;border-radius:8px;object-fit:contain;box-shadow:0 4px 12px rgba(0,0,0,.3)">`;
+  } else if (isVid) {
+    _previewUrlAnexo = URL.createObjectURL(file);
+    prevContainer.innerHTML = `<video src="${_previewUrlAnexo}" controls style="max-width:100%;max-height:220px;border-radius:8px;outline:none"></video>`;
+  } else {
+    const icone = ext === 'pdf' ? '📕' : ['xls', 'xlsx'].includes(ext) ? '📊' : ['doc', 'docx'].includes(ext) ? '📄' : '📎';
+    prevContainer.innerHTML = `
+      <div style="font-size:3rem;margin-bottom:6px">${icone}</div>
+      <div style="font-size:.8rem;color:var(--text-muted);font-weight:600;text-transform:uppercase">${ext || 'ARQUIVO'}</div>
+    `;
+  }
+
+  modal.classList.add('open');
+  setTimeout(() => legInput?.focus(), 80);
+}
+
+function fecharModalConfirmacaoAnexo() {
+  const modal = document.getElementById('modal-anexo-ov');
+  if (modal) modal.classList.remove('open');
+  if (_previewUrlAnexo) {
+    URL.revokeObjectURL(_previewUrlAnexo);
+    _previewUrlAnexo = null;
+  }
+  _arquivoPendenteAnexo = null;
+  const fi = document.getElementById('file-input');
+  if (fi) fi.value = '';
+}
+
+async function confirmarEnvioAnexo() {
+  if (!_arquivoPendenteAnexo) return;
+  const file = _arquivoPendenteAnexo;
+  const legInput = document.getElementById('anexo-legenda-input');
+  const caption = legInput ? legInput.value.trim() : '';
+
+  fecharModalConfirmacaoAnexo();
+  await waEnviarArquivo(file, caption);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('file-input')?.addEventListener('change', async function() {
+  // B05: Ao selecionar arquivo no clipe, abre modal de confirmação sem enviar automaticamente
+  document.getElementById('file-input')?.addEventListener('change', function() {
     if (!this.files?.length) return;
-    for (const f of Array.from(this.files)) {
-      await waEnviarArquivo(f);
+    abrirModalConfirmacaoAnexo(this.files[0]);
+  });
+
+  document.getElementById('btn-cancelar-anexo')?.addEventListener('click', fecharModalConfirmacaoAnexo);
+  document.getElementById('btn-fechar-modal-anexo')?.addEventListener('click', fecharModalConfirmacaoAnexo);
+  document.getElementById('btn-confirmar-anexo')?.addEventListener('click', confirmarEnvioAnexo);
+
+  document.getElementById('anexo-legenda-input')?.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      confirmarEnvioAnexo();
+    } else if (e.key === 'Escape') {
+      fecharModalConfirmacaoAnexo();
     }
-    this.value = '';
   });
 });
 
