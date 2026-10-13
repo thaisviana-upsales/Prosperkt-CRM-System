@@ -1157,6 +1157,20 @@ async function waEnviarArquivo(file) {
       Toast.show('Vídeo muito grande para envio pelo WhatsApp. Reduza o tamanho e tente novamente.', 'error');
       return;
     }
+    // Verificação rápida de cabeçalho ftyp no front-end para feedback imediato
+    try {
+      const headerSlice = await file.slice(0, 16).arrayBuffer();
+      const bytes = new Uint8Array(headerSlice);
+      const ftyp = String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]);
+      if (ftyp !== 'ftyp') {
+        if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
+          Toast.show('Vídeo WebM/MKV renomeado para MP4. O WhatsApp exige MP4 real (H.264/AAC).', 'error');
+          return;
+        }
+        Toast.show('O arquivo não é um MP4 válido. Envie em MP4 padrão (H.264/AAC).', 'error');
+        return;
+      }
+    } catch (_e) { /* fallback para validação do backend */ }
   } else {
     if (!waExtPermitida(file.name)) {
       Toast.show('Tipo de arquivo não permitido por segurança.', 'error'); return;

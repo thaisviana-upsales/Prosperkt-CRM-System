@@ -83,6 +83,129 @@ function resolveMediatype(mime) {
   return 'document';
 }
 
+/**
+ * Validador estrito de compatibilidade de vídeo MP4 para WhatsApp Mobile (B04).
+ * O WhatsApp mobile (Android/iOS) falha ao baixar/reproduzir vídeos que sejam:
+ * 1. Não-MP4 (WebM/MKV/AVI renomeados para .mp4);
+ * 2. Fragmentados (fMP4 gerados por MediaRecorder do browser sem índice contíguo);
+ * 3. Incompletos (sem átomo 'moov');
+ * 4. Codecs de vídeo incompatíveis (VP8, VP9, HEVC/H.265 em alguns devices, AV1 — exige H.264/AVC);
+ * 5. Codecs de áudio incompatíveis (Opus/Vorbis dentro de MP4 — exige AAC).
+ */
+function validarCompatibilidadeVideoMp4(buffer) {
+  if (!buffer || buffer.length < 16) {
+    return { valido: false, erro: 'Arquivo vazio ou muito curto para ser um vídeo MP4 válido.' };
+  }
+
+  // 1. Verifica cabeçalho ISO BMFF (bytes 4..7 === 'ftyp')
+  const ftypStr = buffer.toString('ascii', 4, 8);
+  if (ftypStr !== 'ftyp') {
+    // Detecta EBML (WebM / MKV)
+    if (buffer[0] === 0x1a && buffer[1] === 0x45 && buffer[2] === 0xdf && buffer[3] === 0xa3) {
+      return {
+        valido: false,
+        erro: 'O arquivo é um vídeo WebM/MKV renomeado para MP4. O WhatsApp mobile requer contêiner MP4 real (codec H.264 e áudio AAC).',
+      };
+    }
+    return {
+      valido: false,
+      erro: 'Arquivo não é um MP4 válido (cabeçalho ftyp ausente). Envie um vídeo no formato MP4 padrão (H.264/AAC).',
+    };
+  }
+
+  // 2. Analisa átomos/boxes do contêiner
+  let offset = 0;
+  let isFragmented = false;
+  let hasMoov = false;
+  let videoCodec = null;
+  let audioCodec = null;
+  const majorBrand = buffer.toString('ascii', 8, 12).trim();
+
+  while (offset + 8 <= buffer.length) {
+    let size = buffer.readUInt32BE(offset);
+    const type = buffer.toString('ascii', offset + 4, offset + 8);
+    let headerSize = 8;
+
+    if (size === 1) {
+      if (offset + 16 > buffer.length) break;
+      size = Number(buffer.readBigUInt64BE(offset + 8));
+      headerSize = 16;
+    } else if (size === 0) {
+      size = buffer.length - offset;
+    }
+
+    if (size < headerSize) break;
+
+    // Detecção de fragmentação (MediaRecorder do navegador / DASH fMP4)
+    if (type === 'moof' || type === 'mvex') {
+      isFragmented = true;
+    } else if (type === 'moov') {
+      hasMoov = true;
+      const moovBuf = buffer.subarray(offset + headerSize, Math.min(offset + size, buffer.length));
+      const str = moovBuf.toString('latin1');
+      if (str.includes('avc1') || str.includes('avc3')) videoCodec = 'h264';
+      else if (str.includes('hvc1') || str.includes('hev1')) videoCodec = 'hevc';
+      else if (str.includes('vp09') || str.includes('vp08')) videoCodec = 'vp8/vp9';
+      else if (str.includes('av01')) videoCodec = 'av1';
+
+      if (str.includes('mp4a')) audioCodec = 'aac';
+      else if (str.includes('Opus') || str.includes('opus')) audioCodec = 'opus';
+    }
+
+    offset += size;
+    if (offset >= buffer.length) break;
+  }
+
+  // Validação 1: Fragmentação (fMP4)
+  if (isFragmented) {
+    return {
+      valido: false,
+      isFragmented: true,
+      majorBrand,
+      erro: 'Vídeo gravado em formato fragmentado (fMP4/MediaRecorder). O WhatsApp mobile não consegue baixar esse formato. Exporte em MP4 padrão (H.264/AAC).',
+    };
+  }
+
+  // Validação 2: Índice moov
+  if (!hasMoov) {
+    return {
+      valido: false,
+      hasMoov: false,
+      majorBrand,
+      erro: 'Vídeo MP4 corrompido ou incompleto (índice moov ausente). Não é possível reproduzir no WhatsApp mobile.',
+    };
+  }
+
+  // Validação 3: Codec de vídeo
+  if (videoCodec && videoCodec !== 'h264') {
+    return {
+      valido: false,
+      videoCodec,
+      majorBrand,
+      erro: `Codec de vídeo incompatível (${videoCodec.toUpperCase()}). O WhatsApp mobile requer codec H.264 (AVC) e áudio AAC.`,
+    };
+  }
+
+  // Validação 4: Codec de áudio
+  if (audioCodec && audioCodec !== 'aac') {
+    return {
+      valido: false,
+      audioCodec,
+      majorBrand,
+      erro: `Codec de áudio incompatível (${audioCodec.toUpperCase()}). O WhatsApp mobile requer áudio AAC dentro do MP4.`,
+    };
+  }
+
+  return {
+    valido: true,
+    majorBrand,
+    videoCodec: videoCodec || 'h264',
+    audioCodec: audioCodec || 'nenhum/aac',
+    isFragmented: false,
+    hasMoov: true,
+  };
+}
+
 // ── POST /api/whatsapp/conversas/:id/arquivos ─────────────────────────────────
 async function enviarArquivo(req, res, next) {
   try {
@@ -152,12 +275,38 @@ async function enviarArquivo(req, res, next) {
         });
       }
 
+      // Validação profunda de compatibilidade com WhatsApp Mobile (B04)
+      const validacaoVideo = validarCompatibilidadeVideoMp4(arqBuffer);
+      console.log('WA_VIDEO_COMPATIBILITY_ANALYSIS', {
+        conversa_id: conversaId,
+        nome_arquivo: sanitizarNome(arqNome),
+        tamanho: arqBuffer.length,
+        ...validacaoVideo,
+      });
+
+      if (!validacaoVideo.valido) {
+        console.warn('WA_VIDEO_INCOMPATIBLE_REJECTED', {
+          conversa_id: conversaId,
+          nome_arquivo: sanitizarNome(arqNome),
+          tamanho: arqBuffer.length,
+          erro: validacaoVideo.erro,
+        });
+        return res.status(400).json({
+          sucesso: false,
+          enviado: false,
+          erro: validacaoVideo.erro,
+        });
+      }
+
       console.log('WA_VIDEO_SEND_VALIDATION_OK', {
         conversa_id: conversaId,
         nome_arquivo: sanitizarNome(arqNome),
         tamanho: arqBuffer.length,
         mimetype: 'video/mp4',
         mediatype: 'video',
+        majorBrand: validacaoVideo.majorBrand,
+        videoCodec: validacaoVideo.videoCodec,
+        audioCodec: validacaoVideo.audioCodec,
       });
     } else {
       if (!extPermitida(arqNome))
