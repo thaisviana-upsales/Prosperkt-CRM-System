@@ -25,8 +25,37 @@ const Avatar = (() => {
     return _fallback(u.nome || '?', size, extra);
   }
 
+  function obterIniciais(nome) {
+    if (!nome || typeof nome !== 'string') return '?';
+    const limpo = nome.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+    if (!limpo) return '?';
+
+    const segmentar = (str) => {
+      if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+        const seg = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+        return Array.from(seg.segment(str), s => s.segment);
+      }
+      return Array.from(str);
+    };
+
+    const palavras = limpo.split(/\s+/).filter(Boolean);
+    if (palavras.length === 0) return '?';
+
+    if (palavras.length === 1) {
+      const chars = segmentar(palavras[0]);
+      if (chars.length === 0) return '?';
+      if (chars.length === 1) return chars[0].toUpperCase();
+      return (chars[0] + chars[1]).toUpperCase();
+    }
+
+    const prim = segmentar(palavras[0])[0] || '';
+    const seg  = segmentar(palavras[1])[0] || '';
+    const result = (prim + seg).toUpperCase();
+    return result || '?';
+  }
+
   function _fallback(nome, size, extra = '') {
-    const initials = (nome || '?').slice(0, 2).toUpperCase();
+    const initials = obterIniciais(nome);
     const fs = Math.max(Math.round(size * 0.38), 10);
     return `<div title="${escAttr(nome)}" style="width:${size}px;height:${size}px;border-radius:50%;background:var(--grad-brand);display:flex;align-items:center;justify-content:center;font-size:${fs}px;font-weight:700;color:#0D0D0D;flex-shrink:0;${extra}">${initials}</div>`;
   }
@@ -114,5 +143,5 @@ const Avatar = (() => {
     inp.click();
   }
 
-  return { html, _fallbackEl, readAndResize, promptUpload };
+  return { html, _fallbackEl, readAndResize, promptUpload, obterIniciais };
 })();

@@ -68,6 +68,35 @@ function phonesMatch(a, b) {
   return rm9s(sa) === rm9s(sb);
 }
 
+// ─── Geração de Iniciais Unicode Seguras (B09) ────────────────────────────────
+function obterIniciais(nome) {
+  if (!nome || typeof nome !== 'string') return '?';
+  const limpo = nome.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  if (!limpo) return '?';
+
+  const segmentar = (str) => {
+    if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+      const seg = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+      return Array.from(seg.segment(str), s => s.segment);
+    }
+    return Array.from(str);
+  };
+
+  const palavras = limpo.split(/\s+/).filter(Boolean);
+  if (palavras.length === 0) return '?';
+
+  if (palavras.length === 1) {
+    const chars = segmentar(palavras[0]);
+    if (chars.length === 0) return '?';
+    if (chars.length === 1) return chars[0].toUpperCase();
+    return (chars[0] + chars[1]).toUpperCase();
+  }
+
+  const prim = segmentar(palavras[0])[0] || '';
+  const seg  = segmentar(palavras[1])[0] || '';
+  const result = (prim + seg).toUpperCase();
+  return result || '?';
+}
 
 // ─── Estado ───────────────────────────────────────────────────────────────────
 let _usuario   = null;
@@ -297,7 +326,7 @@ function renderListaConversas() {
 
   let html = lista.map(c => {
     const nome      = c.nome_contato || c.lead_nome || c.telefone;
-    const initials  = (nome || '??').slice(0, 2).toUpperCase();
+    const initials  = obterIniciais(nome);
     const preview   = c.ultima_mensagem ? escHtml(c.ultima_mensagem.slice(0, 50)) : '<em>Sem mensagens</em>';
     const isEnviada = c.ultima_direcao === 'enviada';
     const hora      = c.ultima_msg_em ? fmtHora(c.ultima_msg_em) : '';
@@ -391,7 +420,7 @@ async function abrirConversa(id) {
   const isLidPhone = (_convAtiva.telefone || '').startsWith('LID:');
   const telDisplay = isLidPhone ? 'Contato WhatsApp' : (_convAtiva.telefone || '—');
   document.getElementById('chat-nome').textContent = nome;
-  document.getElementById('chat-avatar').textContent = (nome || '??').slice(0, 2).toUpperCase();
+  document.getElementById('chat-avatar').textContent = obterIniciais(nome);
   document.getElementById('chat-tel').textContent = telDisplay;
   document.getElementById('chat-tel').style.color = '';
   document.getElementById('chat-tel').style.cursor = '';
