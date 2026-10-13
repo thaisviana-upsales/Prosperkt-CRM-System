@@ -941,7 +941,7 @@ async function listarConversas(req, res) {
       let ultimaMap = {};
       if (ids.length > 0) {
         const { data: msgs } = await sb.from(MENSAGENS_TABLE)
-          .select('conversa_id,mensagem,direcao,criado_em')
+          .select('conversa_id,mensagem,direcao,criado_em,tipo,arquivo_nome,mime_type')
           .in('conversa_id', ids)
           .order('criado_em', { ascending: false });
         (msgs || []).forEach(m => { if (!ultimaMap[m.conversa_id]) ultimaMap[m.conversa_id] = m; });
@@ -950,6 +950,9 @@ async function listarConversas(req, res) {
         ...c,
         ultima_mensagem: ultimaMap[c.id]?.mensagem || null,
         ultima_direcao:  ultimaMap[c.id]?.direcao  || null,
+        ultimo_tipo:     ultimaMap[c.id]?.tipo     || null,
+        ultimo_arquivo:  ultimaMap[c.id]?.arquivo_nome || null,
+        ultimo_mime:     ultimaMap[c.id]?.mime_type || null,
         // nao_lidas: usa o campo do banco (incrementado pelo webhook ao receber, zerado ao abrir)
         nao_lidas: c.nao_lidas || 0,
       }));

@@ -98,6 +98,60 @@ function obterIniciais(nome) {
   return result || '?';
 }
 
+// ─── Formatação de Prévia de Mídia na Lista (B10) ─────────────────────────────
+function formatarPreviewUltimaMensagem(item, tipoFallback) {
+  if (!item) return '<em>Sem mensagens</em>';
+
+  let txt = '';
+  let tipo = '';
+  let mime = '';
+  let arqNome = '';
+
+  if (typeof item === 'object') {
+    txt = (item.ultima_mensagem || item.mensagem || '').trim();
+    tipo = (item.ultimo_tipo || item.tipo || '').toLowerCase();
+    mime = (item.ultimo_mime || item.mime_type || '').toLowerCase();
+    arqNome = (item.ultimo_arquivo || item.arquivo_nome || '').toLowerCase();
+  } else {
+    txt = String(item || '').trim();
+    tipo = String(tipoFallback || '').toLowerCase();
+  }
+
+  // 1. Áudio: 🎤 Áudio
+  if (tipo === 'audio' || tipo === 'ptt' || /^\[?áudio\]?$/i.test(txt) || txt.includes('🎤') || mime.startsWith('audio/')) {
+    return '🎤 Áudio';
+  }
+
+  // 2. Vídeo: 🎬 Vídeo
+  if (tipo === 'video' || txt.startsWith('🎥') || txt.startsWith('🎬') || mime.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm)$/i.test(arqNome) || /\.(mp4|mov|avi|mkv|webm)$/i.test(txt)) {
+    const cleanTxt = txt.replace(/^(🎥|🎬)\s*(Vídeo:?\s*)?/i, '').replace(/\.(mp4|mov|avi|mkv|webm)$/i, '').trim();
+    return cleanTxt && !/^(video|vídeo)$/i.test(cleanTxt) ? `🎬 Vídeo: ${escHtml(cleanTxt)}` : '🎬 Vídeo';
+  }
+
+  // 3. Imagem: 📷 Foto
+  if (tipo === 'imagem' || tipo === 'image' || txt.startsWith('📷') || mime.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(arqNome) || /\.(jpg|jpeg|png|gif|webp)$/i.test(txt)) {
+    const cleanTxt = txt.replace(/^📷\s*(Foto:?\s*)?/i, '').replace(/\.(jpg|jpeg|png|gif|webp)$/i, '').trim();
+    return cleanTxt && !/^(foto|imagem)$/i.test(cleanTxt) ? `📷 Foto: ${escHtml(cleanTxt)}` : '📷 Foto';
+  }
+
+  // 4. Documento / PDF: 📎 Documento
+  if (mime === 'application/pdf' || /\.pdf$/i.test(arqNome) || /\.pdf$/i.test(txt) || /\.(doc|docx|odt|rtf|txt)$/i.test(arqNome) || /\.(doc|docx|odt|rtf|txt)$/i.test(txt)) {
+    return '📎 Documento';
+  }
+
+  // 5. Arquivo genérico: 📎 Arquivo
+  if (tipo === 'documento' || tipo === 'arquivo' || tipo === 'document' || txt.startsWith('📎') || arqNome || (item && (item.arquivo_url || item.ultimo_arquivo)) || /\.(xlsx|xls|csv|zip|rar|7z|tar|gz|pptx|ppt|json|xml)$/i.test(txt) || /\.(xlsx|xls|csv|zip|rar|7z|tar|gz|pptx|ppt|json|xml)$/i.test(arqNome)) {
+    return '📎 Arquivo';
+  }
+
+  // 6. Texto
+  if (txt) {
+    return escHtml(txt.slice(0, 50));
+  }
+
+  return '<em>Sem mensagens</em>';
+}
+
 // ─── Estado ───────────────────────────────────────────────────────────────────
 let _usuario   = null;
 let _conversas = [];
@@ -327,7 +381,7 @@ function renderListaConversas() {
   let html = lista.map(c => {
     const nome      = c.nome_contato || c.lead_nome || c.telefone;
     const initials  = obterIniciais(nome);
-    const preview   = c.ultima_mensagem ? escHtml(c.ultima_mensagem.slice(0, 50)) : '<em>Sem mensagens</em>';
+    const preview   = formatarPreviewUltimaMensagem(c);
     const isEnviada = c.ultima_direcao === 'enviada';
     const hora      = c.ultima_msg_em ? fmtHora(c.ultima_msg_em) : '';
     const isAtiva   = _convAtiva?.id === c.id;
