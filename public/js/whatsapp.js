@@ -83,7 +83,39 @@ let _filtroStatus = '';
 let _busca = '';
 let _leads = [];
 let _refreshTimer = null;
-let _pollingTimer = null;
+let _pollingConversasTimer = null;
+let _pollingMensagensTimer = null;
+const INTERVALO_POLLING_CONVERSAS = 25000; // 25s (reduz chamadas repetidas à lista)
+const INTERVALO_POLLING_MENSAGENS = 10000; // 10s (mantém mensagens recentes atualizadas)
+
+function iniciarPolling() {
+  pararPolling();
+
+  // Polling de mensagens da conversa aberta (10s)
+  _pollingMensagensTimer = setInterval(async () => {
+    if (document.visibilityState === 'hidden') return;
+    if (_convAtiva?.id) {
+      await pollMensagens(_convAtiva.id);
+    }
+  }, INTERVALO_POLLING_MENSAGENS);
+
+  // Polling da lista lateral de conversas (25s)
+  _pollingConversasTimer = setInterval(async () => {
+    if (document.visibilityState === 'hidden') return;
+    await carregarConversas(true);
+  }, INTERVALO_POLLING_CONVERSAS);
+}
+
+function pararPolling() {
+  if (_pollingMensagensTimer) {
+    clearInterval(_pollingMensagensTimer);
+    _pollingMensagensTimer = null;
+  }
+  if (_pollingConversasTimer) {
+    clearInterval(_pollingConversasTimer);
+    _pollingConversasTimer = null;
+  }
+}
 
 const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
 
@@ -126,12 +158,7 @@ async function init() {
   }
 
   bindEvents();
-
-  // Polling a cada 5s para novas mensagens recebidas
-  _pollingTimer = setInterval(async () => {
-    await carregarConversas(true);
-    if (_convAtiva) await pollMensagens(_convAtiva.id);
-  }, 5000);
+  iniciarPolling();
 }
 
 
@@ -1621,7 +1648,18 @@ function bindEvents() {
   }
   // Botões topo
   document.getElementById('btn-nova-conv').addEventListener('click', abrirModalNova);
-  document.getElementById('btn-refresh').addEventListener('click', () => carregarConversas());
+  document.getElementById('btn-refresh').addEventListener('click', () => {
+    carregarConversas();
+    if (_convAtiva?.id) pollMensagens(_convAtiva.id);
+  });
+
+  // Pausa/retomada de polling conforme visibilidade da aba (B07)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      if (_convAtiva?.id) pollMensagens(_convAtiva.id);
+      carregarConversas(true);
+    }
+  });
 
   // Filtros de status
   document.querySelectorAll('[data-status]').forEach(btn => {
