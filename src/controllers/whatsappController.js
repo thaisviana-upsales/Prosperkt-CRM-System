@@ -875,13 +875,16 @@ async function resolverConversaWhatsapp(sb, { tel, lidNumero, leadId, isLidJid, 
 async function listarConversas(req, res) {
   try {
     const { sb, isSupa } = getProvider();
-    const { vendedor_id, status, busca, limit = 50, offset = 0 } = req.query;
+    const { vendedor_id, status, busca, sem_historico, limit = 50, offset = 0 } = req.query;
     const limitNum  = Math.min(Math.max(Number(limit) || 50, 1), 200);
     const offsetNum = Math.max(Number(offset) || 0, 0);
     const role = req.usuario.role;
 
+    const filtrarSemHistorico = sem_historico === 'true' || status === 'SEM_HISTORICO';
+    const temBuscaAtiva = Boolean(busca && busca.trim());
+
     if (isSupa) {
-      console.log('WHATSAPP_CONVERSAS_LIST_START', { usuarioId: req.usuario.id, role, limit: limitNum, offset: offsetNum, busca: busca || null });
+      console.log('WHATSAPP_CONVERSAS_LIST_START', { usuarioId: req.usuario.id, role, limit: limitNum, offset: offsetNum, busca: busca || null, filtrarSemHistorico });
       let q = sb.from(CONVERSAS_TABLE)
         .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa,responsavel_id)', { count: 'exact' })
         .order('ultima_msg_em', { ascending: false, nullsFirst: false });
@@ -900,15 +903,23 @@ async function listarConversas(req, res) {
         }
       }
       if (vendedor_id) q = q.eq('vendedor_id', vendedor_id);
+
+      // B11 — Oculta conversas sem histórico da lista principal por padrão
+      if (filtrarSemHistorico) {
+        q = q.is('ultima_msg_em', null);
+      } else if (!temBuscaAtiva) {
+        q = q.not('ultima_msg_em', 'is', null);
+      }
+
       // Por padrão: exclui FECHADA e PENDENTE_IDENTIFICACAO
-      if (status) {
+      if (status && status !== 'SEM_HISTORICO') {
         q = q.eq('status', status);
-      } else {
+      } else if (!filtrarSemHistorico) {
         q = q.neq('status', 'FECHADA').neq('status', 'PENDENTE_IDENTIFICACAO');
       }
       // Exclui conversas explicitamente invisíveis (visivel=false)
       q = q.neq('visivel', false);
-      if (busca && busca.trim()) {
+      if (temBuscaAtiva) {
         const termo = busca.trim();
         q = q.or(`telefone.ilike.%${termo}%,nome_contato.ilike.%${termo}%`);
       }

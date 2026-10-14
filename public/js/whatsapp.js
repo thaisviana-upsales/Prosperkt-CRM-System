@@ -370,9 +370,11 @@ function renderListaConversas() {
       <div style="font-size:2rem;opacity:.3;margin-bottom:8px">💬</div>
       ${_busca
         ? `Nenhuma conversa encontrada para "<strong>${escHtml(_busca)}</strong>".<br><small style="opacity:.6">Tente outro nome ou número.</small>`
-        : _filtroStatus
-          ? `Nenhuma conversa com status <strong>${_filtroStatus}</strong>.<br><small style="opacity:.6">Tente o filtro "Todas".</small>`
-          : 'Nenhuma conversa encontrada.<br><small style="opacity:.6">Crie uma nova ou aguarde mensagens.</small>'
+        : _filtroStatus === 'SEM_HISTORICO'
+          ? 'Nenhuma conversa sem histórico.<br><small style="opacity:.6">Todos os contatos carregados possuem mensagens.</small>'
+          : _filtroStatus
+            ? `Nenhuma conversa com status <strong>${_filtroStatus}</strong>.<br><small style="opacity:.6">Tente o filtro "Todas".</small>`
+            : 'Nenhuma conversa encontrada.<br><small style="opacity:.6">Crie uma nova ou aguarde mensagens.</small>'
       }
     </div>`;
     return;
