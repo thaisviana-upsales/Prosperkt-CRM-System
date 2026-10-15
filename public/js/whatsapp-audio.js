@@ -21,6 +21,17 @@
 (function WAAudioModuleV2() {
   'use strict';
 
+  // ─── Modo Debug Seguro (B12) ──────────────────────────────────────────────────
+  const _isDev = (typeof _IS_DEV !== 'undefined') ? _IS_DEV : (
+    typeof window !== 'undefined' && (
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1' ||
+      window.__DEBUG__ === true
+    )
+  );
+  const logDebug  = (...args) => { if (_isDev) console.log(...args); };
+  const warnDebug = (...args) => { if (_isDev) console.warn(...args); };
+
   // ─── Constantes ─────────────────────────────────────────────────────────────
   const ENDPOINT_AUDIO = '/api/whatsapp/audio/send'; // URL completa — não prefixar novamente com /api
 
@@ -74,14 +85,14 @@
 
     // Valida blob
     if (!blob || blob.size === 0 || !blob.type.startsWith('audio/')) {
-      console.warn('FRONT_AUDIO_BLOB_INVALID', { existe: !!blob, size: blob?.size, type: blob?.type });
+      warnDebug('FRONT_AUDIO_BLOB_INVALID', { existe: !!blob, size: blob?.size, type: blob?.type });
       _toast('Não foi possível gravar o áudio. Tente novamente.', 'error');
       try { if (typeof _setRecUI === 'function') _setRecUI('idle'); } catch {}
       return;
     }
 
     _previewBlob = blob;
-    console.log('FRONT_AUDIO_BLOB_READY', { size: blob.size, type: blob.type });
+    logDebug('FRONT_AUDIO_BLOB_READY', { size: blob.size, type: blob.type });
 
     // ── Lê duração do timer de gravação (wa-rec-timer) ──────────────────
     // O timer fica no DOM com o último valor após parar de gravar (ex: "0:15")
@@ -90,7 +101,7 @@
       const txt     = timerEl?.textContent?.trim() || '0:00';
       const parts   = txt.split(':').map(Number);
       _previewDuration = (parts[0] || 0) * 60 + (parts[1] || 0);
-      console.log('FRONT_AUDIO_DURATION_READ', { timer: txt, segundos: _previewDuration });
+      logDebug('FRONT_AUDIO_DURATION_READ', { timer: txt, segundos: _previewDuration });
     } catch { _previewDuration = 0; }
 
     // ── Fix 1: corrigir duração 0:00 (Chrome/WebM não embute duration) ─────────
@@ -109,10 +120,10 @@
           prevEl.addEventListener('timeupdate', function onSeek() {
             prevEl.removeEventListener('timeupdate', onSeek);
             prevEl.currentTime = 0;
-            console.log('FRONT_AUDIO_PREVIEW_READY', { duration: prevEl.duration, seekFix: true });
+            logDebug('FRONT_AUDIO_PREVIEW_READY', { duration: prevEl.duration, seekFix: true });
           });
         } else {
-          console.log('FRONT_AUDIO_PREVIEW_READY', { duration: prevEl.duration });
+          logDebug('FRONT_AUDIO_PREVIEW_READY', { duration: prevEl.duration });
         }
       };
 
@@ -125,7 +136,7 @@
       }
 
       prevEl.addEventListener('error', (e) => {
-        console.warn('FRONT_AUDIO_PREVIEW_ERROR', { error: e.type });
+        warnDebug('FRONT_AUDIO_PREVIEW_ERROR', { error: e.type });
       }, { once: true });
     }
 
@@ -174,14 +185,14 @@
     // Remove o label mobile se existir
     const mbl = document.getElementById('wa-mobile-rec-label');
     if (mbl) mbl.remove();
-    console.log('FRONT_AUDIO_CANCEL');
+    logDebug('FRONT_AUDIO_CANCEL');
   }
 
   // ─── MutationObserver no div de preview ─────────────────────────────────────
   function _configurarObserver() {
     const previewDiv = document.getElementById('wa-audio-preview');
     if (!previewDiv) {
-      console.warn('[WAAudio] wa-audio-preview não encontrado.');
+      warnDebug('[WAAudio] wa-audio-preview não encontrado.');
       return;
     }
 
@@ -197,7 +208,7 @@
     });
 
     obs.observe(previewDiv, { attributes: true, attributeFilter: ['style'] });
-    console.log('[WAAudio] Observer configurado em wa-audio-preview.');
+    logDebug('[WAAudio] Observer configurado em wa-audio-preview.');
   }
 
   // ─── Envio via FormData → endpoint isolado ───────────────────────────────────
@@ -206,7 +217,7 @@
     const conv = _getConvAtiva();
 
     if (!blob || blob.size === 0) {
-      console.warn('FRONT_AUDIO_SEND_ERROR', { motivo: 'blob ausente ou vazio' });
+      warnDebug('FRONT_AUDIO_SEND_ERROR', { motivo: 'blob ausente ou vazio' });
       return;
     }
     if (!conv?.id) {
@@ -214,7 +225,7 @@
       return;
     }
 
-    console.log('FRONT_AUDIO_SEND_CLICK', { conversaId: conv.id, size: blob.size, type: blob.type });
+    logDebug('FRONT_AUDIO_SEND_CLICK', { conversaId: conv.id, size: blob.size, type: blob.type });
 
     // Bloqueia botão durante envio
     const sendBtn = document.getElementById('btn-send');
@@ -238,7 +249,7 @@
       const xhr   = new XMLHttpRequest();
       const token = _getToken();
 
-      console.log('WA_AUDIO_AUTH_TOKEN_PRESENT', { present: !!token });
+      logDebug('WA_AUDIO_AUTH_TOKEN_PRESENT', { present: !!token });
 
       if (!token) {
         // Sessão expirada — não adianta nem tentar
@@ -251,12 +262,12 @@
       xhr.setRequestHeader('Authorization', 'Bearer ' + token);
       // NÃO definir Content-Type — browser gera boundary do FormData automaticamente
 
-      console.log('WA_AUDIO_SEND_REQUEST_START', { conversaId: conv.id, size: blob.size, type: blob.type });
+      logDebug('WA_AUDIO_SEND_REQUEST_START', { conversaId: conv.id, size: blob.size, type: blob.type });
 
       xhr.addEventListener('load', () => {
         let json = {};
         try { json = JSON.parse(xhr.responseText); } catch {}
-        console.log('WA_AUDIO_SEND_RESPONSE', { status: xhr.status, ok: xhr.status >= 200 && xhr.status < 300 });
+        logDebug('WA_AUDIO_SEND_RESPONSE', { status: xhr.status, ok: xhr.status >= 200 && xhr.status < 300 });
         if (xhr.status >= 200 && xhr.status < 300 && json.sucesso) {
           resolve({ ok: true, dados: json.dados, _evo_ok: json._evo_ok });
         } else {
@@ -269,7 +280,7 @@
 
 
     if (result.ok) {
-      console.log('FRONT_AUDIO_SEND_SUCCESS', { conversaId: conv.id, evoOk: result._evo_ok });
+      logDebug('FRONT_AUDIO_SEND_SUCCESS', { conversaId: conv.id, evoOk: result._evo_ok });
 
       // Reset UI — usa cancelarGravacao de whatsapp.js para limpar estado
       try { if (typeof cancelarGravacao === 'function') cancelarGravacao(); } catch {}
@@ -335,7 +346,7 @@
   function _configurarInterceptor() {
     const sendBtn = document.getElementById('btn-send');
     if (!sendBtn) {
-      console.warn('[WAAudio] btn-send não encontrado — interceptor inativo.');
+      warnDebug('[WAAudio] btn-send não encontrado — interceptor inativo.');
       return;
     }
 
@@ -349,12 +360,12 @@
       // ── Intercepta: impede whatsapp.js de processar como texto ──────────────
       e.stopImmediatePropagation();
 
-      console.log('FRONT_AUDIO_SEND_CLICK_INTERCEPTED', { size: _previewBlob.size });
+      logDebug('FRONT_AUDIO_SEND_CLICK_INTERCEPTED', { size: _previewBlob.size });
       await _enviarAudioStorage();
 
     }, true /* capture = roda antes do bubble de whatsapp.js */);
 
-    console.log('[WAAudio] Interceptor de áudio registrado (capture phase).');
+    logDebug('[WAAudio] Interceptor de áudio registrado (capture phase).');
   }
 
   // ─── API pública (opcional — pode chamar do console) ─────────────────────────
@@ -371,13 +382,13 @@
           headers: token ? { Authorization: 'Bearer ' + token } : {},
         });
         const json = await r.json();
-        console.log('[WAAudio] Sync resultado:', json);
+        logDebug('[WAAudio] Sync resultado:', json);
         if (json.sincronizados > 0 && typeof carregarMensagens === 'function') {
           carregarMensagens(_convAtiva);
         }
         return json;
       } catch (err) {
-        console.warn('[WAAudio] Sync erro:', err.message);
+        warnDebug('[WAAudio] Sync erro:', err.message);
       }
     },
   };
@@ -435,7 +446,7 @@
     });
     _durObserver.observe(document.body, { childList: true, subtree: true });
 
-    console.log('[WAAudio v2] Módulo de áudio isolado ativo.');
+    logDebug('[WAAudio v2] Módulo de áudio isolado ativo.');
 
     // ── Fix data-src dos players: redireciona TODOS para /api/whatsapp/audio/play/:msgId ──
     // MOTIVO: servirMidia (frozen, /api/whatsapp/media/) ao buscar Supabase signed URL
@@ -460,7 +471,7 @@
       )) {
         player.dataset.src      = `/api/whatsapp/audio/play/${msgId}`;
         player.dataset.srcFixed = '1';
-        console.log('[WAAudio] data-src corrigido → /audio/play/', { msgId, antigo: src.slice(0, 60) });
+        logDebug('[WAAudio] data-src corrigido → /audio/play/', { msgId, antigo: src.slice(0, 60) });
       }
     }
 
@@ -487,21 +498,21 @@
 
       _syncTimestamps.set(conv.id, Date.now());
       _syncInFlight = true;
-      console.log('[WAAudio] Player inativo detectado — sincronizando audio recebido...', { conversaId: conv.id });
+      logDebug('[WAAudio] Player inativo detectado — sincronizando audio recebido...', { conversaId: conv.id });
 
       WAAudioSync.sincronizar(conv.id)
         .then(resultado => {
           _syncInFlight = false;
           if (resultado?.sincronizados > 0) {
-            console.log('[WAAudio] Sync OK — mensagens atualizadas:', resultado.sincronizados);
+            logDebug('[WAAudio] Sync OK — mensagens atualizadas:', resultado.sincronizados);
             // carregarMensagens ja e chamado dentro de WAAudioSync.sincronizar()
           } else {
-            console.log('[WAAudio] Sync: nenhum audio pendente ou Evolution indisponivel.');
+            logDebug('[WAAudio] Sync: nenhum audio pendente ou Evolution indisponivel.');
           }
         })
         .catch(e => {
           _syncInFlight = false;
-          console.warn('[WAAudio] Auto-sync erro:', e?.message);
+          warnDebug('[WAAudio] Auto-sync erro:', e?.message);
         });
     }
 

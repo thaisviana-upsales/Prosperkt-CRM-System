@@ -1,3 +1,12 @@
+// ─── Modo Debug Seguro (B12) ──────────────────────────────────────────────────
+const _IS_DEV = typeof window !== 'undefined' && (
+  window.location.hostname === 'localhost' ||
+  window.location.hostname === '127.0.0.1' ||
+  window.__DEBUG__ === true
+);
+const logDebug  = (...args) => { if (_IS_DEV) console.log(...args); };
+const warnDebug = (...args) => { if (_IS_DEV) console.warn(...args); };
+
 // ─── Normalização de telefone — espelho do backend normalizePhoneBR() ──────────────
 // Números oficiais do CRM — NUNCA são clientes
 const _NUMEROS_OFICIAIS_WA = new Set(['5511987994910', '5511967668883']);
@@ -5,11 +14,11 @@ const _NUMEROS_OFICIAIS_WA = new Set(['5511987994910', '5511967668883']);
 function normalizePhone(tel) {
   if (!tel) return '';
   let t = String(tel).trim();
-  console.log('WHATSAPP_PHONE_NORMALIZE_INPUT', t.slice(0, 20));
+  logDebug('WHATSAPP_PHONE_NORMALIZE_INPUT', t.slice(0, 20));
 
   // Rejeita @lid explicitamente
   if (t.includes('@lid')) {
-    console.log('WHATSAPP_PHONE_REJECTED_LID', 'sufixo_lid');
+    logDebug('WHATSAPP_PHONE_REJECTED_LID', 'sufixo_lid');
     return '';
   }
 
@@ -18,7 +27,7 @@ function normalizePhone(tel) {
 
   // Se tiver letras no username → é JID nomeado ou LID, rejeita
   if (/[a-zA-Z]/.test(username)) {
-    console.log('WHATSAPP_PHONE_REJECTED_LID', 'letras_no_jid');
+    logDebug('WHATSAPP_PHONE_REJECTED_LID', 'letras_no_jid');
     return '';
   }
 
@@ -27,7 +36,7 @@ function normalizePhone(tel) {
 
   // LID por comprimento: 14+ dígitos sem DDI 55 = identificador interno
   if (t.length >= 14 && !t.startsWith('55')) {
-    console.log('WHATSAPP_PHONE_REJECTED_LID', 'comprimento_14_sem_55');
+    logDebug('WHATSAPP_PHONE_REJECTED_LID', 'comprimento_14_sem_55');
     return '';
   }
 
@@ -46,11 +55,11 @@ function normalizePhone(tel) {
 
   // Rejeita número oficial — não é cliente
   if (_NUMEROS_OFICIAIS_WA.has(t)) {
-    console.log('WHATSAPP_PHONE_REJECTED_OFFICIAL_AS_CLIENT', t.slice(0, 6) + '****');
+    logDebug('WHATSAPP_PHONE_REJECTED_OFFICIAL_AS_CLIENT', t.slice(0, 6) + '****');
     return '';
   }
 
-  console.log('WHATSAPP_PHONE_NORMALIZE_RESULT', t.slice(0, 6) + '****');
+  logDebug('WHATSAPP_PHONE_NORMALIZE_RESULT', t.slice(0, 6) + '****');
   return t;
 }
 
@@ -217,8 +226,8 @@ async function init() {
   const phoneParam  = normalizePhone(phoneRaw);
   const nomeParam   = decodeURIComponent(params.get('nome') || '');
 
-  // Log obrigatório — visível no console do browser
-  console.log('PIPELINE_WHATSAPP_CLICK:', {
+  // Log de diagnóstico sob modo debug
+  logDebug('PIPELINE_WHATSAPP_CLICK:', {
     leadId:             leadIdParam,
     nomeLead:           nomeParam,
     telefoneOriginal:   phoneRaw,
@@ -522,19 +531,13 @@ async function abrirConversa(id) {
 async function resolverConversaLead(leadId, tel, nome) {
   const telNorm = normalizePhone(tel);
 
-  // ── LOGS OBRIGATÓRIOS ──────────────────────────────────────────────────────
-  console.log('WHATSAPP_OPEN_BY_URL_START', { leadId, telRaw: tel, telNorm });
-  console.log('WHATSAPP_OPEN_BY_URL_LEAD_ID', leadId || 'sem_lead_id');
-  console.log('WHATSAPP_OPEN_BY_URL_PHONE_RAW', tel);
-  console.log('WHATSAPP_OPEN_BY_URL_PHONE_NORMALIZED', telNorm);
-  console.log('WHATSAPP_CONVERSA_RESOLVE_START', { leadId, tel: telNorm, nome });
-  console.log('WHATSAPP_PAGE_URL_PARAMS', {
-    leadId: new URLSearchParams(window.location.search).get('lead_id'),
-    phone:  new URLSearchParams(window.location.search).get('phone'),
-    nome:   new URLSearchParams(window.location.search).get('nome'),
-  });
-  console.log('WHATSAPP_TARGET_PHONE_NORMALIZED', telNorm);
-  console.log('WHATSAPP_URL_PARAMS:', { leadIdParam: leadId, phoneParam: telNorm, nomeParam: nome });
+  // ── LOGS DE DIAGNÓSTICO (modo debug) ──────────────────────────────────────
+  logDebug('WHATSAPP_OPEN_BY_URL_START', { leadId, telRaw: tel, telNorm });
+  logDebug('WHATSAPP_OPEN_BY_URL_LEAD_ID', leadId || 'sem_lead_id');
+  logDebug('WHATSAPP_OPEN_BY_URL_PHONE_RAW', tel);
+  logDebug('WHATSAPP_OPEN_BY_URL_PHONE_NORMALIZED', telNorm);
+  logDebug('WHATSAPP_CONVERSA_RESOLVE_START', { leadId, tel: telNorm, nome });
+  logDebug('WHATSAPP_TARGET_PHONE_NORMALIZED', telNorm);
 
   // Estado de loading na área de chat
   document.getElementById('chat-empty').style.display = 'none';
@@ -564,14 +567,14 @@ async function resolverConversaLead(leadId, tel, nome) {
 
         // VALIDAÇÃO: aceita variantes de formato (com/sem 55, com/sem nono dígito)
         if (telNorm && !phonesMatch(telCandidato, telNorm)) {
-          console.warn('WHATSAPP_CONVERSA_TELEFONE_DIVERGENTE:', { conversaId: candidata.id, telefoneDaConversa: telCandidato, telEsperado: telNorm });
+          warnDebug('WHATSAPP_CONVERSA_TELEFONE_DIVERGENTE:', { conversaId: candidata.id, telefoneDaConversa: telCandidato, telEsperado: telNorm });
         } else {
           conv = { ...candidata, lead_nome: nome };
-          console.log('WHATSAPP_CONVERSA_FOUND_BY_LEAD', { conversaId: conv.id, telefone: telCandidato, nome: conv.nome_contato });
+          logDebug('WHATSAPP_CONVERSA_FOUND_BY_LEAD', { conversaId: conv.id, telefone: telCandidato, nome: conv.nome_contato });
         }
       }
     } catch (e) {
-      console.warn('[WA] resolverConversaLead: erro busca por lead_id:', e.message);
+      warnDebug('[WA] resolverConversaLead: erro busca por lead_id:', e.message);
     }
   }
 
@@ -581,9 +584,6 @@ async function resolverConversaLead(leadId, tel, nome) {
       const r2 = await Auth.api('GET', '/whatsapp/conversas?limit=200');
       const lista = r2?.ok ? (r2.data.dados || []) : [];
 
-      // CORREÇÃO: reidrata _conversas com a lista fresca buscada neste passo
-      // Garante que a sidebar não fique vazia quando a chamada inicial de carregarConversas
-      // falhou ou retornou dados parciais — abrindo via URL não pode zerar a lista lateral
       if (lista.length > 0) {
         _conversas = lista;
         renderListaConversas();
@@ -592,22 +592,22 @@ async function resolverConversaLead(leadId, tel, nome) {
       const porTel = lista.find(c => phonesMatch(c.telefone, telNorm));
       if (porTel) {
         conv = { ...porTel, lead_nome: nome };
-        console.log('WHATSAPP_CONVERSA_FOUND_BY_PHONE', { conversaId: conv.id, telefone: normalizePhone(conv.telefone), nome: conv.nome_contato });
+        logDebug('WHATSAPP_CONVERSA_FOUND_BY_PHONE', { conversaId: conv.id, telefone: normalizePhone(conv.telefone), nome: conv.nome_contato });
         // Vincula lead_id se ausente
         if (leadId && !porTel.lead_id) {
           Auth.api('POST', '/whatsapp/conversas', { telefone: telNorm, lead_id: leadId, nome_contato: nome }).catch(() => {});
         }
       } else {
-        console.log('WHATSAPP_SELECTED_CONVERSATION — nenhuma conversa encontrada por telefone', telNorm, '— conversas existentes:', lista.map(c => normalizePhone(c.telefone)));
+        logDebug('WHATSAPP_SELECTED_CONVERSATION — nenhuma conversa encontrada por telefone', telNorm);
       }
     } catch (e) {
-      console.warn('[WA] resolverConversaLead: erro busca por telefone:', e.message);
+      warnDebug('[WA] resolverConversaLead: erro busca por telefone:', e.message);
     }
   }
 
   // ── PASSO 3: Não existe → cria automaticamente ──────────────────────────────
   if (!conv && telNorm) {
-    console.log('WHATSAPP_CONVERSA_RESOLVIDA: criando nova conversa para', telNorm);
+    logDebug('WHATSAPP_CONVERSA_RESOLVIDA: criando nova conversa para', telNorm);
     try {
       const rc = await Auth.api('POST', '/whatsapp/conversas', {
         telefone: telNorm, lead_id: leadId || null,
@@ -615,7 +615,7 @@ async function resolverConversaLead(leadId, tel, nome) {
       });
       if (rc?.ok && rc.data.dados) {
         conv = { ...rc.data.dados, lead_nome: nome };
-        console.log('WHATSAPP_CONVERSA_CREATED', { conversaId: conv.id, telefone: conv.telefone, nome: conv.nome_contato });
+        logDebug('WHATSAPP_CONVERSA_CREATED', { conversaId: conv.id, telefone: conv.telefone, nome: conv.nome_contato });
         Toast.show('Conversa iniciada!', 'success');
       }
     } catch (e) {
@@ -625,7 +625,7 @@ async function resolverConversaLead(leadId, tel, nome) {
 
   // ── PASSO 4: Abre ou exibe erro ─────────────────────────────────────────────
   if (conv) {
-    console.log('WHATSAPP_CONVERSA_RESOLVIDA:', {
+    logDebug('WHATSAPP_CONVERSA_RESOLVIDA:', {
       leadIdParam: leadId, telefoneNormalizado: telNorm,
       conversaEncontrada: !conv._criada, conversaCriada: !!conv._criada,
       conversaIdAberta: conv.id,
@@ -790,7 +790,7 @@ async function carregarMensagens(convId, silencioso = false) {
     return;
   }
   _mensagens = r.data.dados || [];
-  console.log('WHATSAPP_MESSAGES_LOADED', _mensagens.length, 'msgs | convId:', convId);
+  logDebug('WHATSAPP_MESSAGES_LOADED', _mensagens.length, 'msgs | convId:', convId);
 
   // Zera nao_lidas localmente — backend já foi avisado pelo endpoint que retorna mensagens
   _conversas = _conversas.map(c =>
@@ -854,7 +854,7 @@ async function pollMensagens(convId) {
     if (novas.length !== qtdAntes || idAnterior !== idNovo) {
       _mensagens = novas;
       renderMensagens(); // scrollToBottom interno
-      console.log('CONVERSA_MESSAGES_HAS_RECEIVED', novas.filter(m => m.direcao === 'recebida').length);
+      logDebug('CONVERSA_MESSAGES_HAS_RECEIVED', novas.filter(m => m.direcao === 'recebida').length);
     } else if (teveMudancaStatus) {
       // Atualiza somente os badges/checks de status no DOM preservando o scroll do usuário
       _mensagens = novas;
@@ -870,9 +870,9 @@ async function pollMensagens(convId) {
           }
         }
       });
-      console.log('CONVERSA_MESSAGES_STATUS_UPDATED');
+      logDebug('CONVERSA_MESSAGES_STATUS_UPDATED');
     }
-    console.log('CONVERSA_MESSAGES_LOAD_COUNT', novas.length);
+    logDebug('CONVERSA_MESSAGES_LOAD_COUNT', novas.length);
   } catch(e) {
     // Silencioso — erro de polling não interrompe nada
   }
@@ -1065,7 +1065,7 @@ function renderMensagem(msg) {
              ${msg.status === 'pending' ? 'Enviando áudio...' : (msg.status === 'failed' || msg.status === 'erro' ? 'Falha no envio do áudio' : 'Áudio não disponível')}
            </span>
          </div>`;
-    console.log('WHATSAPP_AUDIO_RENDERED', { msgId: msg.id, hasSrc: !!audioSrc, dur });
+    logDebug('WHATSAPP_AUDIO_RENDERED', { msgId: msg.id, hasSrc: !!audioSrc, dur });
   } else if (tipoEfetivo === 'video') {
     const nome  = msg.arquivo_nome || 'Vídeo';
     // Recebidos: botão JS com Bearer token. Enviados: sem download (não ficou salvo).
@@ -1157,16 +1157,11 @@ async function enviarMensagem() {
   btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="animation:spin 1s linear infinite"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4" stroke-dashoffset="10"/></svg>`;
   input.disabled = true;
 
-  // Log diagnóstico: payload enviado
-  console.log('CRM_SEND_WHATSAPP_START', { conversaId: _convAtiva.id, leadId: _convAtiva.lead_id||null, phoneNorm: normalizePhone(_convAtiva.telefone) });
-  console.log('CRM_SEND_WHATSAPP_CONVERSA_ID', _convAtiva.id);
-  console.log('CRM_SEND_WHATSAPP_PHONE_NORMALIZED', normalizePhone(_convAtiva.telefone));
-  console.log('FRONTEND_SEND_START', {
+  // Log diagnóstico sob modo debug
+  logDebug('CRM_SEND_WHATSAPP_START', { conversaId: _convAtiva.id });
+  logDebug('FRONTEND_SEND_START', {
     conversaId:   _convAtiva.id,
-    telefone:     _convAtiva.telefone,
-    textoSlice:   txt.slice(0, 80),
     endpoint:     `/whatsapp/conversas/${_convAtiva.id}/mensagens`,
-    payload:      { mensagem: txt, tipo: 'texto' },
   });
 
   let r = null;
@@ -1175,8 +1170,7 @@ async function enviarMensagem() {
       mensagem: txt, tipo: 'texto'
     });
   } catch (netErr) {
-    // Erro de rede (fetch falhou, JSON malformado, etc.)
-    console.error('FRONTEND_SEND_NETWORK_ERROR', netErr);
+    console.error('FRONTEND_SEND_NETWORK_ERROR', netErr.message);
     r = null;
   }
 
@@ -1185,17 +1179,11 @@ async function enviarMensagem() {
   input.disabled = false;
   input.focus();
 
-  // Log diagnóstico: resposta completa
+  // Log diagnóstico sob modo debug
   const _hs = r?.status||(r===null?'NULL':'UNKNOWN');
-  console.log('EVOLUTION_SEND_RESPONSE_STATUS', _hs, '| ok:', r?.ok, '| sucesso:', r?.data?.sucesso);
-  if (r?.ok||r?.data?.sucesso) console.log('EVOLUTION_SEND_SUCCESS');
-  else console.error('EVOLUTION_SEND_ERROR', r?.data?.erro||'sem resposta do servidor');
-  console.log('FRONTEND_SEND_RESPONSE', {
-    r_ok:     r?.ok,
-    r_status: r?.status,
-    r_data:   r?.data,
-    r_null:   r === null,
-  });
+  logDebug('EVOLUTION_SEND_RESPONSE_STATUS', _hs, '| ok:', r?.ok, '| sucesso:', r?.data?.sucesso);
+  if (r?.ok||r?.data?.sucesso) logDebug('EVOLUTION_SEND_SUCCESS');
+  else warnDebug('EVOLUTION_SEND_ERROR', r?.data?.erro||'sem resposta do servidor');
 
   // ── Determina sucesso ──────────────────────────────────────────────────────
   // Sucesso primário: HTTP 2xx (r.ok === true)
@@ -1204,7 +1192,7 @@ async function enviarMensagem() {
   const bodyOk    = r?.data?.sucesso === true;
   const isSuccess = httpOk || bodyOk;
 
-  console.log('FRONTEND_SEND_SUCCESS_CHECK', { httpOk, bodyOk, isSuccess });
+  logDebug('FRONTEND_SEND_SUCCESS_CHECK', { httpOk, bodyOk, isSuccess });
 
   if (isSuccess) {
     // ✅ Sucesso confirmado → limpa input, mostra mensagem, atualiza lista
@@ -1233,7 +1221,7 @@ async function enviarMensagem() {
     renderListaConversas();
     document.getElementById('conv-item-' + _convAtiva.id)?.classList.add('active');
 
-    console.log('FRONTEND_SEND_OK — input limpo, mensagem renderizada');
+    logDebug('FRONTEND_SEND_OK — input limpo, mensagem renderizada');
 
   } else {
     // ❌ Falha real → mantém texto no input, exibe erro
@@ -1965,11 +1953,11 @@ const WAAudio = (() => {
       .then(blob => {
         const blobUrl = URL.createObjectURL(blob);
         audioEl.src = blobUrl;
-        console.log('WA_AUDIO_PLAY_BLOB_READY', { msgId: container.dataset.id, bytes: blob.size, type: blob.type });
+        logDebug('WA_AUDIO_PLAY_BLOB_READY', { msgId: container.dataset.id, bytes: blob.size, type: blob.type });
         return audioEl.play();
       })
       .catch(err => {
-        console.warn('WA_AUDIO_PLAY_FALLBACK', { src, err: err?.message });
+        warnDebug('WA_AUDIO_PLAY_FALLBACK', { src, err: err?.message });
         audioEl.src = src;
         audioEl.play().catch(() => { if (typeof Toast !== 'undefined') Toast.show('Erro ao reproduzir áudio.', 'error'); });
       });
@@ -2047,7 +2035,7 @@ async function iniciarGravacao() {
     return;
   }
 
-  console.log('WHATSAPP_AUDIO_RECORD_START');
+  logDebug('WHATSAPP_AUDIO_RECORD_START');
   _audioChunks = [];
   _audioBlob   = null;
   _recSeconds  = 0;
@@ -2067,7 +2055,7 @@ async function iniciarGravacao() {
     const prevEl = document.getElementById('wa-audio-prev-el');
     if (prevEl) prevEl.src = URL.createObjectURL(_audioBlob);
     _setRecUI('preview');
-    console.log('WHATSAPP_AUDIO_RECORD_STOP', { duration: _recSeconds, mimeType });
+    logDebug('WHATSAPP_AUDIO_RECORD_STOP', { duration: _recSeconds, mimeType });
   };
   _mediaRecorder.start(100);
   _setRecUI('recording');
@@ -2102,7 +2090,7 @@ function cancelarGravacao() {
 
 async function enviarAudio(blob) {
   if (!_convAtiva || !blob) return;
-  console.log('WHATSAPP_AUDIO_SEND_START', { conversaId: _convAtiva.id, blobSize: blob.size, blobType: blob.type });
+  logDebug('WHATSAPP_AUDIO_SEND_START', { conversaId: _convAtiva.id, blobSize: blob.size, blobType: blob.type });
 
   const sendBtn = document.getElementById('btn-send');
   if (sendBtn) {
@@ -2127,7 +2115,7 @@ async function enviarAudio(blob) {
   fd.append('conversa_id', _convAtiva.id);
   if (durSeg > 0) fd.append('duracao', String(durSeg));
 
-  console.log('WHATSAPP_AUDIO_SEND_FORMDATA', { conversaId: _convAtiva.id, durSeg, blobSize: blob.size });
+  logDebug('WHATSAPP_AUDIO_SEND_FORMDATA', { conversaId: _convAtiva.id, durSeg, blobSize: blob.size });
 
   // Insere mensagem temporária pending para feedback imediato
   const tempAudId = 'temp_aud_' + Date.now();
@@ -2158,13 +2146,13 @@ async function enviarAudio(blob) {
     r = null;
   }
 
-  console.log('WHATSAPP_AUDIO_SEND_RESPONSE', { status: r?.status, ok: r?.ok, sucesso: r?.data?.sucesso, enviado: r?.data?.enviado, evoOk: r?.data?._evo_ok });
+  logDebug('WHATSAPP_AUDIO_SEND_RESPONSE', { status: r?.status, ok: r?.ok, sucesso: r?.data?.sucesso, enviado: r?.data?.enviado, evoOk: r?.data?._evo_ok });
 
   // REGRA B02: Só considera enviado com sucesso real da Evolution (enviado: true e _evo_ok: true)
   const isAudioSuccess = r?.ok && r.data?.sucesso && r.data?.enviado === true && r.data?._evo_ok;
 
   if (isAudioSuccess) {
-    console.log('WHATSAPP_AUDIO_SEND_SUCCESS', { evoOk: r.data._evo_ok, msgId: r.data.dados?.id });
+    logDebug('WHATSAPP_AUDIO_SEND_SUCCESS', { evoOk: r.data._evo_ok, msgId: r.data.dados?.id });
     Toast.show('Áudio enviado!', 'success');
     const msgReal = r.data.dados || {
       id: Date.now().toString(), conversa_id: _convAtiva.id,
@@ -2258,9 +2246,9 @@ async function _waLoadImg(el) {
 
     // Substitui o placeholder pelo <img> carregado
     el.replaceWith(img);
-    console.log('WA_IMG_LOADED', { msgId, bytes: blob.size, type: blob.type });
+    logDebug('WA_IMG_LOADED', { msgId, bytes: blob.size, type: blob.type });
   } catch(e) {
-    console.warn('WA_IMG_LOAD_FAIL', { msgId, err: e.message });
+    warnDebug('WA_IMG_LOAD_FAIL', { msgId, err: e.message });
     // Oculta placeholder e exibe card de erro
     el.style.display = 'none';
     const errEl = el.nextElementSibling;

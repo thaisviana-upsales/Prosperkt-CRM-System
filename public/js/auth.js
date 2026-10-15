@@ -11,6 +11,14 @@
  */
 
 const Auth = (() => {
+  const _IS_DEV = typeof window !== 'undefined' && (
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.__DEBUG__ === true
+  );
+  const logDebug  = (...args) => { if (_IS_DEV) console.log(...args); };
+  const warnDebug = (...args) => { if (_IS_DEV) console.warn(...args); };
+
   const TOKEN_KEY = 'pkt_access_token';
   const USER_KEY  = 'pkt_user';
   let _refreshTimer   = null;
@@ -66,15 +74,15 @@ const Auth = (() => {
     const expiresIn = (decoded.exp * 1000) - Date.now() - 90_000; // 90s antes
     if (expiresIn <= 0) {
       // Já expirado ou prestes a expirar — faz refresh imediato
-      console.log('AUTH_SCHEDULE_REFRESH: token expirado/iminente, refresh imediato');
+      logDebug('AUTH_SCHEDULE_REFRESH: token expirado/iminente, refresh imediato');
       refreshToken();
       return;
     }
 
     const minutos = Math.round(expiresIn / 60000);
-    console.log(`AUTH_SCHEDULE_REFRESH: próximo refresh em ~${minutos}min`);
+    logDebug(`AUTH_SCHEDULE_REFRESH: próximo refresh em ~${minutos}min`);
     _refreshTimer = setTimeout(() => {
-      console.log('AUTH_TIMER_REFRESH: disparando refresh agendado');
+      logDebug('AUTH_TIMER_REFRESH: disparando refresh agendado');
       refreshToken();
     }, expiresIn);
   }
@@ -85,13 +93,13 @@ const Auth = (() => {
   async function refreshToken() {
     // Se já há um refresh em andamento, aguarda o mesmo resultado
     if (_refreshPromise) {
-      console.log('AUTH_REFRESH_SERIALIZED: aguardando refresh em andamento...');
+      logDebug('AUTH_REFRESH_SERIALIZED: aguardando refresh em andamento...');
       return _refreshPromise;
     }
 
     _refreshPromise = (async () => {
       try {
-        console.log('AUTH_REFRESH_START: solicitando novo access token via cookie');
+        logDebug('AUTH_REFRESH_START: solicitando novo access token via cookie');
         const res  = await fetch('/api/auth/refresh', {
           method: 'POST',
           credentials: 'include',
@@ -99,13 +107,13 @@ const Auth = (() => {
         const data = await res.json();
         if (data.sucesso && data.accessToken) {
           setSession(data.accessToken, data.usuario);
-          console.log('AUTH_REFRESH_OK: novo token obtido e agendado');
+          logDebug('AUTH_REFRESH_OK: novo token obtido e agendado');
           return true;
         }
-        console.warn('AUTH_REFRESH_FAILED:', data.erro || data.codigo || 'sem detalhe');
+        warnDebug('AUTH_REFRESH_FAILED:', data.erro || data.codigo || 'sem detalhe');
         return false;
       } catch (e) {
-        console.warn('AUTH_REFRESH_ERROR:', e.message);
+        warnDebug('AUTH_REFRESH_ERROR:', e.message);
         return false;
       } finally {
         _refreshPromise = null;
@@ -121,12 +129,12 @@ const Auth = (() => {
   function redirectToLogin(motivo = '') {
     // Proteção: nunca executa mais de uma vez por ciclo de vida da página
     if (window.__redirectingToLogin) {
-      console.warn('AUTH_REDIRECT_BLOCKED: redirect já em andamento, ignorando');
+      warnDebug('AUTH_REDIRECT_BLOCKED: redirect já em andamento, ignorando');
       return;
     }
     window.__redirectingToLogin = true;
 
-    console.warn('AUTH_REDIRECT_TO_LOGIN_ONCE', { motivo });
+    warnDebug('AUTH_REDIRECT_TO_LOGIN_ONCE', { motivo });
 
     // Exibe mensagem clara antes de redirecionar
     _mostrarSessaoExpirada(() => {
@@ -154,8 +162,8 @@ const Auth = (() => {
   async function api(method, path, body = null, _retried = false) {
     const token = getToken();
 
-    // Log de diagnóstico mínimo
-    console.log('AUTH_REQUEST_WITH_TOKEN', { hasToken: !!token, url: `/api${path}` });
+    // Log de diagnóstico sob modo debug
+    logDebug('AUTH_REQUEST_WITH_TOKEN', { hasToken: !!token, url: `/api${path}` });
 
     const opts = {
       method,
@@ -173,13 +181,13 @@ const Auth = (() => {
       data = await res.json();
     } catch (e) {
       // Erro de rede (offline, CORS, etc.) — não é 401, não faz redirect
-      console.warn('AUTH_NETWORK_ERROR', { url: `/api${path}`, error: e.message });
+      warnDebug('AUTH_NETWORK_ERROR', { url: `/api${path}`, error: e.message });
       return { ok: false, status: 0, data: { sucesso: false, erro: 'Erro de rede.' } };
     }
 
     // ── Tratamento de 401 ────────────────────────────────────────────────
     if (res.status === 401) {
-      console.warn('AUTH_401_RECEIVED', { url: `/api${path}`, status: res.status, codigo: data?.codigo });
+      warnDebug('AUTH_401_RECEIVED', { url: `/api${path}`, status: res.status, codigo: data?.codigo });
 
       // Se já redirecionando, para tudo
       if (window.__redirectingToLogin) {
@@ -190,7 +198,7 @@ const Auth = (() => {
       if (!_retried) {
         const refreshed = await refreshToken();
         if (refreshed) {
-          console.log('AUTH_RETRY_AFTER_REFRESH', { url: `/api${path}` });
+          logDebug('AUTH_RETRY_AFTER_REFRESH', { url: `/api${path}` });
           return api(method, path, body, true); // tenta novamente com novo token
         }
       }
