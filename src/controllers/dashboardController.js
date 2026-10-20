@@ -97,6 +97,105 @@ function valorVenda(l) {
   return Number(l.valor||0);
 }
 
+// ── Tempo Médio de Resposta (B14) ───────────────────────────────────────────
+// Diferença em minutos entre a 1ª mensagem recebida e a 1ª resposta enviada
+async function calcularTempoResposta({ sb, isSupa, sqlite, funil_id, responsavel_id, periodo }) {
+  try {
+    if (isSupa) {
+      let q = sb
+        .from('mensagens_whatsapp')
+        .select('conversa_id, direcao, criado_em')
+        .order('criado_em', { ascending: true })
+        .limit(3000);
+
+      if (periodo?.ini) q = q.gte('criado_em', periodo.ini + 'T00:00:00-03:00');
+      if (periodo?.fim) q = q.lte('criado_em', periodo.fim + 'T23:59:59.999-03:00');
+
+      const { data: msgs, error } = await q;
+      if (error || !msgs?.length) {
+        return { media_minutos: null, leads_com_resposta: 0, mensagem: 'Sem mensagens registradas no período' };
+      }
+
+      let conversasValidasSet = null;
+      if (responsavel_id || funil_id) {
+        let qConv = sb.from('conversas_whatsapp').select('id, lead_id, vendedor_id');
+        if (responsavel_id) qConv = qConv.eq('vendedor_id', responsavel_id);
+        const { data: convs } = await qConv;
+        conversasValidasSet = new Set((convs || []).map(c => c.id));
+      }
+
+      const convMap = {};
+      for (const m of msgs) {
+        if (!m.conversa_id || !m.criado_em) continue;
+        if (conversasValidasSet && !conversasValidasSet.has(m.conversa_id)) continue;
+
+        if (!convMap[m.conversa_id]) {
+          convMap[m.conversa_id] = { primeiraRecebida: null, primeiraResposta: null };
+        }
+        const c = convMap[m.conversa_id];
+        if (m.direcao === 'recebida' && !c.primeiraRecebida) {
+          c.primeiraRecebida = new Date(m.criado_em);
+        } else if (m.direcao === 'enviada' && c.primeiraRecebida && !c.primeiraResposta) {
+          const respDate = new Date(m.criado_em);
+          if (respDate >= c.primeiraRecebida) {
+            c.primeiraResposta = respDate;
+          }
+        }
+      }
+
+      const temposMin = [];
+      for (const c of Object.values(convMap)) {
+        if (c.primeiraRecebida && c.primeiraResposta) {
+          const diffMin = (c.primeiraResposta - c.primeiraRecebida) / (1000 * 60);
+          if (diffMin >= 0 && diffMin <= 7 * 24 * 60) {
+            temposMin.push(diffMin);
+          }
+        }
+      }
+
+      if (temposMin.length === 0) {
+        return { media_minutos: null, leads_com_resposta: 0, mensagem: 'Sem respostas registradas no período' };
+      }
+
+      const soma = temposMin.reduce((a, b) => a + b, 0);
+      const media = Math.round(soma / temposMin.length);
+      return { media_minutos: media, leads_com_resposta: temposMin.length };
+    } else {
+      const db = sqlite;
+      if (!db || typeof db.prepare !== 'function') return { media_minutos: null, leads_com_resposta: 0 };
+      try {
+        const rows = db.prepare(`SELECT conversa_id, direcao, criado_em FROM mensagens_whatsapp ORDER BY criado_em ASC LIMIT 3000`).all();
+        const convMap = {};
+        for (const m of rows) {
+          if (!convMap[m.conversa_id]) convMap[m.conversa_id] = { primeiraRecebida: null, primeiraResposta: null };
+          const c = convMap[m.conversa_id];
+          if (m.direcao === 'recebida' && !c.primeiraRecebida) {
+            c.primeiraRecebida = new Date(m.criado_em);
+          } else if (m.direcao === 'enviada' && c.primeiraRecebida && !c.primeiraResposta) {
+            const respDate = new Date(m.criado_em);
+            if (respDate >= c.primeiraRecebida) c.primeiraResposta = respDate;
+          }
+        }
+        const temposMin = [];
+        for (const c of Object.values(convMap)) {
+          if (c.primeiraRecebida && c.primeiraResposta) {
+            const diffMin = (c.primeiraResposta - c.primeiraRecebida) / (1000 * 60);
+            if (diffMin >= 0 && diffMin <= 7 * 24 * 60) temposMin.push(diffMin);
+          }
+        }
+        if (temposMin.length === 0) return { media_minutos: null, leads_com_resposta: 0 };
+        const soma = temposMin.reduce((a, b) => a + b, 0);
+        return { media_minutos: Math.round(soma / temposMin.length), leads_com_resposta: temposMin.length };
+      } catch {
+        return { media_minutos: null, leads_com_resposta: 0 };
+      }
+    }
+  } catch (err) {
+    console.warn('[calcularTempoResposta] Erro:', err.message);
+    return { media_minutos: null, leads_com_resposta: 0 };
+  }
+}
+
 // GET /api/dashboard
 async function resumo(req, res) {
   const { sb, isSupa, sqlite } = getProvider();
@@ -293,7 +392,9 @@ async function resumo(req, res) {
         etapasEstrutura = etapasEstrutura.filter(e => !ETAPAS_SEM_DASHBOARD.includes(e.nome));
         etapasEstrutura.forEach(e => { nomeParaIds[e.nome] = [e.id]; });
       } else {
-        let { data: funisAtivos } = await sb.from('funis').select('id,nome').in('ativo', [1, true]);
+        // Fix B14: PostgREST falha com .in('ativo', [1, true]) por type mismatch (integer). Busca todos e filtra em memória.
+        let { data: todosFunis } = await sb.from('funis').select('id,nome,ativo');
+        let funisAtivos = (todosFunis || []).filter(f => f.ativo === 1 || f.ativo === true || f.ativo === '1' || f.ativo === 'true');
         funisAtivos = (funisAtivos || []).filter(f => {
           // Exclui a lista unificada de funis operacionais/inativos (Carteira + Adm + inativos)
           if (funisExcluirIds?.length && funisExcluirIds.includes(f.id)) return false;
@@ -363,6 +464,10 @@ async function resumo(req, res) {
         const leadIdsPassaram = new Set();
         for (const eid of ids) {
           for (const lid of (passagemMap[eid] || [])) leadIdsPassaram.add(lid);
+        }
+        // Fix B14: Contabiliza também leads que estão atualmente nesta etapa mesmo sem migração prévia do histórico
+        for (const l of (leadsParaFunil || [])) {
+          if (ids.includes(l.etapa_id)) leadIdsPassaram.add(l.id);
         }
         const qty = leadIdsPassaram.size;
         const isG = e.is_ganho || e.probabilidade >= 100 || /venda|vendas|ganho|fechad|fechamento/i.test(e.nome||'');
@@ -508,12 +613,18 @@ async function resumo(req, res) {
       }
       const leads_por_dia = Object.values(diaMap).sort((a,b) => a.dia.localeCompare(b.dia));
 
+      // ── 8. Tempo Médio de Resposta (B14) ──────────────────────────────────
+      const tempo_resposta = await calcularTempoResposta({
+        sb, isSupa: true, sqlite: null,
+        funil_id, responsavel_id, periodo
+      });
+
       return res.json({ sucesso:true, dados:{
         kpis,
         funil_visual,
         por_funil,
         ranking,
-        tempo_resposta: { media_minutos: null, leads_com_resposta: 0 },
+        tempo_resposta,
         leads_por_dia,
       }});
     }
@@ -807,6 +918,11 @@ async function resumo(req, res) {
       ${base}${baseFilter} GROUP BY dia ORDER BY dia ASC LIMIT 30`
     ).all(...params);
 
+    const tempo_resposta_sql = await calcularTempoResposta({
+      sb: null, isSupa: false, sqlite: db,
+      funil_id, responsavel_id, periodo
+    });
+
     return res.json({ sucesso:true, dados:{
       kpis: {
         ...kpis,
@@ -818,7 +934,7 @@ async function resumo(req, res) {
       funil_visual,
       por_funil,
       ranking,
-      tempo_resposta: { media_minutos: null, leads_com_resposta: 0 },
+      tempo_resposta: tempo_resposta_sql,
       leads_por_dia,
     }});
 

@@ -440,12 +440,22 @@ function renderPorFunil(lista) {
 
 
 function renderTempoResposta(t) {
-  const el = document.getElementById('resp-num');
-  if (!t || !t.media_minutos) { el.textContent = '—'; document.getElementById('resp-leads').textContent = 'Sem dados de interação'; return; }
+  const el  = document.getElementById('resp-num');
+  const sub = document.getElementById('resp-leads');
+  if (!t || t.media_minutos == null) {
+    if (el) el.textContent = '—';
+    if (sub) sub.textContent = t?.mensagem || 'Sem dados de interação';
+    return;
+  }
   const mins = Math.round(t.media_minutos);
-  if (mins < 60) { el.textContent = mins + ' min'; }
-  else { el.textContent = (mins/60).toFixed(1) + ' h'; }
-  document.getElementById('resp-leads').textContent = `Baseado em ${t.leads_com_resposta} leads com 1ª interação registrada`;
+  if (mins < 60) {
+    if (el) el.textContent = mins + ' min';
+  } else {
+    if (el) el.textContent = (mins / 60).toFixed(1) + ' h';
+  }
+  if (sub) {
+    sub.textContent = `Baseado em ${t.leads_com_resposta} conversa${t.leads_com_resposta !== 1 ? 's' : ''} com resposta`;
+  }
 }
 
 function renderSparkline(dias) {
