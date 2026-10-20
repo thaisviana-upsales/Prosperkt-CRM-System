@@ -517,31 +517,27 @@ async function adicionarNota(req, res) {
 async function clonarDeLeadGanho(leadData, responsavelId, sb, isSupa, sqlite) {
   try {
     const agr = agora();
-    const dataVenda = agr.slice(0, 10);
+    const dataVendaRef = (leadData.data_venda || leadData.ganho_em || leadData.data_fechamento || agr).slice(0, 10);
 
-    // Idempotência: verifica se já existe card para este lead NO MESMO DIA
-    // (permite novos ciclos em datas diferentes — recompras)
-    const diaVenda = agr.slice(0, 10);
+    // Idempotência robusta: verifica se já existe card ativo ou para a mesma data de venda
     let existente = null;
     if (isSupa) {
       const { data } = await sb.from('adm_vendas')
-        .select('id')
+        .select('id, etapa, status, data_venda')
         .eq('lead_original_id', leadData.id)
-        .gte('data_venda', diaVenda)
-        .lte('data_venda', diaVenda)
-        .neq('status', 'cancelado')
-        .limit(1);
-      existente = data?.[0] || null;
+        .neq('status', 'cancelado');
+      existente = (data || []).find(c => c.etapa !== 'concluido' || c.data_venda === dataVendaRef) || null;
     } else {
       try {
-        existente = sqlite.prepare(
-          `SELECT id FROM adm_vendas WHERE lead_original_id=? AND data_venda=? AND status != 'cancelado' LIMIT 1`
-        ).get(leadData.id, diaVenda);
+        const cards = sqlite.prepare(
+          `SELECT id, etapa, status, data_venda FROM adm_vendas WHERE lead_original_id=? AND status != 'cancelado'`
+        ).all(leadData.id);
+        existente = (cards || []).find(c => c.etapa !== 'concluido' || c.data_venda === dataVendaRef) || null;
       } catch { existente = null; }
     }
 
     if (existente) {
-      console.log(`[ADM_VENDAS] Lead ${leadData.id} já tem card para ${diaVenda} (${existente.id}) — skip.`);
+      console.log(`[ADM_VENDAS] Lead ${leadData.id} já tem card ativo/mesma data (${existente.id}) — skip.`);
       return { sucesso: true, criado: false, id: existente.id };
     }
 
@@ -591,7 +587,7 @@ async function clonarDeLeadGanho(leadData, responsavelId, sb, isSupa, sqlite) {
       bairro_entrega:     leadData.bairro_entrega     || null,
       cidade_entrega:     leadData.cidade_entrega     || null,
       uf_entrega:         leadData.uf_entrega         || null,
-      data_venda:        diaVenda,
+      data_venda:        dataVendaRef,
       data_entrega_prevista: null,
       etapa:   'acompanhamento',
       status:  'ativo',
@@ -627,6 +623,125 @@ async function clonarDeLeadGanho(leadData, responsavelId, sb, isSupa, sqlite) {
   } catch(e) {
     console.error('[ADM_VENDAS] ❌ Erro ao clonar lead:', e.message);
     return { sucesso: false, criado: false, erro: e.message };
+  }
+}
+
+// ── Rotina idempotente de sincronização de vendas existentes ───────────────────
+async function sincronizarVendasExistentes({ sb, isSupa, sqlite, usuarioId }) {
+  // 1. Etapas ganhas
+  let etapas = [];
+  if (isSupa) {
+    const { data } = await sb.from('etapas').select('id, nome, is_ganho, is_perdido, probabilidade');
+    etapas = data || [];
+  } else {
+    try { etapas = sqlite.prepare('SELECT id, nome, is_ganho, is_perdido, probabilidade FROM etapas').all() || []; } catch {}
+  }
+  const etapaMap = {};
+  for (const e of etapas) etapaMap[e.id] = e;
+
+  // 2. Funis comerciais válidos (exclui Adm de Vendas e funis inativos)
+  const REGEX_FUNIL_ADM = /adm\.?\s*(de\s*)?vendas|administra/i;
+  let funis = [];
+  if (isSupa) {
+    const { data } = await sb.from('funis').select('id, nome, ativo');
+    funis = data || [];
+  } else {
+    try { funis = sqlite.prepare('SELECT id, nome, ativo FROM funis').all() || []; } catch {}
+  }
+  const funilMap = {};
+  for (const f of funis) funilMap[f.id] = f;
+
+  // 3. Leads ativos não deletados
+  let leads = [];
+  if (isSupa) {
+    const { data } = await sb.from('leads').select('*').is('deleted_at', null);
+    leads = data || [];
+  } else {
+    try { leads = sqlite.prepare("SELECT * FROM leads WHERE deleted_at IS NULL").all() || []; } catch {}
+  }
+
+  // 4. Cards existentes em adm_vendas
+  let admVendasExistentes = [];
+  if (isSupa) {
+    const { data } = await sb.from('adm_vendas').select('id, lead_original_id, status, data_venda, etapa');
+    admVendasExistentes = data || [];
+  } else {
+    try { admVendasExistentes = sqlite.prepare("SELECT id, lead_original_id, status, data_venda, etapa FROM adm_vendas").all() || []; } catch {}
+  }
+  const admMap = {};
+  for (const a of admVendasExistentes) {
+    if (a.status !== 'cancelado') admMap[a.lead_original_id] = a;
+  }
+
+  let sincronizados = 0;
+  let ja_existentes = 0;
+  let erros = 0;
+  const detalhes = [];
+
+  for (const l of leads) {
+    const f = funilMap[l.funil_id];
+    if (f && REGEX_FUNIL_ADM.test(f.nome)) continue;
+    if (f && (f.ativo === 0 || f.ativo === false)) continue;
+
+    const s = (l.status || '').toUpperCase();
+    const et = etapaMap[l.etapa_id];
+    const isPerdido = ['PERDIDO','CANCELADO'].includes(s) || l.perdido_em || et?.is_perdido || /perd|cancel/i.test(et?.nome || '');
+    if (isPerdido) continue;
+
+    const isGanho = ['GANHO','VENDIDO','VENDA'].includes(s) || l.ganho_em || et?.is_ganho || et?.probabilidade >= 100 || /venda|vendas|ganho|fechad|fechamento/i.test(et?.nome || '');
+    if (!isGanho) continue;
+
+    // Se já tem card em adm_vendas ativo/não cancelado
+    if (admMap[l.id]) {
+      ja_existentes++;
+      detalhes.push({ lead_id: l.id, nome: l.nome, status: 'ja_existia', adm_id: admMap[l.id].id });
+      continue;
+    }
+
+    // Busca produtos associados ao lead
+    let leadProdutos = [];
+    try {
+      if (isSupa) {
+        const { data: prods } = await sb.from('lead_produtos').select('*').eq('lead_id', l.id).is('deleted_at', null).order('criado_em');
+        leadProdutos = prods || [];
+      }
+    } catch {}
+
+    const leadParaClone = { ...l, _lead_produtos: leadProdutos };
+    const resClone = await clonarDeLeadGanho(leadParaClone, l.responsavel_id, sb, isSupa, sqlite);
+    if (resClone.criado) {
+      sincronizados++;
+      detalhes.push({ lead_id: l.id, nome: l.nome, status: 'sincronizado', adm_id: resClone.id });
+      admMap[l.id] = { id: resClone.id };
+    } else if (resClone.sucesso) {
+      ja_existentes++;
+      detalhes.push({ lead_id: l.id, nome: l.nome, status: 'ja_existia', adm_id: resClone.id });
+    } else {
+      erros++;
+      detalhes.push({ lead_id: l.id, nome: l.nome, status: 'erro', erro: resClone.erro });
+    }
+  }
+
+  console.log(`[ADM_VENDAS_SYNC] Finalizado: ${sincronizados} criados, ${ja_existentes} já existiam, ${erros} erros.`);
+  return {
+    total_elegiveis: sincronizados + ja_existentes + erros,
+    sincronizados,
+    ja_existentes,
+    erros,
+    detalhes,
+  };
+}
+
+// ── POST /api/adm-vendas/sincronizar ──────────────────────────────────────────
+async function sincronizar(req, res) {
+  try {
+    const { sb, isSupa, sqlite } = getProvider();
+    const usuarioId = req.usuario?.id;
+    const resultado = await sincronizarVendasExistentes({ sb, isSupa, sqlite, usuarioId });
+    return res.json({ sucesso: true, ...resultado });
+  } catch (e) {
+    console.error('[ADM_VENDAS_SINCRONIZAR]', e.message);
+    return res.status(500).json({ sucesso: false, erro: e.message });
   }
 }
 
@@ -671,6 +786,8 @@ module.exports = {
   historico,
   adicionarNota,
   clonarDeLeadGanho,
+  sincronizar,
+  sincronizarVendasExistentes,
   ETAPAS_ORDEM,
   ETAPAS_LABELS,
 };

@@ -167,26 +167,30 @@ async function clonarSeVendas({ leadId, etapaDestId, sb, isSupa, sqlite, usuario
 
       if (isSupa && sb) {
         // Timeline visual no lead original (lead_timeline)
-        await sb.from('lead_timeline').insert({
-          id:          crypto.randomBytes(16).toString('hex'),
-          lead_id:     leadId,
-          tipo:        'ADM_VENDAS_CRIADO',
-          descricao:   `Lead clonado automaticamente para Administração de Vendas após venda comercial. Card ADM criado (ID: ${resultado.id}).`,
-          usuario_id:  usuarioId || null,
-          criado_em:   agora,
-        }).catch(() => {});
+        try {
+          await sb.from('lead_timeline').insert({
+            id:          crypto.randomBytes(16).toString('hex'),
+            lead_id:     leadId,
+            tipo:        'ADM_VENDAS_CRIADO',
+            descricao:   `Lead clonado automaticamente para Administração de Vendas após venda comercial. Card ADM criado (ID: ${resultado.id}).`,
+            usuario_id:  usuarioId || null,
+            criado_em:   agora,
+          });
+        } catch (_) {}
 
         // Log de auditoria (logs)
-        await sb.from('logs').insert({
-          id:           crypto.randomBytes(16).toString('hex'),
-          acao:         'ADM_VENDAS_CRIADO',
-          entidade:     'leads',
-          entidade_id:  leadId,
-          descricao:    `Venda concluída e enviada para Administração de Vendas. Card ADM: ${resultado.id}.`,
-          depois:       JSON.stringify({ adm_venda_id: resultado.id, funil_origem: funilNome }),
-          criado_em:    agora,
-          origem_acao:  'automacao',
-        }).catch(() => {});
+        try {
+          await sb.from('logs').insert({
+            id:           crypto.randomBytes(16).toString('hex'),
+            acao:         'ADM_VENDAS_CRIADO',
+            entidade:     'leads',
+            entidade_id:  leadId,
+            descricao:    `Venda concluída e enviada para Administração de Vendas. Card ADM: ${resultado.id}.`,
+            depois:       JSON.stringify({ adm_venda_id: resultado.id, funil_origem: funilNome }),
+            criado_em:    agora,
+            origem_acao:  'automacao',
+          });
+        } catch (_) {}
       }
 
     } else if (!resultado.sucesso) {

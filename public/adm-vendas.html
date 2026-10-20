@@ -67,10 +67,16 @@
           <p class="page-subtitle" style="margin:0">Acompanhamento operacional do pós-venda</p>
         </div>
       </div>
-      <button class="btn btn-primary btn-sm" id="btn-nova-venda">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        Nova Venda
-      </button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-secondary btn-sm" id="btn-sync-vendas" title="Sincroniza vendas fechadas com Adm. de Vendas">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          Sincronizar Vendas
+        </button>
+        <button class="btn btn-primary btn-sm" id="btn-nova-venda">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Nova Venda
+        </button>
+      </div>
     </div>
 
     <!-- Stats -->
@@ -630,6 +636,33 @@ function bindEvents() {
   document.getElementById('btn-nova-venda').addEventListener('click', ()=>{
     Toast.show('Vendas são criadas automaticamente ao marcar um lead como ganho na Pipeline.','info');
   });
+
+  const btnSync = document.getElementById('btn-sync-vendas');
+  if (btnSync) {
+    if (_usuario && _usuario.role === 'VENDEDOR') {
+      btnSync.style.display = 'none';
+    } else {
+      btnSync.addEventListener('click', async () => {
+        btnSync.disabled = true;
+        btnSync.innerHTML = '<span class="spinner" style="width:12px;height:12px;display:inline-block"></span> Sincronizando...';
+        try {
+          const r = await Auth.api('POST', '/adm-vendas/sincronizar');
+          if (r?.ok && r?.data?.sucesso) {
+            const { sincronizados, ja_existentes, total_elegiveis } = r.data;
+            Toast.show(`Sincronização: ${sincronizados} novos pedidos criados (${ja_existentes} já existentes de ${total_elegiveis} elegíveis).`, 'success');
+            await carregar();
+          } else {
+            Toast.show(r?.data?.erro || 'Erro ao sincronizar vendas.', 'error');
+          }
+        } catch (e) {
+          Toast.show('Erro de conexão ao sincronizar.', 'error');
+        } finally {
+          btnSync.disabled = false;
+          btnSync.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Sincronizar Vendas`;
+        }
+      });
+    }
+  }
 }
 
 init();

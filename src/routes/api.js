@@ -262,6 +262,7 @@ router.get   ('/whatsapp/mensagens/:msgId/arquivo',           autenticar, arquiv
 // ADMINISTRAÇÃO DE VENDAS (pós-venda operacional)
 // ─────────────────────────────────────────────────────────────────────────────
 router.get   ('/adm-vendas',                  autenticar, admVendasCtrl.listar);
+router.post  ('/adm-vendas/sincronizar',        autenticar, admVendasCtrl.sincronizar);
 router.get   ('/adm-vendas/:id',              autenticar, admVendasCtrl.buscarPorId);
 router.post  ('/adm-vendas',                  autenticar, admVendasCtrl.criar);
 router.patch ('/adm-vendas/:id',              autenticar, admVendasCtrl.atualizar);

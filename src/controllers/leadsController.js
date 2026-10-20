@@ -760,6 +760,23 @@ async function criar(req, res) {
         getAutomacaoSvc().enviarSlaContato1({ id, nome: nome.trim(), telefone: telefone || null, responsavel_id: respId, origem: origem || 'manual' })
           .catch(e => console.error('[SLA_CONTATO_1]', e.message));
       });
+
+      // Clone para Adm. de Vendas se o lead foi criado diretamente em etapa ganha
+      if (etapa_id) {
+        setImmediate(async () => {
+          try {
+            const { clonarSeVendas } = require('../services/admVendasCloneService');
+            await clonarSeVendas({
+              leadId:      id,
+              etapaDestId: etapa_id,
+              sb, isSupa, sqlite: null,
+              usuarioId:   req.usuario?.id,
+              leadData:    { ...row, id },
+            });
+          } catch (eClone) { console.error('[ADM_VENDAS_CLONE_CREATE]', eClone.message); }
+        });
+      }
+
       return res.status(201).json({ sucesso:true, dados: normalizeLead(data) });
     }
 
