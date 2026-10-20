@@ -1882,20 +1882,139 @@ async function conversaPorLead(req, res) {
 // Conversas com mensagem recebida mais recente sem resposta enviada depois
 // Regra: 1 pendência por conversa (não duplica)
 // ─────────────────────────────────────────────────────────────────────────────
-function listarPendentes(req, res) {
+async function listarPendentes(req, res) {
   try {
-    const db = getDb();
-    const role = req.usuario.role;
-    const uid  = req.usuario.id;
+    const { sb, isSupa, sqlite } = getProvider();
+    const role = req.usuario?.role;
+    const uid  = req.usuario?.id;
 
-    // Vendedor não acessa este endpoint no dashboard (bloqueado por role no frontend)
-    // mas protege no backend também
-    if (role === 'VENDEDOR') {
-      return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
+    if (isSupa) {
+      let q = sb
+        .from('conversas_whatsapp')
+        .select(`
+          id,
+          telefone,
+          nome_contato,
+          origem,
+          ultima_msg_em,
+          nao_lidas,
+          lead_id,
+          vendedor_id,
+          leads (
+            id,
+            nome,
+            empresa,
+            responsavel_id,
+            pipeline_id,
+            pipelines (
+              id,
+              funil_id,
+              funis (
+                id,
+                nome,
+                cor
+              )
+            )
+          ),
+          usuarios (
+            id,
+            nome
+          )
+        `)
+        .neq('status', 'FECHADA')
+        .neq('status', 'PENDENTE_IDENTIFICACAO')
+        .neq('visivel', false)
+        .not('ultima_msg_em', 'is', null)
+        .order('ultima_msg_em', { ascending: false })
+        .limit(300);
+
+      if (role === 'VENDEDOR') {
+        const { data: meusLeads } = await sb.from('leads').select('id').eq('responsavel_id', uid);
+        const leadIds = (meusLeads || []).map(l => l.id);
+        if (leadIds.length > 0) {
+          const leadIdsSafe = leadIds.slice(0, 100);
+          q = q.or(`vendedor_id.eq.${uid},lead_id.in.(${leadIdsSafe.join(',')})`);
+        } else {
+          q = q.eq('vendedor_id', uid);
+        }
+      }
+
+      const { data: convs, error } = await q;
+      if (error) throw error;
+
+      if (!convs?.length) {
+        return res.json({ sucesso: true, total: 0, dados: [] });
+      }
+
+      const convIds = convs.map(c => c.id);
+
+      // Busca a última mensagem de cada conversa
+      const { data: msgs, error: msgErr } = await sb
+        .from('mensagens_whatsapp')
+        .select('conversa_id, mensagem, direcao, criado_em')
+        .in('conversa_id', convIds)
+        .order('criado_em', { ascending: false });
+
+      if (msgErr) throw msgErr;
+
+      const ultimaMsgMap = {};
+      for (const m of (msgs || [])) {
+        if (!ultimaMsgMap[m.conversa_id]) {
+          ultimaMsgMap[m.conversa_id] = m;
+        }
+      }
+
+      const agora = Date.now();
+      const pendentes = [];
+
+      for (const c of convs) {
+        // Ignora órfão de lead deletado
+        if (c.lead_id && !c.leads) continue;
+
+        const ultimaMsg = ultimaMsgMap[c.id];
+        // Pendente = última mensagem é do cliente (recebida) e o CRM ainda não respondeu
+        if (ultimaMsg && ultimaMsg.direcao === 'recebida') {
+          const msgDate = new Date(ultimaMsg.criado_em).getTime();
+          const minutosAguardando = Math.max(0, Math.round((agora - msgDate) / 60000));
+          const funil = c.leads?.pipelines?.funis;
+
+          pendentes.push({
+            conversa_id: c.id,
+            telefone: c.telefone,
+            nome_contato: c.nome_contato,
+            origem: c.origem,
+            ultima_msg_em: c.ultima_msg_em,
+            lead_id: c.lead_id,
+            lead_nome: c.leads?.nome || null,
+            lead_empresa: c.leads?.empresa || null,
+            responsavel_id: c.leads?.responsavel_id || c.vendedor_id || null,
+            vendedor_nome: c.usuarios?.nome || null,
+            funil_nome: funil?.nome || null,
+            funil_cor: funil?.cor || null,
+            ultima_mensagem: ultimaMsg.mensagem,
+            ultima_msg_criado_em: ultimaMsg.criado_em,
+            minutos_aguardando: minutosAguardando,
+            nao_lidas: c.nao_lidas || 1,
+          });
+        }
+      }
+
+      // Mais urgentes primeiro
+      pendentes.sort((a, b) => b.minutos_aguardando - a.minutos_aguardando);
+
+      return res.json({
+        sucesso: true,
+        total: pendentes.length,
+        dados: pendentes
+      });
     }
 
-    // Conversas pendentes:
-    // a última mensagem da conversa é de direção "recebida" (cliente sem resposta)
+    // ── SQLite fallback ──────────────────────────────────────────────────────
+    const db = sqlite || getDb();
+    if (!db || typeof db.prepare !== 'function') {
+      return res.json({ sucesso: true, total: 0, dados: [] });
+    }
+
     const baseSQL = `
       SELECT
         c.id            AS conversa_id,
@@ -1910,18 +2029,12 @@ function listarPendentes(req, res) {
         u.nome          AS vendedor_nome,
         f.nome          AS funil_nome,
         f.cor           AS funil_cor,
-        -- Ultima mensagem recebida
         m_last.mensagem AS ultima_mensagem,
         m_last.criado_em AS ultima_msg_criado_em,
-        -- Tempo esperando em minutos
         ROUND((julianday('now') - julianday(m_last.criado_em)) * 1440) AS minutos_aguardando
       FROM conversas_whatsapp c
-      -- Junta última mensagem de cada conversa
       JOIN (
-        SELECT conversa_id,
-               mensagem,
-               direcao,
-               criado_em
+        SELECT conversa_id, mensagem, direcao, criado_em
         FROM mensagens_whatsapp m1
         WHERE criado_em = (
           SELECT MAX(m2.criado_em)
@@ -1939,22 +2052,15 @@ function listarPendentes(req, res) {
         AND m_last.direcao = 'recebida'
     `;
 
-    let sql    = baseSQL;
+    let sql = baseSQL;
     const params = [];
-
-    // Gestor: filtra pela equipe (no momento sem equipe configurada, vê todos)
-    // Super Admin / GESTOR: vê tudo por ora
-    // Ajustar quando houver equipes
-
-    sql += ' ORDER BY m_last.criado_em ASC'; // mais antigos primeiro (mais urgentes)
+    if (role === 'VENDEDOR') {
+      sql += ' AND (c.vendedor_id = ? OR l.responsavel_id = ?)';
+      params.push(uid, uid);
+    }
+    sql += ' ORDER BY m_last.criado_em ASC';
 
     const pendentes = db.prepare(sql).all(...params);
-
-    req.log({
-      acao: 'DASHBOARD_PENDENTES_ACESSO',
-      entidade: 'conversas_whatsapp',
-      depois: { total: pendentes.length, role }
-    });
 
     return res.json({
       sucesso: true,

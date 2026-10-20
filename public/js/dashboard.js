@@ -85,8 +85,8 @@ async function init() {
   _usuario = await Sidebar.init('dashboard');
   if (!_usuario) return;
 
-  // Mostra card de pendentes apenas para GESTOR+
-  if (['SUPER_ADMIN','GESTOR'].includes(_usuario.role)) {
+  // Mostra card de pendentes (aguardando resposta) para todos os perfis autenticados
+  if (['SUPER_ADMIN','GESTOR','VENDEDOR','SDR'].includes(_usuario.role)) {
     const pendCard = document.getElementById('kpi-pendentes-card');
     if (pendCard) pendCard.style.display = '';
   }
@@ -251,8 +251,8 @@ async function carregar(mostrarSkeletons = false) {
   renderTempoResposta(d.tempo_resposta);
   renderSparkline(d.leads_por_dia);
   renderMetaPreview(d.kpis);
-  // Atualiza pendentes em background para GESTOR+
-  if (['SUPER_ADMIN','GESTOR'].includes(_usuario?.role)) {
+  // Atualiza pendentes em background para todos os perfis comerciais
+  if (['SUPER_ADMIN','GESTOR','VENDEDOR','SDR'].includes(_usuario?.role)) {
     carregarPendentes();
   }
   const elUpd = document.getElementById('last-update');
