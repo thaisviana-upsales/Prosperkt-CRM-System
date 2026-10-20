@@ -81,16 +81,16 @@
 
 <!-- KPIs -->
 <div class="kpi-grid" id="kpi-grid">
-  <div class="kpi-card green"><div class="kpi-label">Leads Recebidos</div><div class="kpi-value" id="kpi-leads">—</div><div class="kpi-sub" id="kpi-leads-sub"></div><div class="kpi-icon">📥</div></div>
-  <div class="kpi-card green"><div class="kpi-label">Vendas Fechadas</div><div class="kpi-value" id="kpi-ganhos">—</div><div class="kpi-sub" id="kpi-ganhos-sub"></div><div class="kpi-icon">🏆</div></div>
-  <div class="kpi-card blue wide"><div class="kpi-label">Faturamento</div><div class="kpi-value monetary" id="kpi-fat">—</div><div class="kpi-sub" id="kpi-fat-sub"></div><div class="kpi-icon">💰</div></div>
-  <div class="kpi-card yellow wide"><div class="kpi-label">Ticket Médio</div><div class="kpi-value monetary" id="kpi-ticket">—</div><div class="kpi-sub"></div><div class="kpi-icon">🎯</div></div>
-  <div class="kpi-card green"><div class="kpi-label">Taxa de Conversão</div><div class="kpi-value" id="kpi-conv">—</div><div class="kpi-sub"></div><div class="kpi-icon">📈</div></div>
-  <div class="kpi-card green"><div class="kpi-label">Leads Perdidos</div><div class="kpi-value" id="kpi-perdidos">—</div><div class="kpi-sub" id="kpi-perdidos-sub"></div><div class="kpi-icon">📉</div></div>
+  <div class="kpi-card green"><div class="kpi-label">Leads Recebidos</div><div class="kpi-value" id="kpi-leads"><span class="skeleton skeleton-val"></span></div><div class="kpi-sub" id="kpi-leads-sub"><span class="skeleton skeleton-sub"></span></div><div class="kpi-icon">📥</div></div>
+  <div class="kpi-card green"><div class="kpi-label">Vendas Fechadas</div><div class="kpi-value" id="kpi-ganhos"><span class="skeleton skeleton-val"></span></div><div class="kpi-sub" id="kpi-ganhos-sub"><span class="skeleton skeleton-sub"></span></div><div class="kpi-icon">🏆</div></div>
+  <div class="kpi-card blue wide"><div class="kpi-label">Faturamento</div><div class="kpi-value monetary" id="kpi-fat"><span class="skeleton skeleton-val wide"></span></div><div class="kpi-sub" id="kpi-fat-sub"><span class="skeleton skeleton-sub"></span></div><div class="kpi-icon">💰</div></div>
+  <div class="kpi-card yellow wide"><div class="kpi-label">Ticket Médio</div><div class="kpi-value monetary" id="kpi-ticket"><span class="skeleton skeleton-val wide"></span></div><div class="kpi-sub"><span class="skeleton skeleton-sub"></span></div><div class="kpi-icon">🎯</div></div>
+  <div class="kpi-card green"><div class="kpi-label">Taxa de Conversão</div><div class="kpi-value" id="kpi-conv"><span class="skeleton skeleton-val"></span></div><div class="kpi-sub"><span class="skeleton skeleton-sub"></span></div><div class="kpi-icon">📈</div></div>
+  <div class="kpi-card green"><div class="kpi-label">Leads Perdidos</div><div class="kpi-value" id="kpi-perdidos"><span class="skeleton skeleton-val"></span></div><div class="kpi-sub" id="kpi-perdidos-sub"><span class="skeleton skeleton-sub"></span></div><div class="kpi-icon">📉</div></div>
   <!-- Card Mensagens Pendentes: visivel apenas para GESTOR+ (ocultado via JS) -->
   <div class="kpi-card pendente-zero" id="kpi-pendentes-card" style="cursor:pointer;display:none" title="Ver conversas aguardando resposta">
     <div class="kpi-label">Mensagens Pendentes</div>
-    <div class="kpi-value" id="kpi-pendentes">—</div>
+    <div class="kpi-value" id="kpi-pendentes"><span class="skeleton skeleton-val"></span></div>
     <div class="kpi-sub">conversas aguardando resposta</div>
     <div class="kpi-icon">💬</div>
   </div>
@@ -103,14 +103,25 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg>
       Funil de Conversão
     </div>
-    <div id="funil-visual" class="fv-premium"><div class="empty">Nenhum dado</div></div>
+    <div id="funil-visual" class="fv-premium">
+      <div class="skeleton-funil-wrap">
+        <div class="skeleton skeleton-funil-layer" style="width:100%"></div>
+        <div class="skeleton skeleton-funil-layer" style="width:78%"></div>
+        <div class="skeleton skeleton-funil-layer" style="width:58%"></div>
+        <div class="skeleton skeleton-funil-layer" style="width:42%"></div>
+      </div>
+    </div>
   </div>
   <div class="panel">
     <div class="panel-title">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
       Ranking Vendedores
     </div>
-    <div id="ranking" class="rank-list"><div class="empty">Nenhum dado</div></div>
+    <div id="ranking" class="rank-list">
+      <div class="skeleton-rank-row"><div class="skeleton skeleton-avatar"></div><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line-sm"></div></div>
+      <div class="skeleton-rank-row"><div class="skeleton skeleton-avatar"></div><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line-sm"></div></div>
+      <div class="skeleton-rank-row"><div class="skeleton skeleton-avatar"></div><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line-sm"></div></div>
+    </div>
   </div>
 </div>
 
@@ -121,7 +132,13 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
       Vendas por Funil
     </div>
-    <div id="por-funil"><div class="empty">Nenhum dado</div></div>
+    <div id="por-funil">
+      <div class="skeleton-funil-wrap">
+        <div class="skeleton skeleton-funil-layer" style="width:100%;height:30px"></div>
+        <div class="skeleton skeleton-funil-layer" style="width:70%;height:30px"></div>
+        <div class="skeleton skeleton-funil-layer" style="width:45%;height:30px"></div>
+      </div>
+    </div>
   </div>
   <div class="panel">
     <div class="panel-title">
@@ -129,7 +146,8 @@
       <span id="badge-alertas-recompra" style="background:#F5A623;color:#000;border-radius:99px;font-size:.62rem;padding:1px 6px;font-weight:700;display:none;margin-left:6px">0</span>
     </div>
     <div id="alertas-recompra-list" style="max-height:200px;overflow-y:auto">
-      <div class="empty" style="font-size:.73rem">Nenhum alerta nos próximos 7 dias.</div>
+      <div class="skeleton-rank-row" style="padding:6px 0"><div class="skeleton skeleton-avatar" style="width:22px;height:22px"></div><div class="skeleton skeleton-line"></div></div>
+      <div class="skeleton-rank-row" style="padding:6px 0"><div class="skeleton skeleton-avatar" style="width:22px;height:22px"></div><div class="skeleton skeleton-line"></div></div>
     </div>
   </div>
   <div class="panel">
@@ -138,7 +156,7 @@
       Tempo Médio de Resposta
     </div>
     <div id="tempo-resposta" class="resp-stat">
-      <div class="resp-num" id="resp-num">—</div>
+      <div class="resp-num" id="resp-num"><span class="skeleton skeleton-val" style="width:64px;height:32px"></span></div>
       <div class="resp-label">minutos até 1ª interação</div>
       <div style="font-size:.72rem;color:var(--text-muted);margin-top:8px" id="resp-leads"></div>
     </div>
@@ -152,7 +170,9 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
       Evolução de Leads (últimos 30 dias)
     </div>
-    <div id="spark-wrap" class="sparkline-wrap"></div>
+    <div id="spark-wrap" class="sparkline-wrap">
+      <div class="skeleton skeleton-chart"></div>
+    </div>
     <div id="spark-labels" style="display:flex;justify-content:space-between;margin-top:8px;font-size:.6rem;color:rgba(245,245,245,.3)"></div>
   </div>
   <div class="panel">

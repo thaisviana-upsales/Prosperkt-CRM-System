@@ -11,28 +11,106 @@ const fmt = n => n != null ? Number(n).toLocaleString('pt-BR', {minimumFractionD
 const fmtR = n => n != null && n > 0 ? 'R$ ' + Number(n).toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2}) : 'R$ 0';
 const fmtPct = n => n != null ? n + '%' : '—';
 
+function exibirSkeletons() {
+  const skelVal     = '<span class="skeleton skeleton-val"></span>';
+  const skelValWide = '<span class="skeleton skeleton-val wide"></span>';
+  const skelSub     = '<span class="skeleton skeleton-sub"></span>';
+
+  // KPIs
+  const idsVals = [
+    ['kpi-leads', skelVal],
+    ['kpi-ganhos', skelVal],
+    ['kpi-fat', skelValWide],
+    ['kpi-ticket', skelValWide],
+    ['kpi-conv', skelVal],
+    ['kpi-perdidos', skelVal],
+    ['kpi-pendentes', skelVal]
+  ];
+  idsVals.forEach(([id, html]) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+  });
+
+  const idsSubs = ['kpi-leads-sub', 'kpi-ganhos-sub', 'kpi-fat-sub', 'kpi-perdidos-sub'];
+  idsSubs.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = skelSub;
+  });
+
+  // Funil Visual
+  const elFunil = document.getElementById('funil-visual');
+  if (elFunil) {
+    elFunil.innerHTML = `
+      <div class="skeleton-funil-wrap">
+        <div class="skeleton skeleton-funil-layer" style="width:100%"></div>
+        <div class="skeleton skeleton-funil-layer" style="width:78%"></div>
+        <div class="skeleton skeleton-funil-layer" style="width:58%"></div>
+        <div class="skeleton skeleton-funil-layer" style="width:42%"></div>
+      </div>
+    `;
+  }
+
+  // Ranking
+  const elRanking = document.getElementById('ranking');
+  if (elRanking) {
+    elRanking.innerHTML = `
+      <div class="skeleton-rank-row"><div class="skeleton skeleton-avatar"></div><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line-sm"></div></div>
+      <div class="skeleton-rank-row"><div class="skeleton skeleton-avatar"></div><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line-sm"></div></div>
+      <div class="skeleton-rank-row"><div class="skeleton skeleton-avatar"></div><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line-sm"></div></div>
+    `;
+  }
+
+  // Por Funil
+  const elPorFunil = document.getElementById('por-funil');
+  if (elPorFunil) {
+    elPorFunil.innerHTML = `
+      <div class="skeleton-funil-wrap">
+        <div class="skeleton skeleton-funil-layer" style="width:100%;height:30px"></div>
+        <div class="skeleton skeleton-funil-layer" style="width:70%;height:30px"></div>
+        <div class="skeleton skeleton-funil-layer" style="width:45%;height:30px"></div>
+      </div>
+    `;
+  }
+
+  // Tempo Resposta
+  const elResp = document.getElementById('resp-num');
+  if (elResp) elResp.innerHTML = '<span class="skeleton skeleton-val" style="width:64px;height:32px"></span>';
+
+  // Sparkline
+  const elSpark = document.getElementById('spark-wrap');
+  if (elSpark) elSpark.innerHTML = '<div class="skeleton skeleton-chart"></div>';
+}
+
 async function init() {
   _usuario = await Sidebar.init('dashboard');
   if (!_usuario) return;
-  await carregarFunis();
-  await carregarUsuarios();
 
   // Mostra card de pendentes apenas para GESTOR+
   if (['SUPER_ADMIN','GESTOR'].includes(_usuario.role)) {
-    document.getElementById('kpi-pendentes-card').style.display = '';
+    const pendCard = document.getElementById('kpi-pendentes-card');
+    if (pendCard) pendCard.style.display = '';
   }
+
+  // B13: Paraleliza todas as requisições independentes
+  const tarefas = [
+    carregar(), // Inicia imediatamente o carregamento principal dos dados
+    carregarFunis(),
+    carregarUsuarios(),
+    carregarAlertasRecompra()
+  ];
 
   // Mostra painel SDR apenas para SDR e SUPER_ADMIN
   if (['SUPER_ADMIN','SDR'].includes(_usuario.role)) {
-    document.getElementById('sdr-painel').style.display = '';
-    await _sdrPopularFiltros();
-    await carregarSdr();
-    _sdrBindEvents();
+    const sdrEl = document.getElementById('sdr-painel');
+    if (sdrEl) sdrEl.style.display = '';
+    tarefas.push(
+      _sdrPopularFiltros().then(() => carregarSdr()).then(() => _sdrBindEvents())
+    );
   }
 
-  await carregar();
-  await carregarAlertasRecompra();
   bindEvents();
+  await Promise.allSettled(tarefas);
+
   // Auto-refresh a cada 60s
   _autoTimer = setInterval(() => {
     carregar();
@@ -47,9 +125,28 @@ function isCarteiraRecorrente(nome) {
 }
 
 async function carregarFunis() {
-  const r = await Auth.api('GET', '/funis?somente_ativos=true');
-  _funis = r?.data?.dados || [];
+  let funis = null;
+  try {
+    const cached = sessionStorage.getItem('pkt_cache_funis_ativos');
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Date.now() - parsed.ts < 5 * 60 * 1000 && Array.isArray(parsed.dados) && parsed.dados.length > 0) {
+        funis = parsed.dados;
+      }
+    }
+  } catch {}
+
+  if (!funis) {
+    const r = await Auth.api('GET', '/funis?somente_ativos=true');
+    funis = r?.data?.dados || [];
+    try {
+      sessionStorage.setItem('pkt_cache_funis_ativos', JSON.stringify({ ts: Date.now(), dados: funis }));
+    } catch {}
+  }
+
+  _funis = funis;
   const sel = document.getElementById('f-funil');
+  if (!sel) return;
   // Separa Carteira Recorrente do restante
   const funisNovos   = _funis.filter(f => !isCarteiraRecorrente(f.nome));
   const funisCarteira = _funis.filter(f =>  isCarteiraRecorrente(f.nome));
@@ -138,10 +235,14 @@ function buildQuery() {
   return query;
 }
 
-async function carregar() {
+async function carregar(mostrarSkeletons = false) {
+  if (mostrarSkeletons) exibirSkeletons();
   console.log('[DASHBOARD_FILTERS_APPLIED]', _filtros, { excluir_carteira: !_filtros.funil });
   const r = await Auth.api('GET', '/dashboard' + buildQuery());
-  if (!r?.ok) { Toast.show('Erro ao carregar dashboard.', 'error'); return; }
+  if (!r?.ok) {
+    if (typeof Toast !== 'undefined') Toast.show('Erro ao carregar dashboard.', 'error');
+    return;
+  }
   const d = r.data.dados;
   renderKPIs(d.kpis);
   renderFunilVisual(d.funil_visual);
@@ -154,7 +255,8 @@ async function carregar() {
   if (['SUPER_ADMIN','GESTOR'].includes(_usuario?.role)) {
     carregarPendentes();
   }
-  document.getElementById('last-update').textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR');
+  const elUpd = document.getElementById('last-update');
+  if (elUpd) elUpd.textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR');
 }
 
 function renderKPIs(k) {
@@ -576,7 +678,7 @@ function bindEvents() {
     if (_filtros.resp)        console.log('[DASHBOARD_FILTER_VENDEDOR_SELECTED]', _filtros.resp,     document.getElementById('f-resp').selectedOptions[0]?.text);
     if (_filtros.dataTipo)    console.log('[DASHBOARD_FILTER_DATE_SELECTED]',     _filtros.dataTipo, _filtros.dataPeriodo, _filtros.dataInicio, _filtros.dataFim);
 
-    carregar();
+    carregar(true);
   });
 
   document.getElementById('btn-clear').addEventListener('click', () => {
@@ -590,10 +692,10 @@ function bindEvents() {
     document.getElementById('periodo-group').style.display = 'none';
     document.getElementById('f-inicio').classList.remove('show');
     document.getElementById('f-fim').classList.remove('show');
-    carregar();
+    carregar(true);
   });
 
-  document.getElementById('btn-refresh').addEventListener('click', carregar);
+  document.getElementById('btn-refresh').addEventListener('click', () => carregar(true));
 
   document.getElementById('f-data-tipo').addEventListener('change', e => {
     document.getElementById('periodo-group').style.display = e.target.value ? '' : 'none';
