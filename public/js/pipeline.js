@@ -588,50 +588,46 @@ function renderKanban() {
     });
   });
 
-  // ── Leads órfãos: têm funil correto mas etapa_id null/inválida ──────────────
-  // Só se aplica em modo funil específico (não no "Todos")
-  if (!modoTodos) {
-    let leadsOrfaos = _leads.filter(l => !leadsAlocados.has(l.id));
-    if (_usuario?.role === 'VENDEDOR') {
-      const vendedorIds = new Set((_usuarios || []).map(u => u.id));
-      vendedorIds.add(_usuario.id);
-      leadsOrfaos = leadsOrfaos.filter(l => !l.responsavel_id || vendedorIds.has(l.responsavel_id));
-    }
-    if (leadsOrfaos.length > 0) {
-      console.warn('[KANBAN_ORFAOS] leads do funil sem etapa reconhecida:', leadsOrfaos.length,
-        '| ids:', leadsOrfaos.map(l => l.id).join(','));
-      // Coloca na 1ª etapa disponível (para permitir mover), ou cria coluna "Sem etapa"
-      const primeiraEtapa = _etapas[0];
-      const colOrfaos = document.createElement('div');
-      colOrfaos.className = 'kanban-col';
-      colOrfaos.innerHTML = `
-        <div class="col-header">
-          <div class="col-dot" style="background:var(--text-muted)"></div>
-          <span class="col-title" style="color:var(--text-muted)">Sem etapa</span>
-          <span class="col-count">${leadsOrfaos.length}</span>
-        </div>
-        <div class="col-body" data-etapa="${primeiraEtapa?.id || ''}">
-          ${leadsOrfaos.map(l => renderCard(l, false)).join('')}
-        </div>`;
-      wrap.insertBefore(colOrfaos, wrap.firstChild); // coloca no início do kanban
-      colOrfaos.querySelectorAll('.lead-card').forEach(card => {
-        // FIX: leads órfãos também precisam do handler WA — antes só tinha card.click
-        const btnWaOrfao = card.querySelector('.btn-wa-nav');
-        if (btnWaOrfao) {
-          btnWaOrfao.addEventListener('click', (ev) => {
-            ev.stopPropagation();
-            ev.preventDefault();
-            const leadId = btnWaOrfao.dataset.waLeadId;
-            const tel    = btnWaOrfao.dataset.waTel;
-            const nome   = btnWaOrfao.dataset.waNome || '';
-            if (!tel) { alert('Este lead não possui telefone WhatsApp válido.'); return; }
-            window.location.href = `/whatsapp.html?lead_id=${encodeURIComponent(leadId)}&phone=${encodeURIComponent(tel)}&nome=${encodeURIComponent(nome)}`;
-          });
-        }
-        card.addEventListener('click', () => abrirLead(card.dataset.id));
-      });
-
-    }
+  // ── Leads órfãos: etapa_id null/inválida ou não mapeada nas colunas padrão (B16) ──
+  // Garante que NENHUM lead em aberto se perca, inclusive em "Todos - Novos"
+  let leadsOrfaos = _leads.filter(l => !leadsAlocados.has(l.id));
+  if (_usuario?.role === 'VENDEDOR') {
+    const vendedorIds = new Set((_usuarios || []).map(u => u.id));
+    vendedorIds.add(_usuario.id);
+    leadsOrfaos = leadsOrfaos.filter(l => !l.responsavel_id || vendedorIds.has(l.responsavel_id));
+  }
+  if (leadsOrfaos.length > 0) {
+    console.warn('[KANBAN_ORFAOS] leads sem etapa reconhecida nas colunas:', leadsOrfaos.length,
+      '| ids:', leadsOrfaos.map(l => l.id).join(','));
+    const primeiraEtapa = _etapas[0];
+    const colOrfaos = document.createElement('div');
+    colOrfaos.className = 'kanban-col';
+    colOrfaos.innerHTML = `
+      <div class="col-header">
+        <div class="col-dot" style="background:var(--text-muted)"></div>
+        <span class="col-title" style="color:var(--text-muted)">Sem etapa / Outras</span>
+        <span class="col-count">${leadsOrfaos.length}</span>
+      </div>
+      <div class="col-body" data-etapa="${primeiraEtapa?.id || ''}">
+        ${leadsOrfaos.map(l => renderCard(l, modoTodos)).join('')}
+      </div>`;
+    wrap.insertBefore(colOrfaos, wrap.firstChild); // coloca no início do kanban
+    colOrfaos.querySelectorAll('.lead-card').forEach(card => {
+      // Leads órfãos também precisam do handler WA
+      const btnWaOrfao = card.querySelector('.btn-wa-nav');
+      if (btnWaOrfao) {
+        btnWaOrfao.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          ev.preventDefault();
+          const leadId = btnWaOrfao.dataset.waLeadId;
+          const tel    = btnWaOrfao.dataset.waTel;
+          const nome   = btnWaOrfao.dataset.waNome || '';
+          if (!tel) { alert('Este lead não possui telefone WhatsApp válido.'); return; }
+          window.location.href = `/whatsapp.html?lead_id=${encodeURIComponent(leadId)}&phone=${encodeURIComponent(tel)}&nome=${encodeURIComponent(nome)}`;
+        });
+      }
+      card.addEventListener('click', () => abrirLead(card.dataset.id));
+    });
   }
 }
 

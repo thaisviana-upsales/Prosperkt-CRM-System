@@ -287,6 +287,8 @@ async function resumo(req, res) {
       }
       // Fix #3: exclui clones de Carteira Recorrente da contagem de leads recebidos
       q = q.is('tipo_clone', null);
+      // Fix B16: Alinha com Pipeline e resto do sistema (leads deletados sao ignorados)
+      q = q.is('deleted_at', null);
       if (responsavel_id)     q = q.eq('responsavel_id', responsavel_id);
       if (req.usuario.role === 'VENDEDOR') q = q.eq('responsavel_id', req.usuario.id);
 
@@ -355,6 +357,7 @@ async function resumo(req, res) {
         if (req.usuario.role === 'VENDEDOR') qFunil = qFunil.eq('responsavel_id', req.usuario.id);
         // Exclui clones da Carteira Recorrente (mesmo filtro do array principal)
         qFunil = qFunil.is('tipo_clone', null);
+        qFunil = qFunil.is('deleted_at', null);
         const { data: allLeads } = await qFunil;
         leadsParaFunil = allLeads || leads;
       }
@@ -598,6 +601,7 @@ async function resumo(req, res) {
         if (req.usuario.role === 'VENDEDOR') q2 = q2.eq('responsavel_id', req.usuario.id);
         // Exclui clones — consistência com query principal
         q2 = q2.is('tipo_clone', null);
+        q2 = q2.is('deleted_at', null);
         q2 = q2.gte('criado_em', d30.toISOString());
         return q2;
       })();
