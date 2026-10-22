@@ -822,6 +822,14 @@ body.sidebar-collapsed .main-content.wa-main {
   border: 1px solid rgba(255,255,255,.08);
   border-radius: 12px;
 }
+.wa-file-card.wa-file-card-clickable {
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, transform .1s ease;
+}
+.wa-file-card.wa-file-card-clickable:hover {
+  background: rgba(255,255,255,.11);
+  border-color: rgba(255,255,255,.18);
+}
 .wa-file-icon {
   width: 36px; height: 36px;
   border-radius: 8px;
@@ -838,6 +846,8 @@ body.sidebar-collapsed .main-content.wa-main {
   color: #30D158;
   display: flex; align-items: center; justify-content: center;
   text-decoration: none;
+  cursor: pointer;
+  border: none;
   flex-shrink: 0;
   transition: background .15s, transform .1s;
 }

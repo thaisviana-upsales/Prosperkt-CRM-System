@@ -1068,8 +1068,8 @@ function renderMensagem(msg) {
     logDebug('WHATSAPP_AUDIO_RENDERED', { msgId: msg.id, hasSrc: !!audioSrc, dur });
   } else if (tipoEfetivo === 'video') {
     const nome  = msg.arquivo_nome || 'Vídeo';
-    // Recebidos: botão JS com Bearer token. Enviados: sem download (não ficou salvo).
-    const dlBtn = msg.direcao === 'recebida' && msg.id
+    const podeBaixarVideo = msg.id && msg.status !== 'pending' && msg.status !== 'failed' && msg.status !== 'erro';
+    const dlBtn = podeBaixarVideo
       ? `<button class="wa-file-dl-btn" data-wa-dl-msgid="${msg.id}" data-wa-dl-nome="${escHtml(nome)}" title="Baixar vídeo">
            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 13 7 8"/><line x1="12" y1="3" x2="12" y2="13"/></svg>
          </button>`
@@ -1102,9 +1102,8 @@ function renderMensagem(msg) {
       : mime.includes('sheet') || mime.includes('excel') || mime.includes('xls') ? '📊'
       : mime.includes('presentation') || mime.includes('powerpoint') ? '📁'
       : '📎';
-    // Recebidos: botão com data-wa-dl-msgid → fetch autenticado (Bearer) no backend
-    // Enviados: sem download — arquivo não ficou salvo no CRM (by design)
-    const dlBtn = msg.direcao === 'recebida' && msg.id
+    const podeBaixar = msg.id && msg.status !== 'pending' && msg.status !== 'failed' && msg.status !== 'erro';
+    const dlBtn = podeBaixar
       ? `<button class="wa-file-dl-btn" data-wa-dl-msgid="${msg.id}" data-wa-dl-nome="${escHtml(nome)}" title="Baixar">
            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 13 7 8"/><line x1="12" y1="3" x2="12" y2="13"/></svg>
          </button>`
@@ -1115,7 +1114,11 @@ function renderMensagem(msg) {
     } else if (msg.status === 'failed' || msg.status === 'erro') {
       subtexto = `<span style="color:#ef4444;font-weight:500">Falha no envio do documento</span>`;
     }
-    conteudo = `<div class="wa-file-card${msg.status === 'failed' || msg.status === 'erro' ? ' wa-card-error' : ''}">
+    const cardAttrs = podeBaixar
+      ? ` class="wa-file-card wa-file-card-clickable" data-wa-dl-msgid="${msg.id}" data-wa-dl-nome="${escHtml(nome)}" title="Clique para abrir ou baixar"`
+      : ` class="wa-file-card${msg.status === 'failed' || msg.status === 'erro' ? ' wa-card-error' : ''}"`;
+
+    conteudo = `<div${cardAttrs}>
        <div style="display:flex;align-items:center;gap:10px">
          <div class="wa-file-icon" style="background:${msg.status === 'failed' || msg.status === 'erro' ? 'rgba(239,68,68,.12)' : ''};border-color:${msg.status === 'failed' || msg.status === 'erro' ? 'rgba(239,68,68,.2)' : ''}">
            <span style="font-size:1.2rem;line-height:1">${icone}</span>
@@ -1690,11 +1693,12 @@ function bindEvents() {
         WAAudio.seek(progressBar, e);
         return;
       }
-      // ── Download autenticado (arquivos/imagens/vídeos recebidos) ──────────
-      const dlBtn = e.target.closest('[data-wa-dl-msgid]');
-      if (dlBtn) {
+      // ── Download e abertura autenticados (arquivos/imagens/vídeos recebidos e enviados) ──
+      const dlTarget = e.target.closest('[data-wa-dl-msgid]');
+      if (dlTarget) {
         e.preventDefault();
-        waDownloadArquivo(dlBtn.dataset.waDlMsgid, dlBtn.dataset.waDlNome);
+        const isButton = !!e.target.closest('.wa-file-dl-btn');
+        waDownloadArquivo(dlTarget.dataset.waDlMsgid, dlTarget.dataset.waDlNome, !isButton);
         return;
       }
       // ── Abrir imagem em lightbox (clique na img carregada) ──────────────
@@ -2186,30 +2190,53 @@ async function enviarAudio(blob) {
 }
 
 
-// ─── Download autenticado de arquivos WhatsApp recebidos ──────────────────────
+// ─── Download e abertura autenticados de arquivos WhatsApp ────────────────────
 // Usa fetch com Bearer token para contornar a limitação de <a href> sem auth.
-async function waDownloadArquivo(msgId, nome) {
+async function waDownloadArquivo(msgId, nome, apenasAbrir = false) {
   const token = (typeof Auth !== 'undefined' && Auth.getToken)
     ? Auth.getToken()
     : (localStorage.getItem('token') || '');
   try {
-    Toast.show('Baixando...', 'info');
+    Toast.show('Obtendo documento...', 'info');
     const resp = await fetch(`/api/whatsapp/mensagens/${msgId}/arquivo`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    if (!resp.ok) {
+      let errTxt = `HTTP ${resp.status}`;
+      try {
+        const errJson = await resp.json();
+        if (errJson && errJson.erro) errTxt = errJson.erro;
+      } catch {}
+      throw new Error(errTxt);
+    }
     const blob = await resp.blob();
+    const isPdf = (blob.type === 'application/pdf') || (nome && nome.toLowerCase().endsWith('.pdf'));
     const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = nome || 'arquivo';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
-    Toast.show(`"${nome || 'arquivo'}" baixado!`, 'success');
+
+    if (apenasAbrir && isPdf) {
+      const win = window.open(url, '_blank');
+      if (!win) {
+        // Fallback se popup foi bloqueado pelo navegador
+        const a    = document.createElement('a');
+        a.href     = url;
+        a.download = nome || 'documento.pdf';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        Toast.show(`"${nome || 'documento'}" baixado!`, 'success');
+      }
+    } else {
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = nome || 'arquivo';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      Toast.show(`"${nome || 'arquivo'}" baixado!`, 'success');
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
   } catch (e) {
-    Toast.show('Erro ao baixar: ' + e.message, 'error');
+    Toast.show('Não foi possível obter o arquivo: ' + e.message, 'error');
   }
 }
 

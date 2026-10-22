@@ -503,7 +503,28 @@ async function enviarArquivo(req, res, next) {
 
     // 6. Salva histórico
     let mensagemSalva = null;
+    let savedStoragePath = null;
     if (isSupa) {
+      if (!isVideo && arqBuffer) {
+        try {
+          const pathMidi = `docs/${evoMsgId || msgId}/${nomeSeguro}`;
+          const { error: upErr } = await sb.storage
+            .from('whatsapp-midias')
+            .upload(pathMidi, arqBuffer, {
+              contentType: arqMime,
+              upsert: true,
+            });
+          if (!upErr) {
+            savedStoragePath = pathMidi;
+            console.log('[wha.enviarArquivo] Upload storage whatsapp-midias OK:', pathMidi);
+          } else {
+            console.warn('[wha.enviarArquivo] Upload storage falhou:', upErr.message);
+          }
+        } catch (upEx) {
+          console.warn('[wha.enviarArquivo] Upload storage exception:', upEx.message);
+        }
+      }
+
       try {
         const tipoDb = isVideo ? 'video' : (mediatype === 'image' ? 'imagem' : 'arquivo');
         const { data: msgData } = await sb.from('mensagens_whatsapp').insert({
@@ -519,6 +540,8 @@ async function enviarArquivo(req, res, next) {
           arquivo_nome:         nomeSeguro,
           mime_type:            isVideo ? 'video/mp4' : arqMime,
           evolution_message_id: evoMsgId,
+          storage_path:         savedStoragePath || null,
+          storage_bucket:       savedStoragePath ? 'whatsapp-midias' : null,
           criado_em:            agora,
         }).select().single();
         if (msgData) mensagemSalva = { ...msgData, vendedor_nome: req.usuario?.nome || null };
@@ -601,14 +624,35 @@ async function proxyArquivoRecebido(req, res, next) {
     let msg = null;
     try {
       const { data } = await sb.from('mensagens_whatsapp')
-        .select('id, arquivo_url, arquivo_nome, mime_type, tipo, direcao, telefone, evolution_message_id, storage_path, storage_bucket')
+        .select('id, conversa_id, arquivo_url, arquivo_nome, mime_type, tipo, direcao, telefone, evolution_message_id, storage_path, storage_bucket')
         .eq('id', msgId).single();
       msg = data;
     } catch (e) { console.warn('[wha.proxy] DB:', e.message); }
 
     if (!msg) return res.status(404).json({ sucesso: false, erro: 'Mensagem não encontrada.' });
-    // Permite servir imagens enviadas SE têm storage_path ou evolution_message_id
-    // (o CRM salva imagens enviadas sem arquivo_url mas com storage_path no Supabase)
+
+    // Validação de permissões: VENDEDOR só acessa mensagens de conversas/leads que possui
+    if (req.usuario && req.usuario.role === 'VENDEDOR') {
+      let autorizado = false;
+      try {
+        const { data: conv } = await sb.from('conversas_whatsapp')
+          .select('id, vendedor_id, lead_id, leads(responsavel_id)')
+          .eq('id', msg.conversa_id)
+          .maybeSingle();
+        if (conv) {
+          const ehDonoConv = !conv.vendedor_id || conv.vendedor_id === req.usuario.id;
+          const ehDonoLead = conv.leads?.responsavel_id === req.usuario.id;
+          if (ehDonoConv || ehDonoLead) autorizado = true;
+        }
+      } catch (pErr) {
+        console.warn('[wha.proxy] Erro checagem permissão vendedor:', pErr.message);
+      }
+      if (!autorizado) {
+        return res.status(403).json({ sucesso: false, erro: 'Você não tem permissão para acessar este documento.' });
+      }
+    }
+
+    // Permite servir mídias enviadas SE têm storage_path, evolution_message_id ou arquivo_url
     if (!msg.arquivo_url && msg.direcao !== 'recebida' && !msg.storage_path && !msg.evolution_message_id) {
       return res.status(404).json({ sucesso: false, erro: 'Arquivo enviado pelo CRM — sem cópia armazenada.' });
     }
@@ -645,6 +689,35 @@ async function proxyArquivoRecebido(req, res, next) {
     // Layer 2: Evolution getBase64FromMediaMessage → decripta (válido ~7 dias)
     // Layer 1: URL direta (arquivo_url) → fallback msgs antigas
     // ════════════════════════════════════════════════════════════════════════════
+
+    // Fallback: se storage_path não estiver preenchido na linha da mensagem,
+    // busca no bucket whatsapp-midias por arquivos em docs/<evoMsgId> ou docs/<msgId>
+    if (!msg.storage_path && (msg.evolution_message_id || msg.id)) {
+      const foldersToCheck = [];
+      if (msg.evolution_message_id) foldersToCheck.push(`docs/${msg.evolution_message_id}`);
+      if (msg.id) foldersToCheck.push(`docs/${msg.id}`);
+
+      for (const folder of foldersToCheck) {
+        try {
+          const { data: filesFound, error: listErr } = await sb.storage.from('whatsapp-midias').list(folder);
+          if (!listErr && filesFound && filesFound.length > 0) {
+            const foundFile = filesFound.find(f => f.name && !f.name.startsWith('.')) || filesFound[0];
+            if (foundFile) {
+              msg.storage_path = `${folder}/${foundFile.name}`;
+              msg.storage_bucket = 'whatsapp-midias';
+              // Atualiza de forma assíncrona para consultas futuras
+              sb.from('mensagens_whatsapp').update({
+                storage_path: msg.storage_path,
+                storage_bucket: 'whatsapp-midias'
+              }).eq('id', msgId).then(() => {});
+              break;
+            }
+          }
+        } catch (eList) {
+          console.warn('[wha.proxy] Fallback list storage warn:', eList.message);
+        }
+      }
+    }
 
     // ── Layer 0: Supabase Storage — permanente, sem dependência da Evolution ──
     if (msg.storage_path) {
@@ -730,10 +803,15 @@ async function proxyArquivoRecebido(req, res, next) {
       console.warn('[wha.proxy] Layer 1 URL expirada/inválida:', { status: upstream?.status, msgId: msgId.slice(0,8) });
     }
 
-    // ── Ambos falharam ─────────────────────────────────────────────────────────
-    const erroFinal = isReceivedMedia && !waKeyId
-      ? 'Arquivo recebido antes da atualização do sistema. Peça ao contato para reenviar o arquivo.'
-      : 'Mídia expirou na Evolution API (~7 dias). O arquivo ainda está no WhatsApp do usuário.';
+    // ── Todos falharam ─────────────────────────────────────────────────────────
+    let erroFinal;
+    if (msg.direcao === 'enviada') {
+      erroFinal = 'Documento enviado anteriormente sem cópia local no storage.';
+    } else if (isReceivedMedia && !waKeyId) {
+      erroFinal = 'Arquivo recebido antes da atualização do sistema. Peça ao contato para reenviar o arquivo.';
+    } else {
+      erroFinal = 'Mídia expirou na Evolution API (~7 dias). O arquivo ainda está no WhatsApp do usuário.';
+    }
     console.warn('WA_INBOUND_FILE_ALL_LAYERS_FAILED', { msgId: msgId.slice(0,8), waKeyId: waKeyId?.slice(0,8), hasUrl: !!msg.arquivo_url });
     return res.status(404).json({ sucesso: false, erro: erroFinal });
 
