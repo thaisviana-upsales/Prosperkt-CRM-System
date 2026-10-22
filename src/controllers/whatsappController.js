@@ -3963,11 +3963,26 @@ async function statusIntegracao(req, res) {
         // Conta apenas conversas ABERTA sem telefone LID
         sb.from(CONVERSAS_TABLE).select('id,telefone,dados_extras', { count: 'exact' })
           .eq('status', 'ABERTA'),
-        sb.from(MENSAGENS_TABLE).select('telefone,direcao,mensagem,criado_em').order('criado_em', { ascending: false }).limit(30),
-        sb.from(MENSAGENS_TABLE).select('telefone,direcao,mensagem,conteudo,criado_em').order('criado_em', { ascending: false }).limit(50),
+        sb.from(MENSAGENS_TABLE).select('id,telefone,direcao,mensagem,tipo,arquivo_nome,criado_em').order('criado_em', { ascending: false }).limit(30),
+        sb.from(MENSAGENS_TABLE).select('id,conversa_id,telefone,direcao,mensagem,tipo,status,arquivo_nome,criado_em').order('criado_em', { ascending: false }).limit(50),
       ]);
       msgs24    = r24.count  ?? 0;
       msgs7d    = r7d.count  ?? 0;
+
+      // Helper para formatar descrição de mensagens e mídias sem expor dados sensíveis longos
+      const formatarDescricaoMsg = (m) => {
+        const tipo = (m.tipo || '').toLowerCase();
+        const nomeArq = m.arquivo_nome ? ` (${m.arquivo_nome})` : '';
+        if (tipo === 'audio') return '🎵 Mensagem de áudio';
+        if (tipo === 'imagem') return m.mensagem ? `📷 Imagem: ${m.mensagem.slice(0, 70)}` : `📷 Imagem${nomeArq}`;
+        if (tipo === 'video') return '🎥 Vídeo';
+        if (tipo === 'documento' || tipo === 'document' || tipo === 'arquivo') return `📄 Documento${nomeArq}`;
+        if (m.mensagem) {
+          const txt = String(m.mensagem).trim();
+          return txt.length > 90 ? txt.slice(0, 87) + '...' : txt;
+        }
+        return tipo ? `[${tipo}]` : '—';
+      };
 
       // FIX: exclui conversas LID da contagem de ativas
       const isLidPhone = (tel) => {
@@ -3985,35 +4000,69 @@ async function statusIntegracao(req, res) {
       });
       convAtivas = convsAtivasFiltradas.length;
 
-      // FIX: filtra LID dos logs de atividade recente
-      // Mensagens com telefone LID mostram texto descritivo, nunca o número bruto
+      // FIX: filtra LID dos logs de atividade recente e resolve mídias
       const NUMERO_OFICIAL_REGEX = /^(5511987994910|5511967668883)$/;
       const logsRaw = (rLogs.data || []);
-      ultima = (rUlt.data || []).find(m => !isLidPhone(m.telefone)) || null;
+      const ultFound = (rUlt.data || []).find(m => !isLidPhone(m.telefone)) || null;
+      ultima = ultFound ? {
+        ...ultFound,
+        mensagem: formatarDescricaoMsg(ultFound),
+      } : null;
+
       logs = logsRaw
         .filter(m => !NUMERO_OFICIAL_REGEX.test((m.telefone || '').replace(/\D/g, '')))
         .map(m => {
           const tel = m.telefone || '';
           const lidDetectado = isLidPhone(tel);
           return {
+            id:        m.id,
             telefone:  lidDetectado ? null : tel,
             direcao:   m.direcao,
+            tipo:      m.tipo || 'texto',
+            status:    m.status || null,
             mensagem:  lidDetectado
               ? '(Mensagem pendente de identificação — LID interno do WhatsApp)'
-              : (m.mensagem || m.conteudo || ''),
+              : formatarDescricaoMsg(m),
             criado_em: m.criado_em,
             lid_pendente: lidDetectado,
           };
         })
-        .slice(0, 15);
+        .slice(0, 20);
     } else {
       // ── SQLite ────────────────────────────────────────────────────────────
       const db = getDb();
       msgs24     = db.prepare(`SELECT COUNT(*) as n FROM mensagens_whatsapp WHERE criado_em >= ?`).get(h24)?.n ?? 0;
       msgs7d     = db.prepare(`SELECT COUNT(*) as n FROM mensagens_whatsapp WHERE criado_em >= ?`).get(d7)?.n ?? 0;
       convAtivas = db.prepare(`SELECT COUNT(*) as n FROM conversas_whatsapp WHERE status = 'ABERTA'`).get()?.n ?? 0;
-      ultima     = db.prepare(`SELECT telefone, direcao, mensagem, criado_em FROM mensagens_whatsapp ORDER BY criado_em DESC LIMIT 1`).get();
-      logs       = db.prepare(`SELECT telefone, direcao, mensagem, criado_em FROM mensagens_whatsapp ORDER BY criado_em DESC LIMIT 15`).all();
+
+      const formatarDescricaoMsgSqlite = (m) => {
+        if (!m) return '—';
+        const tipo = (m.tipo || '').toLowerCase();
+        if (tipo === 'audio') return '🎵 Mensagem de áudio';
+        if (tipo === 'imagem') return m.mensagem ? `📷 Imagem: ${m.mensagem.slice(0, 70)}` : '📷 Imagem';
+        if (tipo === 'video') return '🎥 Vídeo';
+        if (tipo === 'documento' || tipo === 'document' || tipo === 'arquivo') return '📄 Documento';
+        if (m.mensagem) {
+          const txt = String(m.mensagem).trim();
+          return txt.length > 90 ? txt.slice(0, 87) + '...' : txt;
+        }
+        return tipo ? `[${tipo}]` : '—';
+      };
+
+      const ultSqlite = db.prepare(`SELECT id, telefone, direcao, mensagem, tipo, criado_em FROM mensagens_whatsapp ORDER BY criado_em DESC LIMIT 1`).get();
+      ultima = ultSqlite ? { ...ultSqlite, mensagem: formatarDescricaoMsgSqlite(ultSqlite) } : null;
+
+      const rawSqliteLogs = db.prepare(`SELECT id, telefone, direcao, mensagem, tipo, status, criado_em FROM mensagens_whatsapp ORDER BY criado_em DESC LIMIT 20`).all() || [];
+      logs = rawSqliteLogs.map(m => ({
+        id:        m.id,
+        telefone:  m.telefone,
+        direcao:   m.direcao,
+        tipo:      m.tipo || 'texto',
+        status:    m.status || null,
+        mensagem:  formatarDescricaoMsgSqlite(m),
+        criado_em: m.criado_em,
+        lid_pendente: false,
+      }));
     }
 
     // Secret configurado?
