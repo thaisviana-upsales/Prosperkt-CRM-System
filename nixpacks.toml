@@ -1,4 +1,5 @@
 # nixpacks.toml — Configuração do build no Railway
 # Instala ffmpeg para conversão de áudio WebM → OGG (formato nativo WhatsApp)
 [phases.setup]
-nixPkgs = ['ffmpeg']
+nixPkgs = ["...", "ffmpeg"]
+
