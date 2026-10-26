@@ -171,6 +171,8 @@ let _carregandoMaisConversas = false;
 let _temMaisConversas = false;
 let _convAtiva = null;   // objeto conversa
 let _mensagens = [];
+let _carregandoMaisMensagens = false;
+let _temMaisMensagensAntigas = true;
 let _filtroStatus = '';
 let _busca = '';
 let _leads = [];
@@ -781,7 +783,11 @@ async function abrirOuCriarConversaLead(leadId, tel, nome) {
 
 // ─── Carregar mensagens ───────────────────────────────────────────────────────
 async function carregarMensagens(convId, silencioso = false) {
-  const r = await Auth.api('GET', `/whatsapp/conversas/${convId}/mensagens?limit=200`);
+  _temMaisMensagensAntigas = true;
+  _carregandoMaisMensagens = false;
+  _mensagens = []; // limpa histórico anterior para não misturar conversas
+
+  const r = await Auth.api('GET', `/whatsapp/conversas/${convId}/mensagens?limit=50`);
   if (!r?.ok) {
     if (!silencioso) {
       console.error('WHATSAPP_MESSAGES_LOAD_ERROR', r?.data?.erro||'sem resposta', 'convId:', convId);
@@ -790,6 +796,9 @@ async function carregarMensagens(convId, silencioso = false) {
     return;
   }
   _mensagens = r.data.dados || [];
+  if (_mensagens.length < 50) {
+    _temMaisMensagensAntigas = false;
+  }
   logDebug('WHATSAPP_MESSAGES_LOADED', _mensagens.length, 'msgs | convId:', convId);
 
   // Zera nao_lidas localmente — backend já foi avisado pelo endpoint que retorna mensagens
@@ -800,9 +809,57 @@ async function carregarMensagens(convId, silencioso = false) {
   // Re-destaca a conversa ativa após re-render
   document.getElementById('conv-item-' + convId)?.classList.add('active');
 
-  renderMensagens();
+  renderMensagens(true);
 }
 
+// ─── Carregar mensagens mais antigas (ao rolar para o topo) ──────────────────
+async function carregarMensagensAnteriores() {
+  if (_carregandoMaisMensagens || !_temMaisMensagensAntigas || !_convAtiva || !_mensagens.length) return;
+  _carregandoMaisMensagens = true;
+  const convId = _convAtiva.id;
+  const primeiraMsg = _mensagens[0];
+  if (!primeiraMsg || !primeiraMsg.criado_em) {
+    _carregandoMaisMensagens = false;
+    return;
+  }
+
+  const el = document.getElementById('wa-messages');
+  const prevScrollHeight = el ? el.scrollHeight : 0;
+  const prevScrollTop = el ? el.scrollTop : 0;
+
+  try {
+    const r = await Auth.api('GET', `/whatsapp/conversas/${convId}/mensagens?limit=50&antes_de=${encodeURIComponent(primeiraMsg.criado_em)}`);
+    if (!_convAtiva || _convAtiva.id !== convId) return;
+
+    if (r?.ok && r.data?.dados) {
+      const anteriores = r.data.dados;
+      if (!anteriores.length) {
+        _temMaisMensagensAntigas = false;
+      } else {
+        if (anteriores.length < 50) _temMaisMensagensAntigas = false;
+
+        const idsExistentes = new Set(_mensagens.map(m => m.id));
+        const filtradas = anteriores.filter(m => !idsExistentes.has(m.id));
+
+        if (filtradas.length > 0) {
+          _mensagens = [...filtradas, ..._mensagens];
+          renderMensagens(false); // preserva scroll, não rola para o fim
+
+          requestAnimationFrame(() => {
+            if (el) {
+              const diff = el.scrollHeight - prevScrollHeight;
+              el.scrollTop = prevScrollTop + diff;
+            }
+          });
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[WA] carregarMensagensAnteriores erro:', e);
+  } finally {
+    _carregandoMaisMensagens = false;
+  }
+}
 
 // ─── Renderizador de ícone de status de mensagem ───────────────────────────
 function renderStatusIcon(status) {
@@ -837,28 +894,27 @@ function renderStatusIcon(status) {
 // Chamado pelo setInterval — só re-renderiza se houver mensagens novas,
 // ou atualiza o status dos checks pontualmente sem reset de scroll.
 async function pollMensagens(convId) {
+  if (!_convAtiva || _convAtiva.id !== convId) return;
   try {
-    const r = await Auth.api('GET', `/whatsapp/conversas/${convId}/mensagens?limit=200`);
-    if (!r?.ok) return;
-    const novas = r.data.dados || [];
-    const qtdAntes = _mensagens.length;
-    const idAnterior = _mensagens[_mensagens.length - 1]?.id;
-    const idNovo     = novas[novas.length - 1]?.id;
+    const r = await Auth.api('GET', `/whatsapp/conversas/${convId}/mensagens?limit=50`);
+    if (!r?.ok || !_convAtiva || _convAtiva.id !== convId) return;
+    const recentes = r.data.dados || [];
+    if (!recentes.length) return;
+
+    const el = document.getElementById('wa-messages');
+    const estavaNoFinal = el ? ((el.scrollHeight - el.scrollTop - el.clientHeight) <= 120) : true;
+
+    // Detecta mensagens novas
+    const idsExistentes = new Set(_mensagens.map(m => m.id));
+    const novasMsg = recentes.filter(m => !idsExistentes.has(m.id));
 
     // Detecta se houve mudança de status em qualquer mensagem existente
-    const teveMudancaStatus = novas.some((m, idx) => {
-      const antigo = _mensagens[idx];
-      return antigo && (antigo.id === m.id) && (antigo.status !== m.status);
-    });
-
-    if (novas.length !== qtdAntes || idAnterior !== idNovo) {
-      _mensagens = novas;
-      renderMensagens(); // scrollToBottom interno
-      logDebug('CONVERSA_MESSAGES_HAS_RECEIVED', novas.filter(m => m.direcao === 'recebida').length);
-    } else if (teveMudancaStatus) {
-      // Atualiza somente os badges/checks de status no DOM preservando o scroll do usuário
-      _mensagens = novas;
-      novas.forEach(m => {
+    let teveMudancaStatus = false;
+    recentes.forEach(m => {
+      const local = _mensagens.find(loc => loc.id === m.id);
+      if (local && local.status !== m.status) {
+        local.status = m.status;
+        teveMudancaStatus = true;
         if (m.direcao === 'enviada') {
           const msgEl = document.querySelector(`.wa-msg[data-id="${m.id}"]`);
           if (msgEl) {
@@ -869,18 +925,25 @@ async function pollMensagens(convId) {
             }
           }
         }
-      });
+      }
+    });
+
+    if (novasMsg.length > 0) {
+      _mensagens = [..._mensagens, ...novasMsg];
+      renderMensagens(estavaNoFinal); // se o usuário estava lendo histórico acima, não força scroll para baixo
+      logDebug('CONVERSA_MESSAGES_HAS_RECEIVED', novasMsg.length);
+    } else if (teveMudancaStatus) {
       logDebug('CONVERSA_MESSAGES_STATUS_UPDATED');
     }
-    logDebug('CONVERSA_MESSAGES_LOAD_COUNT', novas.length);
   } catch(e) {
     // Silencioso — erro de polling não interrompe nada
   }
 }
 
 // ─── Render mensagens ─────────────────────────────────────────────────────────
-function renderMensagens() {
+function renderMensagens(scrollFim = true) {
   const el = document.getElementById('wa-messages');
+  if (!el) return;
   if (!_mensagens.length) {
     el.innerHTML = `
       <div style="text-align:center;padding:40px;color:var(--text-muted);font-size:.82rem">
@@ -889,11 +952,15 @@ function renderMensagens() {
         <small>Comece a conversa digitando abaixo.</small>
       </div>
       <div class="wa-typing" id="wa-typing"><span></span><span></span><span></span></div>`;
-    scrollToBottom();
+    if (scrollFim) scrollToBottom();
     return;
   }
 
   let html = '';
+  if (_temMaisMensagensAntigas) {
+    html += `<div class="wa-load-more" id="wa-load-more-hint" style="text-align:center;padding:8px;font-size:.7rem;color:var(--text-muted);opacity:.7">Role para cima para ver mensagens anteriores</div>`;
+  }
+
   let ultimaData = null;
 
   _mensagens.forEach(msg => {
@@ -910,11 +977,9 @@ function renderMensagens() {
   html += `<div class="wa-typing" id="wa-typing"><span></span><span></span><span></span></div>`;
 
   el.innerHTML = html;
-  scrollToBottom();
+  if (scrollFim) scrollToBottom();
 
   // Safety net: chama _waLoadImg explicitamente para TODOS os placeholders de imagem.
-  // Garante o carregamento mesmo que o MutationObserver perca o evento (race condition
-  // entre resolverConversaLead → abrirConversa → renderMensagens e o setup do observer).
   el.querySelectorAll('.wa-img-lazy[data-wa-imgmsgid]').forEach(_waLoadImg);
 }
 
@@ -1680,6 +1745,18 @@ function bindEvents() {
   // Único listener permanente no container de mensagens captura todos os cliques
   const msgContainer = document.getElementById('wa-messages');
   if (msgContainer) {
+    // Scroll para carregar mensagens anteriores (paginação para cima)
+    let scrollTimer;
+    msgContainer.addEventListener('scroll', () => {
+      if (_carregandoMaisMensagens || !_temMaisMensagensAntigas || !_convAtiva) return;
+      if (msgContainer.scrollTop <= 40 && _mensagens.length > 0) {
+        clearTimeout(scrollTimer);
+        scrollTimer = setTimeout(() => {
+          carregarMensagensAnteriores();
+        }, 150);
+      }
+    });
+
     msgContainer.addEventListener('click', (e) => {
       // ── Áudio: play/pause (FROZEN — não alterar) ─────────────────────────
       const playBtn = e.target.closest('.wa-audio-play-btn');

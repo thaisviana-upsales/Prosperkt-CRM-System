@@ -1043,7 +1043,9 @@ async function listarMensagens(req, res) {
   try {
     const { sb, isSupa } = getProvider();
     const { id } = req.params;
-    const { limit = 200, offset = 0 } = req.query;
+    const { limit = 50, offset = 0, antes_de, apos_de } = req.query;
+    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 300);
+    const offsetNum = Math.max(parseInt(offset, 10) || 0, 0);
 
     if (isSupa) {
       const { data: conversa, error: errC } = await sb.from(CONVERSAS_TABLE)
@@ -1063,26 +1065,49 @@ async function listarMensagens(req, res) {
         conversa.vendedor_id = req.usuario.id;
       }
 
-      const { data: msgs, error: errM } = await sb.from(MENSAGENS_TABLE)
+      let q = sb.from(MENSAGENS_TABLE)
         .select('*, usuarios!mensagens_whatsapp_vendedor_id_fkey(nome)')
-        .eq('conversa_id', id)
-        .order('criado_em', { ascending: true })
-        .range(Number(offset), Number(offset) + Number(limit) - 1);
+        .eq('conversa_id', id);
+
+      if (antes_de) {
+        // Busca mensagens mais antigas que 'antes_de'
+        q = q.lt('criado_em', antes_de)
+             .order('criado_em', { ascending: false })
+             .order('id', { ascending: false })
+             .limit(limitNum);
+      } else if (apos_de) {
+        // Busca mensagens mais recentes que 'apos_de'
+        q = q.gt('criado_em', apos_de)
+             .order('criado_em', { ascending: true })
+             .order('id', { ascending: true })
+             .limit(limitNum);
+      } else {
+        // Padrão: busca as mais recentes da conversa
+        q = q.order('criado_em', { ascending: false })
+             .order('id', { ascending: false })
+             .range(offsetNum, offsetNum + limitNum - 1);
+      }
+
+      const { data: msgs, error: errM } = await q;
       if (errM) throw errM;
 
-      const normalizado = (msgs || []).map(m => ({ ...m, vendedor_nome: m.usuarios?.nome || null }));
+      // Mantém sempre a ordem cronológica crescente (antiga -> recente) para renderização natural no chat
+      const ordenadas = apos_de ? (msgs || []) : (msgs || []).reverse();
+      const normalizado = ordenadas.map(m => ({ ...m, vendedor_nome: m.usuarios?.nome || null }));
       const convNorm = { ...conversa, vendedor_nome: conversa.usuarios?.nome, lead_nome: conversa.leads?.nome, lead_empresa: conversa.leads?.empresa };
 
       // Marca como lidas e zera nao_lidas (não bloqueia resposta)
-      // WHATSAPP_MARK_READ: log obrigatório para auditoria
-      Promise.all([
-        sb.from(MENSAGENS_TABLE).update({ status: 'lido' })
-          .eq('conversa_id', id).eq('direcao', 'recebida').neq('status', 'lido'),
-        sb.from(CONVERSAS_TABLE).update({ nao_lidas: 0, atualizado_em: new Date().toISOString() })
-          .eq('id', id).gt('nao_lidas', 0),
-      ]).then(() => {
-        console.log('WHATSAPP_MARK_READ', { conversaId: id });
-      }).catch(e => console.warn('[WA] mark-read warn:', e.message));
+      (async () => {
+        try {
+          await sb.from(MENSAGENS_TABLE).update({ status: 'lido' })
+            .eq('conversa_id', id).eq('direcao', 'recebida').neq('status', 'lido');
+          await sb.from(CONVERSAS_TABLE).update({ nao_lidas: 0, atualizado_em: new Date().toISOString() })
+            .eq('id', id).gt('nao_lidas', 0);
+          console.log('WHATSAPP_MARK_READ', { conversaId: id });
+        } catch (e) {
+          console.warn('[WA] mark-read warn:', e.message);
+        }
+      })();
 
       return res.json({ sucesso: true, dados: normalizado, conversa: convNorm });
     }
@@ -1098,7 +1123,23 @@ async function listarMensagens(req, res) {
       db.prepare('UPDATE conversas_whatsapp SET vendedor_id = ?, atualizado_em = ? WHERE id = ?').run(req.usuario.id, new Date().toISOString(), id);
       conversa.vendedor_id = req.usuario.id;
     }
-    const msgs = db.prepare(`SELECT m.*, u.nome AS vendedor_nome FROM mensagens_whatsapp m LEFT JOIN usuarios u ON m.vendedor_id = u.id WHERE m.conversa_id = ? ORDER BY m.criado_em ASC LIMIT ? OFFSET ?`).all(id, Number(limit), Number(offset));
+
+    let sql = `SELECT m.*, u.nome AS vendedor_nome FROM mensagens_whatsapp m LEFT JOIN usuarios u ON m.vendedor_id = u.id WHERE m.conversa_id = ?`;
+    const params = [id];
+    let isAsc = false;
+    if (antes_de) {
+      sql += ` AND m.criado_em < ? ORDER BY m.criado_em DESC, m.id DESC LIMIT ?`;
+      params.push(antes_de, limitNum);
+    } else if (apos_de) {
+      sql += ` AND m.criado_em > ? ORDER BY m.criado_em ASC, m.id ASC LIMIT ?`;
+      params.push(apos_de, limitNum);
+      isAsc = true;
+    } else {
+      sql += ` ORDER BY m.criado_em DESC, m.id DESC LIMIT ? OFFSET ?`;
+      params.push(limitNum, offsetNum);
+    }
+    const msgsRaw = db.prepare(sql).all(...params);
+    const msgs = isAsc ? msgsRaw : (msgsRaw || []).reverse();
     db.prepare(`UPDATE mensagens_whatsapp SET status = 'lido' WHERE conversa_id = ? AND direcao = 'recebida' AND status != 'lido'`).run(id);
     return res.json({ sucesso: true, dados: msgs, conversa });
   } catch (e) {
