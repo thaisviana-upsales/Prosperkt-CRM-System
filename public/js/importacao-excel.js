@@ -168,6 +168,7 @@
         mostrarAlert(alertUpload, 'warning', `⚠️ ${rs.sugestoes} linha(s) aguardando sua confirmação de correlação. Revise as sugestões abaixo antes de importar.`);
       } else if (!temValidas) {
         mostrarAlert(alertUpload, 'warning', '⚠️ Nenhuma linha válida encontrada. Corrija os erros e reenvie a planilha.');
+        carregarHistorico(); // B19: importação já finalizada como "Com erros"
       } else {
         mostrarAlert(alertUpload, 'success', `✅ Validação concluída. ${rs.validas} linha(s) pronta(s) para importação.`);
       }
@@ -376,8 +377,17 @@
         throw new Error(resp.data?.erro || 'Erro ao importar.');
       }
       const r = resp.data.resumo;
-      mostrarAlert(alertImportar, 'success', `🎉 Importação concluída! ${r.importados} lead(s) criado(s).${r.erros ? ` ${r.erros} com erro.` : ''}`);
-      btnImportar.innerHTML = '✅ Importação concluída';
+      const st = resp.data.status;
+      if (r.importados === 0) {
+        mostrarAlert(alertImportar, 'danger', `❌ Importação finalizada com erros: nenhum lead criado.${r.erros ? ` ${r.erros} linha(s) com erro.` : ''}`);
+        btnImportar.innerHTML = '✖ Finalizada com erros';
+      } else if (st === 'concluido_com_erros' || r.falhas > 0) {
+        mostrarAlert(alertImportar, 'warning', `⚠️ Importação concluída com erros: ${r.importados} lead(s) criado(s), ${r.falhas} linha(s) não importada(s).`);
+        btnImportar.innerHTML = '⚠ Concluída com erros';
+      } else {
+        mostrarAlert(alertImportar, 'success', `🎉 Importação concluída! ${r.importados} lead(s) criado(s).`);
+        btnImportar.innerHTML = '✅ Importação concluída';
+      }
 
       setTimeout(carregarHistorico, 1000);
 
@@ -444,7 +454,7 @@
           <td style="text-align:center;color:#6CFF4E">${r.total_importados||0}</td>
           <td style="text-align:center;color:#FF3B5C">${r.total_erros||0}</td>
           <td style="text-align:center;color:#F5A623">${r.total_duplicados||0}</td>
-          <td>${badgeStatus(r.status)}</td>
+          <td>${badgeStatus(r)}</td>
           <td>
             ${(r.total_erros||0)+(r.total_duplicados||0)>0
               ? `<button onclick="baixarErrosHist('${r.id}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:.7rem" title="Baixar erros">⬇ erros</button>`
@@ -536,15 +546,27 @@
     return M[campo] || campo;
   }
 
-  function badgeStatus(status) {
+  // B19: rótulo final derivado do status + contadores.
+  // Registros 'concluido' antigos (ou gravados via fallback sem o patch de CHECK)
+  // são reclassificados pelos contadores: importados x linhas da planilha.
+  function badgeStatus(r) {
+    let status = r.status;
+    const imp    = Number(r.total_importados) || 0;
+    const linhas = Number(r.total_linhas) || 0;
+    if (status === 'concluido' && linhas > 0) {
+      if (imp === 0)          status = 'com_erros';
+      else if (imp < linhas)  status = 'concluido_com_erros';
+    }
     const M = {
-      concluido:            '<span class="badge-ok">Concluído</span>',
-      importando:           '<span class="badge-pend">Importando...</span>',
+      concluido:             '<span class="badge-ok">Concluído</span>',
+      concluido_com_erros:   '<span class="badge-warn">Concluído com erros</span>',
+      com_erros:             '<span class="badge-err">Com erros</span>',
+      importando:            '<span class="badge-pend">Importando...</span>',
       aguardando_confirmacao:'<span class="badge-pend">Aguardando</span>',
-      erro:                 '<span class="badge-err">Erro</span>',
-      cancelado:            '<span class="badge-pend">Cancelado</span>',
+      erro:                  '<span class="badge-err">Falhou</span>',
+      cancelado:             '<span class="badge-pend">Cancelado</span>',
     };
-    return M[status] || `<span class="badge-pend">${status}</span>`;
+    return M[status] || `<span class="badge-pend">${esc(status)}</span>`;
   }
 
   function fmtData(iso) {

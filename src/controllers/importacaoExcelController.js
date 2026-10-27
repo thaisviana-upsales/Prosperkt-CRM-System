@@ -153,6 +153,56 @@ function parseTags(val) {
   return String(val).split(';').map(t => t.trim()).filter(Boolean);
 }
 
+// ── B19: Status possíveis de importacoes_leads ──────────────────────────────
+//   aguardando_confirmacao → validada, aguardando o admin clicar em Importar
+//   importando             → processamento em andamento
+//   concluido              → importados > 0 e nenhuma falha
+//   concluido_com_erros    → importados > 0 e falhas > 0
+//   com_erros              → importados = 0 e falhas > 0
+//   cancelado              → abandonada / expirada (rotina de correção)
+//   erro                   → processamento abortado por exceção ("Falhou")
+// "falhas" = toda linha da planilha que NÃO virou lead
+// (inválida, duplicada, erro na gravação ou sugestão não confirmada).
+const STATUS_IMPORTACAO = {
+  AGUARDANDO:          'aguardando_confirmacao',
+  IMPORTANDO:          'importando',
+  CONCLUIDO:           'concluido',
+  CONCLUIDO_COM_ERROS: 'concluido_com_erros',
+  COM_ERROS:           'com_erros',
+  CANCELADO:           'cancelado',
+  FALHOU:              'erro',
+};
+
+function calcularStatusFinal({ importados, falhas }) {
+  const imp = Number(importados) || 0;
+  const fal = Number(falhas) || 0;
+  if (imp > 0 && fal === 0) return STATUS_IMPORTACAO.CONCLUIDO;
+  if (imp > 0 && fal > 0)   return STATUS_IMPORTACAO.CONCLUIDO_COM_ERROS;
+  if (imp === 0 && fal > 0) return STATUS_IMPORTACAO.COM_ERROS;
+  return STATUS_IMPORTACAO.CONCLUIDO; // 0/0: nada a processar
+}
+
+// Grava status final. Se o CHECK do banco ainda não aceitar os novos status
+// (patch B19 não aplicado), grava 'concluido' — o frontend deriva o rótulo
+// correto pelos contadores (total_importados x total_linhas).
+async function gravarStatusImportacao(sb, importacaoId, campos) {
+  const { error } = await sb.from('importacoes_leads').update(campos).eq('id', importacaoId);
+  if (!error) return campos.status;
+
+  const novos = [STATUS_IMPORTACAO.CONCLUIDO_COM_ERROS, STATUS_IMPORTACAO.COM_ERROS];
+  const ehCheck = error.code === '23514' || /check constraint/i.test(error.message || '');
+  if (ehCheck && novos.includes(campos.status)) {
+    console.warn('[importacao-excel] CHECK de status sem patch B19 — usando fallback "concluido"', { importacaoId, status: campos.status });
+    const { error: e2 } = await sb.from('importacoes_leads')
+      .update({ ...campos, status: STATUS_IMPORTACAO.CONCLUIDO }).eq('id', importacaoId);
+    if (!e2) return STATUS_IMPORTACAO.CONCLUIDO;
+    console.error('[importacao-excel] falha no fallback de status', e2.message);
+    return null;
+  }
+  console.error('[importacao-excel] falha ao gravar status', { importacaoId, erro: error.message });
+  return null;
+}
+
 // ── GET /api/importacao-excel/modelo ─────────────────────────────────────────
 async function downloadModelo(req, res) {
   try {
@@ -562,9 +612,20 @@ async function validar(req, res) {
       }
     }
 
+    // B19: se nenhuma linha é importável, a importação não tem fase 2
+    // (botão Importar fica desabilitado) — finaliza já, em vez de ficar "Aguardando".
+    let statusImportacao = STATUS_IMPORTACAO.AGUARDANDO;
+    if (isSupa && (totalValidas + totalSugestoes) === 0) {
+      statusImportacao = await gravarStatusImportacao(sb, importacaoId, {
+        status:        calcularStatusFinal({ importados: 0, falhas: rows.length }),
+        finalizado_em: agora,
+      }) || STATUS_IMPORTACAO.AGUARDANDO;
+    }
+
     return res.json({
       sucesso: true,
       importacao_id: importacaoId,
+      status: statusImportacao,
       resumo: {
         total:      rows.length,
         validas:    totalValidas,
@@ -757,26 +818,33 @@ async function importar(req, res) {
       }
     }
 
-    // Finaliza importação
-    await sb.from('importacoes_leads').update({
-      status:          'concluido',
+    // Finaliza importação (B19: status reflete importados x falhas)
+    // total_erros = erros de validação (fase 1) + erros na gravação (fase 2)
+    const totalLinhasPlanilha = Number(imp.total_linhas) || linhas.length;
+    const falhas = Math.max(0, totalLinhasPlanilha - importados);
+    const statusFinal = calcularStatusFinal({ importados, falhas });
+    const statusGravado = await gravarStatusImportacao(sb, importacaoId, {
+      status:           statusFinal,
       total_importados: importados,
-      total_erros:     erros,
-      finalizado_em:   agora,
-    }).eq('id', importacaoId);
+      total_erros:      (Number(imp.total_erros) || 0) + erros,
+      finalizado_em:    agora,
+    });
 
     return res.json({
       sucesso: true,
+      status: statusGravado || statusFinal,
       resumo: {
         total_linhas:  linhas?.length || 0,
         importados,
         erros,
+        falhas,
       },
     });
 
   } catch (e) {
     console.error('[importacao-excel.importar]', e.message);
-    const { error: _updErr } = await sb.from('importacoes_leads').update({ status: 'erro' }).eq('id', importacaoId);
+    const { error: _updErr } = await sb.from('importacoes_leads')
+      .update({ status: STATUS_IMPORTACAO.FALHOU, finalizado_em: new Date().toISOString() }).eq('id', importacaoId);
     void _updErr; // ignora erro (não crítico)
     return res.status(500).json({ sucesso: false, erro: e.message });
   }
@@ -845,4 +913,8 @@ module.exports = {
   importar,
   historico,
   downloadErros,
+  // B19: exportados para a rotina de correção de importações presas
+  STATUS_IMPORTACAO,
+  calcularStatusFinal,
+  gravarStatusImportacao,
 };
