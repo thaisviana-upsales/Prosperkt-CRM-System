@@ -143,10 +143,15 @@ const Sidebar = (() => {
   }
 
   async function init(activeId, roleMinima = 'VENDEDOR') {
+    const el = document.getElementById('sidebar-container');
+    const usuarioCached = Auth.getUsuario();
+    if (el && usuarioCached && !el.innerHTML.trim()) {
+      el.innerHTML = render(activeId, usuarioCached);
+      setupToggle();
+    }
     const ok = await Auth.protegerRota(roleMinima);
     if (!ok) return null;
     const usuario = Auth.getUsuario();
-    const el = document.getElementById('sidebar-container');
     if (el) el.innerHTML = render(activeId, usuario);
     document.getElementById('btn-logout')?.addEventListener('click', () => Auth.logout());
     setupToggle();

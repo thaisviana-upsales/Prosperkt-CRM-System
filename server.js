@@ -65,6 +65,7 @@ app.use('/api', apiRoutes);
 // Static files (frontend)
 // ─────────────────────────────────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, 'public'), {
+  extensions: ['html'],
   // CSS/JS/HTML: sempre revalida com o servidor (sem cache agressivo)
   // Isso garante que novos deploys chegam sem hard refresh
   setHeaders(res, filePath) {

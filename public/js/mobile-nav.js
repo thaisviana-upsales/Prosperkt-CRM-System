@@ -25,6 +25,7 @@
   const PAGE_MAP = {
     'dashboard.html':            'dashboard',
     'pipeline.html':             'pipeline',
+    'adm-vendas.html':           'menu',
     'whatsapp.html':             'conversas',
     'metas.html':                'metas',
     'comissoes.html':            'menu',
@@ -33,6 +34,7 @@
     'automacoes.html':           'menu',
     'funis.html':                'menu',
     'integracao-whatsapp.html':  'menu',
+    'importacao-excel.html':     'menu',
     'logs.html':                 'menu',
     'trocar-senha.html':         'menu',
   };
@@ -47,6 +49,7 @@
     const titles = {
       'dashboard.html':           'Dashboard',
       'pipeline.html':            'Pipeline',
+      'adm-vendas.html':          'Adm. de Vendas',
       'whatsapp.html':            'Conversas',
       'metas.html':               'Metas',
       'comissoes.html':           'Comissões',
@@ -55,6 +58,7 @@
       'automacoes.html':          'Automações',
       'funis.html':               'Funis',
       'integracao-whatsapp.html': 'Integração WA',
+      'importacao-excel.html':    'Importação de Leads',
       'logs.html':                'Logs',
       'trocar-senha.html':        'Trocar Senha',
       'login.html':               'Login',
@@ -147,6 +151,12 @@
         </svg>
         Integração WhatsApp
       </a>
+      <a href="/importacao-excel.html" class="mms-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        Importação de Leads
+      </a>
     ` : '';
 
     // Informações do usuário logado
@@ -167,6 +177,12 @@
         <button class="mms-close" onclick="window.__fecharMenuSheet()" aria-label="Fechar">✕</button>
       </div>
       <div class="mms-body">
+        <a href="/adm-vendas.html" class="mms-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+          </svg>
+          Adm. de Vendas
+        </a>
         <a href="/comissoes.html" class="mms-item">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
@@ -190,7 +206,7 @@
         </a>
         ${adminItems}
         <div class="mms-divider"></div>
-        <button class="mms-item mms-item-danger" onclick="Auth.sair()">
+        <button class="mms-item mms-item-danger" onclick="Auth.logout()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
             <polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>

@@ -24,6 +24,18 @@ const Auth = (() => {
   let _refreshTimer   = null;
   let _refreshPromise = null; // serializa refreshes paralelos
 
+  // B22: Configuração da política de retry com backoff exponencial
+  const RETRY_CONFIG = {
+    maxTentativas: 3,
+    baseDelayMs: 1200,          // 1.2s, 2.4s, 4.8s (+ jitter)
+    reagendamentoRedeMs: 25000, // nova tentativa em 25s se falhar por rede no auto-refresh
+  };
+  let _ultimoRefreshStatus = { sucesso: true, definitivo: false, erroRede: false };
+
+  function _esperar(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Token storage
   // ─────────────────────────────────────────────────────────────────────────
@@ -88,7 +100,7 @@ const Auth = (() => {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Refresh token — serializado para evitar múltiplas chamadas simultâneas
+  // Refresh token — resiliente com retry, backoff e tratamento de erro de rede
   // ─────────────────────────────────────────────────────────────────────────
   async function refreshToken() {
     // Se já há um refresh em andamento, aguarda o mesmo resultado
@@ -98,29 +110,84 @@ const Auth = (() => {
     }
 
     _refreshPromise = (async () => {
-      try {
-        logDebug('AUTH_REFRESH_START: solicitando novo access token via cookie');
-        const res  = await fetch('/api/auth/refresh', {
-          method: 'POST',
-          credentials: 'include',
-        });
-        const data = await res.json();
-        if (data.sucesso && data.accessToken) {
-          setSession(data.accessToken, data.usuario);
-          logDebug('AUTH_REFRESH_OK: novo token obtido e agendado');
-          return true;
+      let erroDefinitivo = false;
+      let erroRede = false;
+
+      for (let t = 1; t <= RETRY_CONFIG.maxTentativas; t++) {
+        try {
+          logDebug(`AUTH_REFRESH_START: solicitando renovação (tentativa ${t}/${RETRY_CONFIG.maxTentativas})`);
+          const res = await fetch('/api/auth/refresh', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Accept': 'application/json' },
+          });
+
+          // Erro transitório do gateway/proxy (502, 503, 504)
+          if (res.status >= 500) {
+            erroRede = true;
+            warnDebug(`AUTH_REFRESH_TEMP_SERVER_ERROR: HTTP ${res.status}`);
+            if (t < RETRY_CONFIG.maxTentativas) {
+              const delay = RETRY_CONFIG.baseDelayMs * Math.pow(2, t - 1) + Math.random() * 250;
+              await _esperar(delay);
+              continue;
+            }
+            break;
+          }
+
+          let data = {};
+          try { data = await res.json(); } catch (_) {}
+
+          if (res.ok && data.sucesso && data.accessToken) {
+            setSession(data.accessToken, data.usuario);
+            logDebug('AUTH_REFRESH_OK: novo token obtido e agendado');
+            _ultimoRefreshStatus = { sucesso: true, definitivo: false, erroRede: false };
+            return true;
+          }
+
+          // Erro definitivo de autenticação: refresh token ausente ou inválido no cookie
+          if (res.status === 401 || res.status === 403) {
+            erroDefinitivo = true;
+            warnDebug('AUTH_REFRESH_DEFINITIVE_FAIL:', data.codigo || data.erro || 'Sessão inválida');
+            break; // não adianta retry se a sessão realmente expirou ou foi revogada
+          }
+
+          warnDebug('AUTH_REFRESH_FAILED:', data.erro || 'Falha na resposta');
+          break;
+
+        } catch (e) {
+          // Erro de rede (Failed to fetch, sem internet, offline)
+          erroRede = true;
+          warnDebug(`AUTH_NETWORK_ERROR_DURING_REFRESH: tentativa ${t}/${RETRY_CONFIG.maxTentativas}: ${e.message}`);
+          if (t < RETRY_CONFIG.maxTentativas) {
+            const delay = RETRY_CONFIG.baseDelayMs * Math.pow(2, t - 1) + Math.random() * 250;
+            await _esperar(delay);
+          }
         }
-        warnDebug('AUTH_REFRESH_FAILED:', data.erro || data.codigo || 'sem detalhe');
-        return false;
-      } catch (e) {
-        warnDebug('AUTH_REFRESH_ERROR:', e.message);
-        return false;
-      } finally {
-        _refreshPromise = null;
       }
+
+      _ultimoRefreshStatus = {
+        sucesso: false,
+        definitivo: erroDefinitivo,
+        erroRede: erroRede && !erroDefinitivo,
+      };
+
+      // Se falhou por instabilidade de rede e ainda temos sessão, reagenda nova tentativa silenciosa
+      if (erroRede && !erroDefinitivo && isLoggedIn()) {
+        logDebug(`AUTH_REFRESH_RETRY_SCHEDULED: reagendando refresh em ${RETRY_CONFIG.reagendamentoRedeMs/1000}s devido a erro de rede`);
+        if (_refreshTimer) clearTimeout(_refreshTimer);
+        _refreshTimer = setTimeout(() => {
+          refreshToken();
+        }, RETRY_CONFIG.reagendamentoRedeMs);
+      }
+
+      return false;
     })();
 
-    return _refreshPromise;
+    try {
+      return await _refreshPromise;
+    } finally {
+      _refreshPromise = null;
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -162,9 +229,6 @@ const Auth = (() => {
   async function api(method, path, body = null, _retried = false) {
     const token = getToken();
 
-    // Log de diagnóstico sob modo debug
-    logDebug('AUTH_REQUEST_WITH_TOKEN', { hasToken: !!token, url: `/api${path}` });
-
     const opts = {
       method,
       credentials: 'include',
@@ -203,8 +267,12 @@ const Auth = (() => {
         }
       }
 
-      // Refresh falhou ou já foi tentado — redireciona para login
-      redirectToLogin(`401 em ${path} (codigo: ${data?.codigo || 'sem codigo'})`);
+      // Refresh falhou ou já foi tentado — só redireciona se for erro definitivo
+      if (_ultimoRefreshStatus.definitivo) {
+        redirectToLogin(`Sessão expirada em ${path}`);
+      } else {
+        warnDebug('AUTH_PRESERVE_SESSION: falha de rede transitória no refresh, sessão preservada');
+      }
       return { ok: false, status: 401, data };
     }
 
@@ -249,7 +317,9 @@ const Auth = (() => {
     if (!isLoggedIn()) {
       const refreshed = await refreshToken();
       if (!refreshed) {
-        redirectToLogin('protegerRota: sem sessão e refresh falhou');
+        if (_ultimoRefreshStatus.definitivo) {
+          redirectToLogin('protegerRota: sem sessão válida');
+        }
         return false;
       }
     }

@@ -11,6 +11,13 @@ const { registrarLog } = require('../services/auditService');
 
 const CAMPOS_PUBLICOS_SUPA = 'id, nome, email, role, ativo, avatar_url, criado_em, atualizado_em, sdr_padrao, recebe_leads_automaticos';
 
+// Helper B21: validação rigorosa de formato de e-mail
+function validarFormatoEmail(email) {
+  if (!email || typeof email !== 'string') return false;
+  const re = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+  return re.test(email.trim());
+}
+
 
 // GET /api/usuarios
 // SUPER_ADMIN / GESTOR: todos; VENDEDOR: apenas ele mesmo
@@ -196,6 +203,10 @@ async function criar(req, res) {
   }
 
   const emailNorm = email.toLowerCase().trim();
+  if (!validarFormatoEmail(emailNorm)) {
+    return res.status(400).json({ sucesso: false, erro: 'Formato de e-mail inválido.' });
+  }
+
   const id = crypto.randomBytes(16).toString('hex');
   const hash = await bcrypt.hash(senha, 12);
 
@@ -254,7 +265,22 @@ async function atualizar(req, res) {
 
       const upd = { atualizado_em: new Date().toISOString() };
       if (req.body.nome)  upd.nome  = req.body.nome.trim();
-      if (req.body.email) upd.email = req.body.email.toLowerCase().trim();
+      if (req.body.email) {
+        const novoEmail = req.body.email.toLowerCase().trim();
+        if (!validarFormatoEmail(novoEmail)) {
+          return res.status(400).json({ sucesso: false, erro: 'Formato de e-mail inválido.' });
+        }
+        if (novoEmail !== atual.email) {
+          if (roleAtual !== 'SUPER_ADMIN') {
+            return res.status(403).json({ sucesso: false, erro: 'Apenas Super Admin pode alterar o e-mail de um usuário.' });
+          }
+          const { data: dup } = await sb.from('usuarios').select('id').eq('email', novoEmail).neq('id', id).limit(1);
+          if (dup?.length) {
+            return res.status(409).json({ sucesso: false, erro: 'Este e-mail já está em uso por outro usuário.' });
+          }
+          upd.email = novoEmail;
+        }
+      }
       if (req.body.avatar_url !== undefined) upd.avatar_url = req.body.avatar_url;
       if (req.body.role && roleAtual === 'SUPER_ADMIN') upd.role = req.body.role;
       if (req.body.ativo !== undefined && roleAtual !== 'VENDEDOR') {
@@ -295,7 +321,22 @@ async function atualizar(req, res) {
 
     const campos = {};
     if (req.body.nome)  campos.nome  = req.body.nome.trim();
-    if (req.body.email) campos.email = req.body.email.toLowerCase().trim();
+    if (req.body.email) {
+      const novoEmail = req.body.email.toLowerCase().trim();
+      if (!validarFormatoEmail(novoEmail)) {
+        return res.status(400).json({ sucesso: false, erro: 'Formato de e-mail inválido.' });
+      }
+      if (novoEmail !== atual.email) {
+        if (roleAtual !== 'SUPER_ADMIN') {
+          return res.status(403).json({ sucesso: false, erro: 'Apenas Super Admin pode alterar o e-mail de um usuário.' });
+        }
+        const dup = db.prepare('SELECT id FROM usuarios WHERE email = ? AND id != ?').get(novoEmail, id);
+        if (dup) {
+          return res.status(409).json({ sucesso: false, erro: 'Este e-mail já está em uso por outro usuário.' });
+        }
+        campos.email = novoEmail;
+      }
+    }
     if (req.body.avatar_url !== undefined) campos.avatar_url = req.body.avatar_url;
     if (req.body.role && roleAtual === 'SUPER_ADMIN') campos.role = req.body.role;
     if (req.body.ativo !== undefined && roleAtual !== 'VENDEDOR') campos.ativo = req.body.ativo ? 1 : 0;

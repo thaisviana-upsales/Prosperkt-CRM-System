@@ -18,11 +18,11 @@
  *   - *.js     → sem interferência (browser usa HTTP cache)
  *   - /api/*   → dados sempre da rede
  *
- * v5: Bumped para forçar atualização do SW em todos os clientes.
- *     Versão anterior (v4) será deletada no activate.
+ * v7: Forçar renovação de cache em todos os clientes para eliminar qualquer rota legada.
+ *     Versões anteriores serão deletadas no activate.
  */
 
-const CACHE_NAME = 'prospekt-pwa-v6';
+const CACHE_NAME = 'prospekt-pwa-v7';
 
 const PRECACHE = [
   '/manifest.json',

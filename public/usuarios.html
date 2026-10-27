@@ -128,6 +128,26 @@
       <p style="margin-top:var(--space-2)">Você não tem permissão para acessar esta página.</p>
     </div>
 
+    <!-- Card de Auditoria Administrativa de E-mails (exclusivo SUPER_ADMIN) -->
+    <div id="card-auditoria-emails" class="card" style="display:none;margin-bottom:var(--space-6);border:1px solid rgba(245,166,35,0.35);background:rgba(245,166,35,0.06);border-radius:var(--radius-lg);padding:18px 22px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer" onclick="toggleAuditoriaEmails()">
+        <div style="display:flex;align-items:center;gap:12px">
+          <span style="font-size:1.5rem">⚠️</span>
+          <div>
+            <div style="font-weight:700;font-size:0.95rem;color:var(--text-primary)">Auditoria de E-mails & Domínios</div>
+            <div id="auditoria-emails-resumo" style="font-size:0.75rem;color:var(--text-secondary)">Analisando e-mails da equipe...</div>
+          </div>
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-toggle-auditoria" style="font-size:.72rem;padding:4px 10px">Ver Detalhes</button>
+      </div>
+      <div id="auditoria-emails-detalhes" style="display:none;margin-top:14px;border-top:1px solid rgba(255,255,255,0.08);padding-top:12px">
+        <div id="auditoria-emails-lista" style="display:flex;flex-direction:column;gap:8px"></div>
+        <p style="font-size:.7rem;color:var(--text-muted);margin-top:10px;margin-bottom:0">
+          ℹ️ <b>Regra de Proteção B21:</b> Nenhuma alteração é feita automaticamente. Para corrigir, clique no botão "Editar" de cada usuário. Domínio padrão esperado para a equipe: <code>@prospektpersonalizados.com.br</code>.
+        </p>
+      </div>
+    </div>
+
     <!-- Tabela -->
     <div id="table-section">
       <div class="table-container">
@@ -290,6 +310,9 @@ async function carregarUsuarios() {
   _usuarios = res.data.dados || [];
   console.log('[USUARIOS_CARREGADOS] total:', _usuarios.length, '| filtro:', _filtroStatus);
   _aplicarFiltroErender();
+  if (_isSuperAdmin) {
+    renderAuditoriaEmails();
+  }
 }
 
 // Aplica filtro de status + busca e renderiza
@@ -356,6 +379,11 @@ function renderTabela(lista) {
         </div>
       </td>` : '';
 
+    const audit = auditarEmail(u.email, u.nome);
+    const auditBadge = audit.suspeito
+      ? `<span class="badge ${audit.tipo === 'grafia' ? 'badge-pink' : 'badge-warning'}" style="margin-left:6px;font-size:.65rem;cursor:help;padding:1px 6px" title="${audit.msg}">⚠️ ${audit.tipo === 'grafia' ? 'Grafia Suspeita' : 'Domínio Não Padronizado'}</span>`
+      : '';
+
     return `<tr>
       <td>
         <div style="display:flex;align-items:center;gap:10px">
@@ -363,7 +391,10 @@ function renderTabela(lista) {
           <span style="font-weight:500">${u.nome}</span>
         </div>
       </td>
-      <td style="color:var(--text-secondary)">${u.email}</td>
+      <td style="color:var(--text-secondary)">
+        <span style="font-family:monospace">${u.email}</span>
+        ${auditBadge}
+      </td>
       <td><span class="badge ${roleBadgeClass(u.role)}">${ROLE_LABELS[u.role]||u.role}</span></td>
       <td><span class="${ativo?'text-green':'text-muted'}"><span class="status-dot ${ativo?'dot-green':'dot-gray'}"></span>${ativo?'Ativo':'Inativo'}</span></td>
       <td style="color:var(--text-secondary)">${data}</td>
@@ -410,7 +441,8 @@ function abrirModal(modo = 'criar', usuario = null) {
   document.getElementById('form-ativo').value = usuario?.ativo !== undefined ? String(usuario.ativo) : '1';
   document.getElementById('senha-opcional').style.display = modo === 'editar' ? '' : 'none';
   document.getElementById('modal-alert').style.display = 'none';
-  document.getElementById('form-email').disabled = modo === 'editar';
+  // Super Admin pode editar o e-mail mesmo no modo de edição (B21)
+  document.getElementById('form-email').disabled = modo === 'editar' && !_isSuperAdmin;
 
   // Campos SDR
   const recebeEl  = document.getElementById('form-recebe-leads');
@@ -468,12 +500,22 @@ async function salvarUsuario(e) {
 
   alertEl.style.display = 'none';
 
-  if (!nome || (!id && !email)) {
+  if (!nome || !email) {
     alertEl.className = 'alert alert-error';
     alertEl.textContent = 'Preencha nome e e-mail.';
     alertEl.style.display = '';
     return;
   }
+
+  // Validação estrita de formato de e-mail (B21)
+  const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+  if (!emailRegex.test(email)) {
+    alertEl.className = 'alert alert-error';
+    alertEl.textContent = 'Formato de e-mail inválido. Exemplo: usuario@prospektpersonalizados.com.br';
+    alertEl.style.display = '';
+    return;
+  }
+
   if (!id && !senha) {
     alertEl.className = 'alert alert-error';
     alertEl.textContent = 'Informe uma senha para o novo usuário.';
@@ -500,8 +542,9 @@ async function salvarUsuario(e) {
       console.log('[USER_CREATE_PROFILE_RECEIVED]', role);
       res = await Auth.api('POST', '/usuarios', payload);
     } else {
-      // Editar
+      // Editar (B21: Super Admin pode atualizar o e-mail)
       const payload = { nome, role, ativo };
+      if (_isSuperAdmin) payload.email = email;
       if (senha) payload.senha = senha;
       if (role === 'SDR') {
         payload.recebe_leads_automaticos = document.getElementById('form-recebe-leads')?.checked || false;
@@ -604,6 +647,120 @@ function onRoleChange() {
   const role = document.getElementById('form-role')?.value;
   const sdrEl = document.getElementById('sdr-campos');
   if (sdrEl) sdrEl.style.display = role === 'SDR' ? '' : 'none';
+}
+
+// ── B21: Auditoria de E-mails & Domínios ───────────────────────
+const DOMINIO_OFICIAL_COMERCIAL = 'prospektpersonalizados.com.br';
+
+function auditarEmail(email, nome) {
+  if (!email || !email.includes('@')) {
+    return { suspeito: true, tipo: 'invalido', msg: 'Formato de e-mail inválido ou incompleto' };
+  }
+  const [localPart, domain] = email.toLowerCase().split('@');
+
+  // 1. Erro de digitação específico no domínio
+  if (domain === 'prospekpersonalizados.com.br') {
+    return {
+      suspeito: true,
+      tipo: 'grafia',
+      msg: "Falta a letra 't' no domínio (prospekpersonalizados vs prospektpersonalizados)",
+      sugestao: `${localPart}@${DOMINIO_OFICIAL_COMERCIAL}`,
+    };
+  }
+  if (domain === 'prosperkt.com') {
+    return {
+      suspeito: true,
+      tipo: 'grafia',
+      msg: "Domínio com 'er' (prosperkt vs prospekt)",
+      sugestao: `${localPart}@prospekt.com`,
+    };
+  }
+
+  // 2. Domínios genéricos/testes ou não corporativos
+  if (domain !== DOMINIO_OFICIAL_COMERCIAL) {
+    return {
+      suspeito: true,
+      tipo: 'dominio_divergente',
+      msg: `Domínio não padronizado (@${domain})`,
+      sugestao: `${localPart}@${DOMINIO_OFICIAL_COMERCIAL}`,
+    };
+  }
+
+  // 3. Divergência provável de primeiro nome vs prefixo (ex: Evelaine vs evalane)
+  if (nome && localPart) {
+    const primeiroNome = nome.toLowerCase().split(/\s+/)[0].normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const prefixo = localPart.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    if (primeiroNome.length >= 4 && prefixo.length >= 4 && primeiroNome !== prefixo) {
+      let diff = 0;
+      const maxL = Math.max(primeiroNome.length, prefixo.length);
+      for (let i = 0; i < maxL; i++) {
+        if (primeiroNome[i] !== prefixo[i]) diff++;
+      }
+      if (diff >= 1 && diff <= 3 && Math.abs(primeiroNome.length - prefixo.length) <= 2) {
+        return {
+          suspeito: true,
+          tipo: 'nome_divergente',
+          msg: `Possível divergência no nome: "${primeiroNome}" vs prefixo "${prefixo}"`,
+        };
+      }
+    }
+  }
+
+  return { suspeito: false };
+}
+
+function renderAuditoriaEmails() {
+  const card = document.getElementById('card-auditoria-emails');
+  if (!card) return;
+
+  const suspeitos = [];
+  _usuarios.forEach(u => {
+    const res = auditarEmail(u.email, u.nome);
+    if (res.suspeito) {
+      suspeitos.push({ usuario: u, audit: res });
+    }
+  });
+
+  if (!suspeitos.length) {
+    card.style.display = 'none';
+    return;
+  }
+
+  card.style.display = 'block';
+  const resumoEl = document.getElementById('auditoria-emails-resumo');
+  resumoEl.textContent = `${suspeitos.length} usuário(s) com e-mail ou domínio para revisão.`;
+
+  const listaEl = document.getElementById('auditoria-emails-lista');
+  listaEl.innerHTML = suspeitos.map(item => {
+    const u = item.usuario;
+    const a = item.audit;
+    const corBadge = a.tipo === 'grafia' ? 'badge-pink' : 'badge-warning';
+    return `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--surface-2);padding:10px 14px;border-radius:var(--radius-md);border:1px solid var(--border)">
+        <div style="min-width:0">
+          <div style="display:flex;align-items:center;gap:8px">
+            <strong style="font-size:.85rem">${u.nome}</strong>
+            <span class="badge ${corBadge}" style="font-size:.65rem">${a.tipo === 'grafia' ? 'Grafia Suspeita' : 'Domínio Não Padronizado'}</span>
+            <span style="font-size:.7rem;color:var(--text-muted)">(${u.ativo ? 'Ativo' : 'Inativo'})</span>
+          </div>
+          <div style="font-size:.75rem;color:var(--text-secondary);margin-top:2px;font-family:monospace">
+            ${u.email} <span style="color:var(--text-muted);font-family:inherit">— ${a.msg}</span>
+          </div>
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm" style="font-size:.72rem;padding:4px 10px;white-space:nowrap" onclick="abrirEditar('${u.id}')">
+          ✏️ Editar Manualmente
+        </button>
+      </div>`;
+  }).join('');
+}
+
+function toggleAuditoriaEmails() {
+  const det = document.getElementById('auditoria-emails-detalhes');
+  const btn = document.getElementById('btn-toggle-auditoria');
+  if (!det) return;
+  const aberto = det.style.display !== 'none';
+  det.style.display = aberto ? 'none' : 'block';
+  if (btn) btn.textContent = aberto ? 'Ver Detalhes' : 'Ocultar';
 }
 
 init();
