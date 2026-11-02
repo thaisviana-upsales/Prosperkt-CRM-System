@@ -182,16 +182,7 @@ async function _processarParados_Supa(sb) {
     const dataRef = lead.etapa_atualizada_em || lead.criado_em;
     const diasParado = (agora - new Date(dataRef).getTime()) / MS_DIA;
 
-    console.log('AUTOMACAO_SEM_RESPOSTA_LEAD_ANALISADO', {
-      leadId: lead.id, etapaAtual: etapaAtual.nome,
-      diasParado: Math.round(diasParado * 10) / 10,
-      dataRef,
-    });
-
-    if (diasParado < DIAS_PARADO) {
-      console.log('AUTOMACAO_SEM_RESPOSTA_SKIP', { leadId: lead.id, motivo: `${Math.round(diasParado)}d < ${DIAS_PARADO}d` });
-      continue;
-    }
+    if (diasParado < DIAS_PARADO) continue;
 
     // ── Reincidência → Perdidos ───────────────────────────────────────────────
     const jaTagSemResposta = temTag(lead, TAG_SEM_RESPOSTA);
@@ -290,15 +281,7 @@ function _processarParados_SQLite(sqlite) {
     const dataRef = lead.etapa_atualizada_em || lead.criado_em;
     const diasParado = (agora - new Date(dataRef).getTime()) / MS_DIA;
 
-    console.log('AUTOMACAO_SEM_RESPOSTA_LEAD_ANALISADO', {
-      leadId: lead.id, etapaAtual: lead.etapa_nome,
-      diasParado: Math.round(diasParado * 10) / 10,
-    });
-
-    if (diasParado < DIAS_PARADO) {
-      console.log('AUTOMACAO_SEM_RESPOSTA_SKIP', { leadId: lead.id, motivo: `${Math.round(diasParado)}d < ${DIAS_PARADO}d` });
-      continue;
-    }
+    if (diasParado < DIAS_PARADO) continue;
 
     // Resolve etapa destino
     let etapaDestNome, statusDestino, motivo;

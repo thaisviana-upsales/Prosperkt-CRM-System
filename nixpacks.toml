@@ -1,5 +1,0 @@
-# nixpacks.toml — Configuração do build no Railway
-# Instala Node.js 20 e ffmpeg para conversão de áudio WebM → OGG
-[phases.setup]
-nixPkgs = ["nodejs_20", "ffmpeg"]
-
