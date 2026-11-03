@@ -446,6 +446,6 @@ async function uploadAvatar(req, res) {
   }
 }
 
-module.exports = { listar, listarResponsaveis, buscarPorId, criar, atualizar, deletar, uploadAvatar };
+module.exports = { listar, listarResponsaveis, buscarPorId, criar, atualizar, deletar, uploadAvatar, validarFormatoEmail };
 
 
