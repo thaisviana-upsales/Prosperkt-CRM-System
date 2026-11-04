@@ -54,10 +54,11 @@ for padrao in "${PADROES_NOME[@]}"; do
 done
 
 # Remove duplicatas
+ALTERADOS_UNIQ=()
 if [ ${#ALTERADOS[@]} -gt 0 ]; then
-  mapfile -t ALTERADOS_UNIQ < <(printf "%s\n" "${ALTERADOS[@]}" | sort -u)
-else
-  ALTERADOS_UNIQ=()
+  while IFS= read -r linha; do
+    [[ -n "$linha" ]] && ALTERADOS_UNIQ+=("$linha")
+  done < <(printf "%s\n" "${ALTERADOS[@]}" | sort -u)
 fi
 
 if [ ${#ALTERADOS_UNIQ[@]} -eq 0 ]; then

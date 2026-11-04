@@ -1909,11 +1909,23 @@ function bindEvents() {
     const file = this.files?.[0];
     if (!file || !_convAtiva) { this.value = ''; return; }
     if (!file.type.startsWith('audio/')) { Toast.show('Formato de áudio não suportado.', 'error'); this.value = ''; return; }
+    if (file.size < 200) { Toast.show('Arquivo de áudio muito curto ou vazio.', 'error'); this.value = ''; return; }
     if (file.size > 16 * 1024 * 1024) { Toast.show('Arquivo de áudio muito grande (máx 16 MB).', 'error'); this.value = ''; return; }
     _audioBlob = file;
+    _recSeconds = 0;
     const url = URL.createObjectURL(file);
     const prevEl = document.getElementById('wa-audio-prev-el');
-    if (prevEl) prevEl.src = url;
+    if (prevEl) {
+      prevEl.src = url;
+      prevEl.onloadedmetadata = () => {
+        const d = Math.round(prevEl.duration || 0);
+        if (d > 0) {
+          _recSeconds = d;
+          const timerEl = document.getElementById('wa-rec-timer');
+          if (timerEl) timerEl.textContent = `${Math.floor(d/60)}:${String(d%60).padStart(2,'0')}`;
+        }
+      };
+    }
     _setRecUI('preview');
     this.value = '';
   });
@@ -2134,9 +2146,19 @@ async function iniciarGravacao() {
     stream.getTracks().forEach(t => t.stop());
     _audioBlob = new Blob(_audioChunks, { type: mimeType });
     const prevEl = document.getElementById('wa-audio-prev-el');
-    if (prevEl) prevEl.src = URL.createObjectURL(_audioBlob);
+    if (prevEl) {
+      prevEl.src = URL.createObjectURL(_audioBlob);
+      prevEl.onloadedmetadata = () => {
+        const d = Math.round(prevEl.duration || 0);
+        if (d > 0 && (!_recSeconds || _recSeconds === 0)) {
+          _recSeconds = d;
+          const timerEl = document.getElementById('wa-rec-timer');
+          if (timerEl) timerEl.textContent = `${Math.floor(d/60)}:${String(d%60).padStart(2,'0')}`;
+        }
+      };
+    }
     _setRecUI('preview');
-    logDebug('WHATSAPP_AUDIO_RECORD_STOP', { duration: _recSeconds, mimeType });
+    logDebug('WHATSAPP_AUDIO_RECORD_STOP', { duration: _recSeconds, mimeType, size: _audioBlob.size });
   };
   _mediaRecorder.start(100);
   _setRecUI('recording');
@@ -2162,6 +2184,7 @@ function cancelarGravacao() {
   }
   _audioBlob   = null;
   _audioChunks = [];
+  _recSeconds  = 0;
   _setRecUI('idle');
   const msgInput = document.getElementById('msg-input');
   if (msgInput) msgInput.value = '';
@@ -2171,7 +2194,31 @@ function cancelarGravacao() {
 
 async function enviarAudio(blob) {
   if (!_convAtiva || !blob) return;
-  logDebug('WHATSAPP_AUDIO_SEND_START', { conversaId: _convAtiva.id, blobSize: blob.size, blobType: blob.type });
+
+  // Validação preventiva: bloqueia blob vazio ou muito curto (< 500 bytes)
+  if (!blob.size || blob.size < 500) {
+    Toast.show('Áudio vazio ou muito curto para envio. Grave novamente.', 'error');
+    cancelarGravacao();
+    return;
+  }
+
+  // Duração capturada: prioriza _recSeconds > duração do player de preview > timer
+  const prevEl = document.getElementById('wa-audio-prev-el');
+  const durFromEl = prevEl && !isNaN(prevEl.duration) && isFinite(prevEl.duration) ? Math.round(prevEl.duration) : 0;
+  const timerEl = document.getElementById('wa-rec-timer');
+  const durStr  = timerEl?.textContent || '0:00';
+  const [mm, ss] = durStr.split(':').map(Number);
+  const durFromTimer = ((mm || 0) * 60) + (ss || 0);
+
+  const durSeg = _recSeconds > 0 ? _recSeconds : (durFromEl > 0 ? durFromEl : durFromTimer);
+
+  if (durSeg <= 0 && blob.size < 1500) {
+    Toast.show('Gravação sem áudio detectado. Grave novamente.', 'error');
+    cancelarGravacao();
+    return;
+  }
+
+  logDebug('WHATSAPP_AUDIO_SEND_START', { conversaId: _convAtiva.id, blobSize: blob.size, blobType: blob.type, durSeg });
 
   const sendBtn = document.getElementById('btn-send');
   if (sendBtn) {
@@ -2179,24 +2226,28 @@ async function enviarAudio(blob) {
     sendBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0D0D0D" stroke-width="2" style="animation:spin 1s linear infinite"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4" stroke-dashoffset="10"/></svg>`;
   }
 
-  // Duração capturada do timer da gravação
-  const timerEl = document.getElementById('wa-rec-timer');
-  const durStr  = timerEl?.textContent || '0:00';
-  const [mm, ss] = durStr.split(':').map(Number);
-  const durSeg = ((mm || 0) * 60) + (ss || 0);
-
   // Obtém token para Bearer auth (multer não aceita JSON → FormData obrigatório)
   const token = (typeof Auth !== 'undefined' && Auth.getToken)
     ? Auth.getToken()
     : (localStorage.getItem('token') || '');
 
+  // Nome do arquivo de acordo com a extensão real
+  let fileName = 'audio.webm';
+  if (blob.name) {
+    fileName = blob.name;
+  } else if (blob.type?.includes('ogg')) {
+    fileName = 'audio.ogg';
+  } else if (blob.type?.includes('mp4')) {
+    fileName = 'audio.mp4';
+  }
+
   // Monta FormData — campo 'audio' exigido pelo multer no backend
   const fd = new FormData();
-  fd.append('audio',       blob, 'audio.webm');
+  fd.append('audio',       blob, fileName);
   fd.append('conversa_id', _convAtiva.id);
   if (durSeg > 0) fd.append('duracao', String(durSeg));
 
-  logDebug('WHATSAPP_AUDIO_SEND_FORMDATA', { conversaId: _convAtiva.id, durSeg, blobSize: blob.size });
+  logDebug('WHATSAPP_AUDIO_SEND_FORMDATA', { conversaId: _convAtiva.id, durSeg, blobSize: blob.size, fileName });
 
   // Insere mensagem temporária pending para feedback imediato
   const tempAudId = 'temp_aud_' + Date.now();

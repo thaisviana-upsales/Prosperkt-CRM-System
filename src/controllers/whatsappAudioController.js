@@ -153,15 +153,15 @@ async function enviarAudio(req, res) {
       return res.status(400).json({ sucesso: false, erro: 'conversa_id obrigatório.' });
     if (!arquivo)
       return res.status(400).json({ sucesso: false, erro: 'Arquivo de áudio não recebido.' });
-    if (arquivo.size === 0)
-      return res.status(400).json({ sucesso: false, erro: 'Arquivo de áudio vazio.' });
+    if (!arquivo.size || arquivo.size < 200)
+      return res.status(400).json({ sucesso: false, erro: 'Arquivo de áudio muito curto ou vazio.' });
     if (!arquivo.mimetype.startsWith('audio/'))
       return res.status(400).json({ sucesso: false, erro: 'Formato de áudio não suportado.' });
 
     console.log('WA_AUDIO_AUTH_OK',       { usuario: req.usuario?.id });
     console.log('WA_AUDIO_FILE_RECEIVED', { size: arquivo.size, mime: arquivo.mimetype, conversaId });
 
-    // ── Duração enviada pelo frontend (lida do wa-rec-timer) ────────────────────
+    // ── Duração enviada pelo frontend (lida do wa-rec-timer ou metadados de áudio) ──
     const duracaoStr = req.body?.duracao;
     const duracaoSeg = duracaoStr ? parseInt(duracaoStr, 10) : null;
 
@@ -194,40 +194,71 @@ async function enviarAudio(req, res) {
     }
     console.log('WA_AUDIO_STORAGE_UPLOAD_SUCCESS', { storagePath, bucket: BUCKET, bytes: arquivo.size });
 
-    // ── 4. Converte buffer para base64 puro (sem prefixo data URI) ──────────────
-    // Tenta converter WebM → OGG Opus (formato nativo WhatsApp)
-    // Se ffmpeg não estiver disponível, usa WebM como fallback
+    // ── 4. Converte buffer para OGG Opus (formato nativo e obrigatório do WhatsApp PTT) ───────────
     console.log('WA_AUDIO_EVOLUTION_SEND_START', { telefone: telNormalizado });
 
     let audioBuffer    = arquivo.buffer;
     let audioMime      = arquivo.mimetype;
     let audioConverted = false;
 
-    const oggBuffer = await tentarConverter(arquivo.buffer);
-    if (oggBuffer && oggBuffer.length > 0) {
-      audioBuffer    = oggBuffer;
-      audioMime      = 'audio/ogg; codecs=opus';
-      audioConverted = true;
-      console.log('WA_AUDIO_CONVERTED_OGG', { originalBytes: arquivo.size, oggBytes: oggBuffer.length });
+    const isJaOgg = arquivo.mimetype.includes('ogg');
+    if (isJaOgg) {
+      audioMime = 'audio/ogg; codecs=opus';
     } else {
-      console.warn('WA_AUDIO_CONVERTER_UNAVAILABLE — enviando WebM como fallback');
+      const oggBuffer = await tentarConverter(arquivo.buffer);
+      if (oggBuffer && oggBuffer.length > 0) {
+        audioBuffer    = oggBuffer;
+        audioMime      = 'audio/ogg; codecs=opus';
+        audioConverted = true;
+        console.log('WA_AUDIO_CONVERTED_OGG', { originalBytes: arquivo.size, oggBytes: oggBuffer.length });
+      } else {
+        console.warn('WA_AUDIO_CONVERTER_FAIL — bloqueando envio WebM cru para evitar descarte silencioso do WhatsApp');
+        return res.status(422).json({
+          sucesso: false,
+          enviado: false,
+          erro: 'Falha ao converter áudio para o formato aceito pelo WhatsApp (OGG Opus). O áudio não foi enviado para evitar falso sucesso.',
+        });
+      }
     }
 
-    // OBRIGATÓRIO: Evolution API exige prefixo data URI para base64 (igual a arquivosWhatsappController.js linha 189)
+    // OBRIGATÓRIO: Evolution API exige prefixo data URI para base64
     const base64Audio = `data:${audioMime};base64,${audioBuffer.toString('base64')}`;
     console.log('WA_AUDIO_BASE64_READY', { mime: audioMime, bytes: audioBuffer.length, converted: audioConverted, hasDataPrefix: true });
 
-    // ── 5. Envia como mensagem de áudio via sendMedia ───────────────────────────
+    // ── 5. Envia como mensagem de áudio via sendMedia com fileName ogg e ptt ──────────
     let evoOk    = false;
     let evoErr   = null;
     let evoMsgId = null;
 
     if (evoSvc.isConfigured()) {
-      const evoResult = await evoSvc.enviarAudio(telNormalizado, base64Audio, audioMime);
-      const candId    = evoResult.dados?.key?.id || evoResult.dados?.messageId || evoResult.dados?.id || null;
-      evoOk           = !!(evoResult.sucesso && candId);
-      evoMsgId        = candId;
-      evoErr          = evoOk ? null : (evoResult.erro || 'Evolution não confirmou o envio do áudio (sem messageId).');
+      let evoResult = await evoSvc.enviarMidia(telNormalizado, {
+        mediatype: 'audio',
+        mimetype:  audioMime,
+        media:     base64Audio,
+        fileName:  'audio.ogg',
+        ptt:       true,
+      });
+
+      let candId = evoResult.dados?.key?.id || evoResult.dados?.messageId || evoResult.dados?.id || null;
+      evoOk      = !!(evoResult.sucesso && candId);
+      evoMsgId   = candId;
+      evoErr     = evoOk ? null : (evoResult.erro || 'Evolution não confirmou o envio do áudio (sem messageId).');
+
+      // Se falhar especificamente por PTT, tenta uma vez sem a flag ptt
+      if (!evoOk && evoResult.erro && evoResult.erro.toLowerCase().includes('ptt')) {
+        console.warn('WA_AUDIO_RETRY_WITHOUT_PTT', { erro: evoResult.erro });
+        evoResult = await evoSvc.enviarMidia(telNormalizado, {
+          mediatype: 'audio',
+          mimetype:  audioMime,
+          media:     base64Audio,
+          fileName:  'audio.ogg',
+          ptt:       false,
+        });
+        candId   = evoResult.dados?.key?.id || evoResult.dados?.messageId || evoResult.dados?.id || null;
+        evoOk    = !!(evoResult.sucesso && candId);
+        evoMsgId = candId;
+        evoErr   = evoOk ? null : (evoResult.erro || 'Evolution não confirmou o envio do áudio.');
+      }
 
       if (evoOk) {
         console.log('WA_AUDIO_EVOLUTION_SEND_SUCCESS', {
