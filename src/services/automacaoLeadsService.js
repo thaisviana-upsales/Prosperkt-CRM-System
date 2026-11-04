@@ -340,26 +340,22 @@ function _processarParados_SQLite(sqlite) {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Módulo 2: SLA Contato 1 — Primeira mensagem automática
+// Módulo 2: SLA Contato 1 — Primeira mensagem automática (B23)
+// Envio automático desabilitado por padrão.
+// Requer obrigatoriamente automação configurada e ATIVA na tabela `automacoes`.
+// NUNCA envia para leads criados a partir de conversas ou manualmente.
+// Zero fallback hardcoded.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const MSG_SLA_CONTATO_1 = (nome) => {
-  const saudacao = nome ? `Oi, ${nome}! Tudo bem? 😊` : 'Oi! Tudo bem? 😊';
-  return `${saudacao}
-
-Recebi seu contato aqui na PROSPEKT e já vou te ajudar.
-
-Pra eu te direcionar da melhor forma e ganhar tempo no seu atendimento, me responde rapidinho:
-
-1️⃣ Você busca brinde/produto ou desenvolvimento de projeto?
-
-2️⃣ Você já tem uma quantidade aproximada?
-
-3️⃣ Você está comprando para uma agência ou para uma marca direta?
-
-Com essas respostas, consigo te encaminhar o melhor consultor e agilizar seu orçamento. 🚀`;
-};
-
+function substituirVariaveis(texto, { nome_lead, nome_vendedor, nome_empresa, telefone_lead, funil, empresa } = {}) {
+  return (texto || '')
+    .replace(/\[nome_lead\]/gi,     nome_lead     || '')
+    .replace(/\[nome_vendedor\]/gi, nome_vendedor  || 'Equipe')
+    .replace(/\[nome_empresa\]/gi,  nome_empresa   || empresa || '')
+    .replace(/\[telefone_lead\]/gi, telefone_lead  || '')
+    .replace(/\[funil\]/gi,         funil          || '')
+    .replace(/\[empresa\]/gi,       empresa        || nome_empresa || '');
+}
 
 /**
  * Normaliza telefone para formato WhatsApp: 55 + DDD + número (10-11 dígitos)
@@ -378,10 +374,10 @@ function normalizarTelefone(tel) {
 }
 
 /**
- * Dispara SLA Contato 1 para um lead recém-criado.
- * Chamado de forma assíncrona (não bloqueia criação do lead).
+ * Dispara SLA Contato 1 para um lead recém-criado SOMENTE SE houver
+ * automação ativa cadastrada na tela de Automações.
  *
- * @param {{ id, nome, telefone, responsavel_id }} lead
+ * @param {{ id, nome, telefone, responsavel_id, funil_id, pipeline_id, origem, dados_extras }} lead
  */
 async function enviarSlaContato1(lead) {
   const { sb, isSupa } = getProvider();
@@ -390,16 +386,88 @@ async function enviarSlaContato1(lead) {
   const leadId = lead.id;
   const nome   = lead.nome || '';
 
-  // 0. Não envia para leads criados manualmente (sem origem externa)
+  // 1. Bloqueio B23: NUNCA envia para leads criados a partir de conversa WhatsApp ou manualmente
   const origemLead = (lead.origem || '').toLowerCase().trim();
-  if (!origemLead || origemLead === 'manual') {
-    console.log('AUTOMACAO_SLA_CONTATO_1_SKIP_MANUAL', { leadId, origem: lead.origem || '(vazio)' });
+  const dadosExtras = lead.dados_extras && typeof lead.dados_extras === 'string'
+    ? (() => { try { return JSON.parse(lead.dados_extras); } catch { return {}; } })()
+    : (lead.dados_extras || {});
+
+  const criadoDeConversa = Boolean(
+    dadosExtras.criado_da_conversa_whatsapp ||
+    dadosExtras.whatsapp_lid ||
+    origemLead === 'whatsapp recebido' ||
+    origemLead === 'whatsapp' ||
+    origemLead === 'conversas'
+  );
+
+  if (criadoDeConversa || !origemLead || origemLead === 'manual') {
+    console.log('AUTOMACAO_SLA_CONTATO_1_SKIP', {
+      leadId,
+      motivo: criadoDeConversa ? 'Lead criado a partir de conversa WhatsApp (B23)' : 'Lead criado manualmente',
+      origem: lead.origem || '(vazio)'
+    });
     return;
   }
 
-  console.log('AUTOMACAO_SLA_CONTATO_1_INICIO', { leadId, nome, telefone: lead.telefone, origem: origemLead });
+  // 2. Consulta se existe automação ATIVA configurada na tabela `automacoes`
+  // B23: Não existe mais mensagem de boas-vindas automática sem automação configurada
+  const { data: automacoes, error: errAuto } = await sb.from('automacoes')
+    .select('*')
+    .eq('trigger_tipo', 'LEAD_CRIADO')
+    .eq('acao_tipo', 'PRIMEIRA_MSG_WA');
 
-  // 1. Verificar se já foi enviado (deduplicação)
+  if (errAuto) {
+    console.warn('AUTOMACAO_SLA_CONTATO_1_QUERY_WARN', { leadId, erro: errAuto.message });
+    return;
+  }
+
+  const ativas = (automacoes || []).filter(a => a.ativo === true || a.ativo === 1 || a.ativo === '1');
+  if (ativas.length === 0) {
+    console.log('AUTOMACAO_SLA_CONTATO_1_DESABILITADA', {
+      leadId,
+      motivo: 'Nenhuma automação ativa configurada na tela Automações (B23)'
+    });
+    return;
+  }
+
+  // Encontra automação compatível com o funil do lead (ou automação global)
+  let automacaoEscolhida = null;
+  const leadFunilId = lead.funil_id || null;
+
+  for (const auto of ativas) {
+    const tc = auto.trigger_config && typeof auto.trigger_config === 'string'
+      ? (() => { try { return JSON.parse(auto.trigger_config); } catch { return {}; } })()
+      : (auto.trigger_config || {});
+
+    if (tc.funil_id && leadFunilId && tc.funil_id !== leadFunilId) {
+      continue; // especifica outro funil
+    }
+    automacaoEscolhida = auto;
+    break;
+  }
+
+  if (!automacaoEscolhida) {
+    console.log('AUTOMACAO_SLA_CONTATO_1_SKIP', {
+      leadId,
+      motivo: 'Nenhuma automação ativa compatível com o funil do lead'
+    });
+    return;
+  }
+
+  const acaoConfig = automacaoEscolhida.acao_config && typeof automacaoEscolhida.acao_config === 'string'
+    ? (() => { try { return JSON.parse(automacaoEscolhida.acao_config); } catch { return {}; } })()
+    : (automacaoEscolhida.acao_config || {});
+
+  const textoBase = (acaoConfig.mensagem_texto || '').trim();
+  if (!textoBase) {
+    console.warn('AUTOMACAO_SLA_CONTATO_1_SKIP', {
+      leadId,
+      motivo: 'Automação ativa não possui mensagem_texto configurado (zero fallback)'
+    });
+    return;
+  }
+
+  // 3. Verificar se já foi enviado (deduplicação)
   const { data: jaEnviado } = await sb.from('audit_logs')
     .select('id')
     .eq('entidade_id', leadId)
@@ -410,19 +478,16 @@ async function enviarSlaContato1(lead) {
     return;
   }
 
-  // 2. Validar telefone
+  // 4. Validar telefone
   const telNorm = normalizarTelefone(lead.telefone);
   if (!telNorm) {
     const motivo = lead.telefone ? 'telefone inválido' : 'lead sem telefone';
     console.warn('AUTOMACAO_SLA_CONTATO_1_NAO_ENVIADA', { leadId, motivo });
-    await registrarHistorico(sb, leadId, `Automação SLA de contato 1 não enviada: ${motivo}.`);
+    await registrarHistorico(sb, leadId, `Automação de mensagem não enviada: ${motivo}.`);
     return;
   }
 
-  console.log('AUTOMACAO_SLA_CONTATO_1_TELEFONE_NORMALIZADO', { leadId, telefoneNormalizado: telNorm });
-
-  // 3. Verificar se já está em atendimento humano (vendedor atribuído na conversa ativa)
-  // Neste caso, não enviar automação — humano já está cuidando
+  // 5. Verificar se já está em atendimento humano
   try {
     const { data: convHumana } = await sb.from('conversas_whatsapp')
       .select('id, vendedor_id')
@@ -436,21 +501,25 @@ async function enviarSlaContato1(lead) {
     }
   } catch (eHum) {
     console.warn('AUTOMACAO_SLA_CONTATO_1_CHECK_HUMANO_WARN:', eHum.message);
-    // Continua mesmo se a checagem falhar
   }
 
-  // 4. Verificar se a Evolution API está configurada
+  // 6. Verificar se a Evolution API está configurada
   if (!evoSvc.isConfigured()) {
     console.warn('AUTOMACAO_SLA_CONTATO_1_NAO_ENVIADA', { leadId, motivo: 'Evolution API não configurada' });
     return;
   }
 
   try {
-    // 4. Enviar mensagem via Evolution API
-    const mensagem = MSG_SLA_CONTATO_1(nome);
-    await evoSvc.enviarTexto(telNorm, mensagem);
+    const mensagemFinal = substituirVariaveis(textoBase, {
+      nome_lead: nome,
+      telefone_lead: telNorm,
+      funil: lead.funil_id || '',
+    });
 
-    // 5. Encontrar ou criar conversa
+    // Enviar mensagem via Evolution API
+    await evoSvc.enviarTexto(telNorm, mensagemFinal);
+
+    // Encontrar ou criar conversa
     const agora = new Date().toISOString();
     let conversaId = null;
     const { data: convExistente } = await sb.from('conversas_whatsapp')
@@ -478,35 +547,34 @@ async function enviarSlaContato1(lead) {
       });
     }
 
-    // 6. Salvar mensagem na conversa
+    // Salvar mensagem na conversa
     const msgId = crypto.randomBytes(16).toString('hex');
     await sb.from('mensagens_whatsapp').insert({
       id: msgId,
       conversa_id: conversaId,
       lead_id: leadId,
       telefone: telNorm,
-      mensagem: mensagem,
+      mensagem: mensagemFinal,
       tipo: 'texto',
       direcao: 'enviada',
       status: 'enviado',
       criado_em: agora,
     });
 
-    // 7. Registrar no histórico (com ação SLA_CONTATO_1 para deduplicação)
+    // Registrar no histórico
     await sb.from('audit_logs').insert({
       id:          crypto.randomBytes(16).toString('hex'),
       usuario_id:  null,
       acao:        'SLA_CONTATO_1',
       entidade:    'leads',
       entidade_id: leadId,
-      descricao:   'Automação SLA de contato 1 enviada automaticamente no momento da criação do lead.',
+      descricao:   `Automação de mensagem WhatsApp enviada via regra "${automacaoEscolhida.nome}".`,
       criado_em:   agora,
     });
 
-    console.log('AUTOMACAO_SLA_CONTATO_1_ENVIADA', { leadId, conversaId, telefoneNormalizado: telNorm });
+    console.log('AUTOMACAO_SLA_CONTATO_1_ENVIADA', { leadId, conversaId, automacaoId: automacaoEscolhida.id });
   } catch (error) {
     console.error('AUTOMACAO_SLA_CONTATO_1_ERRO', { leadId, error: error.message });
-    // Não registra como enviada — permite nova tentativa futura se necessário
   }
 }
 

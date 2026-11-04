@@ -755,10 +755,18 @@ async function criar(req, res) {
           });
         } catch(e) { console.error('[FUNIL_HISTORICO_CREATE]', e.message); }
       });
-      // Dispara SLA Contato 1 de forma assíncrona (não bloqueia resposta)
+      // Dispara automação de primeira mensagem SOMENTE se houver regra ativa configurada (B23)
       setImmediate(() => {
-        getAutomacaoSvc().enviarSlaContato1({ id, nome: nome.trim(), telefone: telefone || null, responsavel_id: respId, origem: origem || 'manual' })
-          .catch(e => console.error('[SLA_CONTATO_1]', e.message));
+        getAutomacaoSvc().enviarSlaContato1({
+          id,
+          nome: nome.trim(),
+          telefone: telefone || null,
+          responsavel_id: respId,
+          funil_id: fId,
+          pipeline_id: pipeline_id || null,
+          origem: origem || 'manual',
+          dados_extras: dados_extras || null,
+        }).catch(e => console.error('[SLA_CONTATO_1]', e.message));
       });
 
       // Clone para Adm. de Vendas se o lead foi criado diretamente em etapa ganha
@@ -817,10 +825,18 @@ async function criar(req, res) {
         responsavelId: respId, criadoEm: agora_,
       });
     });
-    // Dispara SLA Contato 1 de forma assíncrona
+    // Dispara automação de primeira mensagem SOMENTE se houver regra ativa configurada (B23)
     setImmediate(() => {
-      getAutomacaoSvc().enviarSlaContato1({ id, nome: nome.trim(), telefone: telefone || null, responsavel_id: respId, origem: origem || 'manual' })
-        .catch(e => console.error('[SLA_CONTATO_1]', e.message));
+      getAutomacaoSvc().enviarSlaContato1({
+        id,
+        nome: nome.trim(),
+        telefone: telefone || null,
+        responsavel_id: respId,
+        funil_id: funilIdCreate,
+        pipeline_id: pipeline_id || null,
+        origem: origem || 'manual',
+        dados_extras: dados_extras || null,
+      }).catch(e => console.error('[SLA_CONTATO_1]', e.message));
     });
     return res.status(201).json({ sucesso:true, dados: sqlite.prepare('SELECT * FROM leads WHERE id=?').get(id) });
   } catch(e) {
