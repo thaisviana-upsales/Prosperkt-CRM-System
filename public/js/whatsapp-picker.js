@@ -315,11 +315,19 @@ function usarMensagem(id, texto) {
 
   ta.value = textoFinal;
   ta.dispatchEvent(new Event('input', { bubbles: true }));
+  ta.dispatchEvent(new Event('change', { bubbles: true }));
   ta.style.height = 'auto';
   ta.style.height = Math.min(ta.scrollHeight, 100) + 'px';
-  fecharPicker();
+
+  // B26: Fecha completamente o painel e o overlay imediatamente para não interceptar cliques
+  fecharPickerFull();
+
+  // B26: Habilita botão enviar imediatamente
+  const sendBtn = document.getElementById('btn-send');
+  if (sendBtn) sendBtn.disabled = false;
+
   ta.focus();
-  setTimeout(() => { ta.selectionStart = ta.selectionEnd = ta.value.length; }, 50);
+  setTimeout(() => { ta.selectionStart = ta.selectionEnd = ta.value.length; }, 30);
   Toast.show('Script inserido! Edite e envie quando quiser.', 'success');
   console.log('SCRIPT_SEND_USING_MANUAL_FLOW', { mensagemPronta: true });
 }
@@ -336,7 +344,10 @@ async function abrirPicker(){
   await Promise.all([ carregarVarsLead(), carregarDados() ]);
   setTimeout(()=>busca?.focus(),120);
 }
-function fecharPicker(){document.getElementById('pk-panel')?.classList.remove('open');}
+function fecharPicker(){
+  document.getElementById('pk-panel')?.classList.remove('open');
+  document.getElementById('pk-overlay')?.classList.remove('open');
+}
 
 // ── Inject UI ─────────────────────────────────────────────────────────────────
 function injectUI(){

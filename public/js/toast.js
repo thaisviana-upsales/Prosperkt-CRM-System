@@ -16,11 +16,20 @@ const Toast = (() => {
 
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    toast.innerHTML = `${icons[type] || icons.info}<span>${message}</span>`;
+    toast.innerHTML = `
+      <div class="toast-content">${icons[type] || icons.info}<span>${message}</span></div>
+      <button type="button" class="toast-close" title="Fechar notificação" aria-label="Fechar">&times;</button>
+    `;
+
+    toast.querySelector('.toast-close')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toast.remove();
+    });
 
     container.appendChild(toast);
 
     setTimeout(() => {
+      if (!toast.isConnected) return;
       toast.style.animation = 'fadeOut 0.3s ease forwards';
       setTimeout(() => toast.remove(), 300);
     }, duration);

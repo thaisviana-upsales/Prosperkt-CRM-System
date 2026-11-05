@@ -423,12 +423,15 @@
 
   /* ── Toasts mobile ─────────────────────────────────────────── */
   #toast-container {
-    bottom: calc(var(--mobile-nav-h) + 12px + var(--safe-bottom)) !important;
+    top: calc(var(--safe-top, 0px) + 12px) !important;
+    bottom: auto !important;
     left: 12px !important;
     right: 12px !important;
     width: auto !important;
+    pointer-events: none !important;
   }
-  .toast { min-width: unset !important; width: 100% !important; }
+  .toast { min-width: unset !important; width: 100% !important; pointer-events: none !important; }
+  .toast-close { pointer-events: auto !important; }
 
   /* ── Atividades reminder bar ───────────────────────────────── */
   #atividades-reminder-bar {

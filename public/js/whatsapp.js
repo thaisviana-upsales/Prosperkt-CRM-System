@@ -1251,6 +1251,8 @@ async function enviarMensagem() {
   if (!txt) return;
 
   const btn = document.getElementById('btn-send');
+  if (btn.dataset.sending === 'true') return;
+  btn.dataset.sending = 'true';
 
   // ── Estado de loading ──────────────────────────────────────────────────────
   btn.disabled  = true;
@@ -1275,6 +1277,7 @@ async function enviarMensagem() {
   }
 
   // ── Restaura controles SEMPRE (independente de sucesso ou erro) ────────────
+  delete btn.dataset.sending;
   btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`;
   input.disabled = false;
   input.focus();
@@ -1907,9 +1910,10 @@ function bindEvents() {
     }
   });
 
-  sendBtn.addEventListener('click', () => {
+  sendBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (sendBtn.disabled || sendBtn.dataset.sending === 'true') return;
     // Se estiver em modo preview de áudio: envia o blob gravado
-    const recWrap = document.getElementById('wa-rec-wrap');
     const prevWrap = document.getElementById('wa-audio-preview');
     if (prevWrap && prevWrap.style.display === 'flex') {
       enviarAudio(_audioBlob);
