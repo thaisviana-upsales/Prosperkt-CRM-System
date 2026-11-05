@@ -2606,7 +2606,30 @@ async function _waAbrirLightbox(src, msgId) {
 }
 
 
-// ─── Modal Criar Lead a partir de Conversa WhatsApp ───────────────────────────
+// ─── Modal Criar Lead a partir de Conversa WhatsApp (B29) ──────────────────────
+function normalizarTelefoneParaExibicao(tel) {
+  if (!tel || typeof tel !== 'string') return '';
+  if (tel.startsWith('LID:')) return '';
+  const digitos = tel.replace(/\D/g, '');
+  if (!digitos || digitos.length < 8) return tel.trim();
+
+  // Formato BR com DDI 55 (12 ou 13 dígitos)
+  if (digitos.startsWith('55') && (digitos.length === 12 || digitos.length === 13)) {
+    const ddd = digitos.slice(2, 4);
+    const parte1 = digitos.slice(4, -4);
+    const parte2 = digitos.slice(-4);
+    return `+55 (${ddd}) ${parte1}-${parte2}`;
+  }
+  // Formato BR sem DDI (10 ou 11 dígitos)
+  if (digitos.length === 10 || digitos.length === 11) {
+    const ddd = digitos.slice(0, 2);
+    const parte1 = digitos.slice(2, -4);
+    const parte2 = digitos.slice(-4);
+    return `+55 (${ddd}) ${parte1}-${parte2}`;
+  }
+  return digitos.startsWith('+') ? digitos : `+${digitos}`;
+}
+
 function abrirModalCriarLeadConversa(conversa) {
   // Remove modal anterior se existir
   document.getElementById('modal-criar-lead-wa')?.remove();
@@ -2614,6 +2637,16 @@ function abrirModalCriarLeadConversa(conversa) {
   // Nome sugerido: usa nome_contato mas descarta prefixo LID:
   const nomeSugerido = (conversa.nome_contato || '').startsWith('LID:')
     ? '' : (conversa.nome_contato || '');
+
+  // B29: Preencher telefone com número da conversa normalizado
+  let telSugerido = normalizarTelefoneParaExibicao(conversa.telefone);
+  if (!telSugerido && conversa.dados_extras) {
+    try {
+      const de = typeof conversa.dados_extras === 'string' ? JSON.parse(conversa.dados_extras) : conversa.dados_extras;
+      const telExtra = de?.telefone_real || de?.telefone;
+      if (telExtra) telSugerido = normalizarTelefoneParaExibicao(telExtra);
+    } catch {}
+  }
 
   // Mostra modal IMEDIATAMENTE (sem esperar API)
   const modal = document.createElement('div');
@@ -2633,13 +2666,13 @@ function abrirModalCriarLeadConversa(conversa) {
       </label>
       <label style="display:block;margin-bottom:14px">
         <span style="color:#94a3b8;font-size:.8rem;font-weight:600;display:block;margin-bottom:6px">TELEFONE REAL <span style="color:#25d366;font-weight:400">(necessário para enviar mensagem)</span></span>
-        <input id="cl-tel" type="text" placeholder="5511999999999 ou (11) 99999-9999"
+        <input id="cl-tel" type="text" value="${telSugerido}" placeholder="5511999999999 ou (11) 99999-9999"
           style="width:100%;background:#0d1929;border:1.5px solid #2d3748;border-radius:8px;padding:10px 13px;color:#fff;font-size:.9rem;box-sizing:border-box;outline:none">
       </label>
       <label style="display:block;margin-bottom:20px">
         <span style="color:#94a3b8;font-size:.8rem;font-weight:600;display:block;margin-bottom:6px">FUNIL</span>
         <select id="cl-funil" style="width:100%;background:#0d1929;border:1.5px solid #2d3748;border-radius:8px;padding:10px 13px;color:#fff;font-size:.9rem;box-sizing:border-box">
-          <option value="">⏳ Carregando funis...</option>
+          <option value="">⏳ Carregando funis ativos...</option>
         </select>
       </label>
       <div id="cl-erro" style="color:#f87171;font-size:.82rem;margin-bottom:12px;padding:8px 12px;background:rgba(248,113,113,.1);border-radius:6px;display:none"></div>
@@ -2654,16 +2687,29 @@ function abrirModalCriarLeadConversa(conversa) {
   document.getElementById('cl-cancelar').onclick = () => modal.remove();
   modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
 
-  // Carrega funis em background (não bloqueia o modal)
-  Auth.api('GET', '/funis').then(r => {
-    const funis = r?.data?.dados || r?.data?.funis || r?.data || [];
+  // B29: Carrega apenas funis ativos em background
+  Auth.api('GET', '/funis?somente_ativos=true').then(r => {
+    let funis = r?.data?.dados || r?.data?.funis || r?.data || [];
+    // Filtro adicional de segurança: apenas funis ativos
+    funis = funis.filter(f => f.ativo === 1 || f.ativo === true || f.ativo === '1' || f.ativo === undefined);
     const sel = document.getElementById('cl-funil');
     if (!sel) return;
     if (funis.length === 0) {
-      sel.innerHTML = '<option value="">Sem funis disponíveis</option>';
-    } else {
-      sel.innerHTML = funis.map(f => `<option value="${f.id}">${f.nome}</option>`).join('');
+      sel.innerHTML = '<option value="">Sem funis ativos disponíveis</option>';
+      return;
     }
+
+    // B29: Selecionar funil ativo padrão correto, preferencialmente "Instagram - Direct"
+    const funilPadrao = funis.find(f => /instagram\s*-\s*direct/i.test(f.nome))
+      || funis.find(f => /instagram/i.test(f.nome))
+      || (conversa.funil_id ? funis.find(f => f.id === conversa.funil_id) : null)
+      || funis[0];
+
+    sel.innerHTML = funis.map(f => {
+      const selected = (funilPadrao && f.id === funilPadrao.id) ? ' selected' : '';
+      const nomeLimpo = (f.nome || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return `<option value="${f.id}"${selected}>${nomeLimpo}</option>`;
+    }).join('');
   }).catch(() => {
     const sel = document.getElementById('cl-funil');
     if (sel) sel.innerHTML = '<option value="">Erro ao carregar funis</option>';
@@ -2695,6 +2741,10 @@ function abrirModalCriarLeadConversa(conversa) {
       const rfunil = await Auth.api('GET', `/funis/${funilId}`);
       const funil = rfunil?.data?.dados || rfunil?.data?.funil || rfunil?.data;
       if (!funil) throw new Error('Funil não encontrado.');
+      // B29: Bloqueia tentativa de salvar em funil inativo
+      if (funil.ativo === 0 || funil.ativo === false || funil.ativo === '0') {
+        throw new Error('O funil selecionado está inativo. Selecione um funil ativo.');
+      }
       
       // Pipeline: vem no funil ou busca separado
       let pipelineId = funil.pipeline_id;
@@ -2705,19 +2755,33 @@ function abrirModalCriarLeadConversa(conversa) {
         const pipes = rp?.data?.dados || rp?.data?.pipelines || rp?.data || [];
         pipelineId = pipes[0]?.id;
       }
-      if (!pipelineId) throw new Error('Nenhuma pipeline encontrada.');
+      if (!pipelineId) throw new Error('Nenhuma pipeline encontrada para este funil.');
       
-      // Busca etapas da pipeline
-      const re = await Auth.api('GET', `/etapas?pipeline_id=${pipelineId}`);
-      const etapas = re?.data?.dados || re?.data?.etapas || re?.data || [];
-      const etapa = etapas.find(e => /recebido|novo|entrada/i.test(e.nome)) || etapas[0];
-      if (!etapa) throw new Error('Nenhuma etapa encontrada.');
-      etapaId = etapa.id;
+      // Busca etapas da pipeline (prioriza etapas ativas já retornadas em funil.etapas)
+      let etapas = Array.isArray(funil.etapas) && funil.etapas.length > 0 ? funil.etapas : [];
+      if (etapas.length === 0) {
+        const re = await Auth.api('GET', `/etapas?pipeline_id=${pipelineId}`);
+        etapas = re?.data?.dados || re?.data?.etapas || re?.data || [];
+      }
+
+      // B29: Filtra apenas etapas ativas e não ocultas
+      const etapasAtivas = etapas.filter(e => (e.ativo === 1 || e.ativo === true || e.ativo === '1' || e.ativo === undefined) && !e.oculta);
+      if (etapasAtivas.length === 0) throw new Error('Nenhuma etapa ativa encontrada neste funil.');
+
+      // B29: Etapa inicial deve ser a primeira etapa ativa do funil (prioriza Lead Recebido / Novo / Entrada)
+      const etapaInicial = etapasAtivas.find(e => /lead\s*recebido|recebido|novo|entrada/i.test(e.nome)) || etapasAtivas[0];
+      etapaId = etapaInicial.id;
 
       // 2. Define telefone para o lead
-      const telefoneParaLead = telRaw
-        ? (telRaw.startsWith('55') ? telRaw : `55${telRaw}`)
-        : conversa.telefone; // mantém LID: se não digitou
+      let telefoneParaLead = '';
+      if (telRaw) {
+        telefoneParaLead = telRaw.startsWith('55') ? telRaw : `55${telRaw}`;
+      } else if (conversa.telefone && !conversa.telefone.startsWith('LID:')) {
+        const d = conversa.telefone.replace(/\D/g, '');
+        telefoneParaLead = d.startsWith('55') ? d : `55${d}`;
+      } else {
+        telefoneParaLead = conversa.telefone || ''; // mantém LID: se não digitou
+      }
 
       // 3. Cria o lead
       const rlead = await Auth.api('POST', '/leads', {
@@ -2738,13 +2802,11 @@ function abrirModalCriarLeadConversa(conversa) {
       const atualizacao = { lead_id: leadId, nome_contato: nome };
       if (telRaw) {
         atualizacao.telefone = telefoneParaLead;
-        // Salva também no dados_extras da conversa o telefone real para envio
       }
       await Auth.api('PATCH', `/whatsapp/conversas/${conversa.id}`, atualizacao);
 
       modal.remove();
-      // Atualiza dados_extras da conversa com telefone real (para envio via JID)
-      // e recarrega a conversa
+      Toast.show('✅ Lead criado com sucesso!', 'success');
       await abrirConversa(conversa.id);
 
     } catch(err) {

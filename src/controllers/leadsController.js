@@ -677,6 +677,17 @@ async function criar(req, res) {
         if (p) fId = p.funil_id;
       }
 
+      // B29: Não permitir salvar lead em funil inativo
+      if (fId) {
+        const { data: fCheck } = await sb.from('funis').select('id, nome, ativo').eq('id', fId).single();
+        if (fCheck && (fCheck.ativo === 0 || fCheck.ativo === false || fCheck.ativo === '0')) {
+          return res.status(400).json({
+            sucesso: false,
+            erro: `O funil "${fCheck.nome}" está inativo. Não é permitido criar lead em funil inativo.`
+          });
+        }
+      }
+
       const row = {
         id,
         nome: nome.trim(),
@@ -790,6 +801,22 @@ async function criar(req, res) {
 
 
     // SQLite
+    // B29: Não permitir salvar lead em funil inativo (SQLite)
+    let fIdSqlite = funil_id || null;
+    if (!fIdSqlite && pipeline_id) {
+      const p = sqlite.prepare('SELECT funil_id FROM pipelines WHERE id = ?').get(pipeline_id);
+      if (p) fIdSqlite = p.funil_id;
+    }
+    if (fIdSqlite) {
+      const fCheck = sqlite.prepare('SELECT id, nome, ativo FROM funis WHERE id = ?').get(fIdSqlite);
+      if (fCheck && (fCheck.ativo === 0 || fCheck.ativo === false || fCheck.ativo === '0')) {
+        return res.status(400).json({
+          sucesso: false,
+          erro: `O funil "${fCheck.nome}" está inativo. Não é permitido criar lead em funil inativo.`
+        });
+      }
+    }
+
     sqlite.prepare(`INSERT INTO leads (id,nome,email,telefone,empresa,cargo,valor,pipeline_id,etapa_id,responsavel_id,origem,tags,dados_extras,observacoes,status,criado_por)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'ABERTO',?)`).run(
       id, nome.trim(), email||null, telefone||null, empresa||null, cargo||null,
