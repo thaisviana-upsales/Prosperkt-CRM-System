@@ -1051,82 +1051,70 @@ function renderMensagem(msg) {
     else if (txt === '[arquivo]'   || txt === '[Arquivo]')   tipoEfetivo = 'arquivo';
   }
 
+  // Detecção de imagem abrangente e segura (B27)
+  const isImagem = tipoEfetivo === 'imagem'
+    || (msg.mime_type && msg.mime_type.startsWith('image/'))
+    || (msg.arquivo_nome && /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(msg.arquivo_nome));
+
   if (tipoEfetivo === 'texto' || tipoEfetivo === 'sistema') {
     conteudo = `<div class="wa-bubble-text">${escHtml(msg.mensagem || '')}</div>`;
-  } else if (tipoEfetivo === 'imagem') {
+  } else if (isImagem) {
+    const nome = msg.arquivo_nome || 'Imagem';
+    const previewSrc = msg.local_preview_url
+      || (msg.arquivo_url && /^https?:\/\//i.test(msg.arquivo_url) ? msg.arquivo_url : null);
 
-    const nome   = msg.arquivo_nome || 'Imagem';
-    if (msg.direcao === 'recebida' && msg.id) {
-      // Recebida: lazy load via proxy autenticado (fetch Bearer + _waLoadImg)
-      // NÃO usar data:image/svg+xml — bloqueado por CSP img-src do servidor (Railway).
-      // NÃO usar loading="lazy" — conflita com o lazy load manual via fetch Bearer.
-      // Usa div placeholder estilizado em CSS puro (sem src = sem imagem quebrada).
-      conteudo = `
-        <div class="wa-img-wrap">
-          <div class="wa-img-lazy wa-img-ph" data-wa-imgmsgid="${msg.id}"
-            style="width:220px;height:130px;border-radius:8px;background:var(--surface-2,#1e2d3d);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;cursor:pointer;overflow:hidden">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.2)" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-            <span style="font-size:.65rem;color:rgba(255,255,255,.2);letter-spacing:.04em">Carregando...</span>
-          </div>
-          <div class="wa-img-error" style="display:none;align-items:center;gap:6px;padding:10px;background:var(--surface-2);border-radius:8px;font-size:.72rem;color:var(--text-muted)">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-            Mídia indisponível.
-            <button class="wa-file-dl-btn" data-wa-dl-msgid="${msg.id}" data-wa-dl-nome="${escHtml(nome)}" title="Baixar imagem" style="margin-left:4px;padding:2px 6px;font-size:.68rem">⬇ Baixar</button>
-          </div>
-        </div>
-        ${msg.mensagem && !['[Imagem]','[imagem]','[Áudio]','[Vídeo]','[Documento]'].includes(msg.mensagem) && msg.mensagem !== nome ? `<div class="wa-bubble-text" style="margin-top:4px">${escHtml(msg.mensagem)}</div>` : ''}`;
+    const captionHtml = (msg.mensagem && !['[Imagem]','[imagem]','[Áudio]','[Vídeo]','[Documento]'].includes(msg.mensagem) && msg.mensagem !== nome)
+      ? `<div class="wa-bubble-text" style="margin-top:6px">${escHtml(msg.mensagem)}</div>`
+      : '';
 
-    } else if (msg.arquivo_url) {
-      // Enviada com URL pública disponível (Supabase Storage público)
-      const imgSrc = msg.arquivo_url;
-      conteudo = `
-        <div class="wa-img-wrap">
-          <img class="wa-img" src="${escHtml(imgSrc)}" alt="${escHtml(nome)}" loading="lazy"
-            data-wa-imgopen="${escHtml(imgSrc)}"
-            style="border-radius:6px;cursor:zoom-in;display:block;max-width:100%">
-          <div class="wa-img-error" style="display:none;align-items:center;gap:6px;padding:10px;background:var(--surface-2);border-radius:8px;font-size:.72rem;color:var(--text-muted)">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-            Imagem indisponível.
-          </div>
-        </div>
-        ${msg.mensagem ? `<div class="wa-bubble-text" style="margin-top:4px">${escHtml(msg.mensagem)}</div>` : ''}`;
-    } else if (msg.id && (msg.storage_path || msg.evolution_message_id)) {
-      // Enviada com storage_path ou evolution_message_id — usa proxy autenticado igual às recebidas
-      const nome = msg.arquivo_nome || 'Imagem';
-      conteudo = `
-        <div class="wa-img-wrap">
-          <div class="wa-img-lazy wa-img-ph" data-wa-imgmsgid="${msg.id}"
-            style="width:220px;height:130px;border-radius:8px;background:var(--surface-2,#1e2d3d);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;cursor:pointer;overflow:hidden">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.2)" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-            <span style="font-size:.65rem;color:rgba(255,255,255,.2);letter-spacing:.04em">Carregando...</span>
-          </div>
-          <div class="wa-img-error" style="display:none;align-items:center;gap:6px;padding:10px;background:var(--surface-2);border-radius:8px;font-size:.72rem;color:var(--text-muted)">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-            Imagem indisponível.
-            <button class="wa-file-dl-btn" data-wa-dl-msgid="${msg.id}" data-wa-dl-nome="${escHtml(nome)}" title="Baixar imagem" style="margin-left:4px;padding:2px 6px;font-size:.68rem">⬇ Baixar</button>
-          </div>
-        </div>
-        ${msg.mensagem ? `<div class="wa-bubble-text" style="margin-top:4px">${escHtml(msg.mensagem)}</div>` : ''}`;
-    } else {
-      // Enviada sem nenhuma referência — mostra como card de arquivo
-      const nome = msg.arquivo_nome || 'Imagem';
-      let subtexto = 'Imagem enviada';
-      if (msg.status === 'pending') {
-        subtexto = `<span style="display:inline-flex;align-items:center;gap:4px;color:var(--text-muted)"><span class="wa-pulse-dot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#FFB800"></span>Enviando imagem...</span>`;
-      } else if (msg.status === 'failed' || msg.status === 'erro') {
-        subtexto = `<span style="color:#ef4444;font-weight:500">Falha no envio da imagem</span>`;
-      }
-      conteudo = `<div class="wa-file-card${msg.status === 'failed' || msg.status === 'erro' ? ' wa-card-error' : ''}">
+    const fallbackCardHtml = `
+      <div class="wa-file-card wa-img-fallback${msg.status === 'failed' || msg.status === 'erro' ? ' wa-card-error' : ''}">
         <div style="display:flex;align-items:center;gap:10px">
-          <div class="wa-file-icon" style="background:${msg.status === 'failed' || msg.status === 'erro' ? 'rgba(239,68,68,.12)' : 'rgba(255,184,0,.12)'};border-color:${msg.status === 'failed' || msg.status === 'erro' ? 'rgba(239,68,68,.2)' : 'rgba(255,184,0,.2)'}">
+          <div class="wa-file-icon" style="background:${msg.status === 'failed' || msg.status === 'erro' ? 'rgba(239,68,68,.12)' : 'rgba(48,209,88,.12)'};border-color:${msg.status === 'failed' || msg.status === 'erro' ? 'rgba(239,68,68,.2)' : 'rgba(48,209,88,.2)'}">
             <span style="font-size:1.2rem;line-height:1">🖼️</span>
           </div>
           <div style="flex:1;min-width:0">
             <p style="font-size:.78rem;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0" title="${escHtml(nome)}">${escHtml(nome)}</p>
-            <p style="font-size:.67rem;color:var(--text-muted);margin:2px 0 0">${subtexto}</p>
+            <p style="font-size:.67rem;color:var(--text-muted);margin:2px 0 0">
+              ${msg.status === 'pending' ? 'Enviando imagem...' : (msg.status === 'failed' || msg.status === 'erro' ? 'Falha no envio da imagem' : 'Imagem enviada')}
+            </p>
+          </div>
+          ${msg.id && !msg.id.startsWith('temp_') ? `<button class="wa-file-dl-btn" data-wa-dl-msgid="${msg.id}" data-wa-dl-nome="${escHtml(nome)}" title="Baixar imagem" style="padding:4px 8px;font-size:.72rem">⬇</button>` : ''}
+        </div>
+      </div>
+    `;
+
+    if (previewSrc) {
+      // 1. Imagem com URL direta (preview local ou URL pública/signed)
+      conteudo = `
+        <div class="wa-img-wrap">
+          <img class="wa-img" src="${escHtml(previewSrc)}" alt="${escHtml(nome)}" loading="lazy"
+            data-wa-imgopen="${escHtml(previewSrc)}"
+            data-wa-lightbox-msgid="${msg.id || ''}"
+            style="border-radius:8px;cursor:zoom-in;display:block;max-width:100%;max-height:320px;object-fit:cover"
+            onerror="this.style.display='none';const fb=this.closest('.wa-img-wrap')?.querySelector('.wa-img-fallback');if(fb)fb.style.display='block';">
+          <div class="wa-img-fallback" style="display:none">
+            ${fallbackCardHtml}
           </div>
         </div>
-      </div>`;
+        ${captionHtml}`;
+    } else if (msg.id && !msg.id.startsWith('temp_')) {
+      // 2. Imagem persistida com ID no CRM (enviada ou recebida) — carrega miniatura via proxy autenticado
+      conteudo = `
+        <div class="wa-img-wrap">
+          <div class="wa-img-lazy wa-img-ph" data-wa-imgmsgid="${msg.id}"
+            style="width:220px;height:140px;border-radius:8px;background:var(--surface-2,#1e2d3d);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;cursor:pointer;overflow:hidden">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.3)" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            <span style="font-size:.68rem;color:rgba(255,255,255,.4);letter-spacing:.03em">Carregando miniatura...</span>
+          </div>
+          <div class="wa-img-error" style="display:none">
+            ${fallbackCardHtml}
+          </div>
+        </div>
+        ${captionHtml}`;
+    } else {
+      // 3. Fallback para card de arquivo
+      conteudo = `${fallbackCardHtml}${captionHtml}`;
     }
   } else if (tipoEfetivo === 'audio') {
     // Usa /api/whatsapp/audio/play/:msgId diretamente — endpoint robusto com fallbacks completos
@@ -1445,17 +1433,26 @@ async function waEnviarArquivo(file, caption = '') {
   const tipoMidia = isVideo ? 'video' : ((file.type && file.type.startsWith('image/')) ? 'imagem' : 'arquivo');
   const tempMsgId = 'temp_file_' + Date.now();
   const textoMsg = caption || (isVideo ? '🎥 Vídeo' : file.name);
+
+  let localPreviewUrl = null;
+  if (tipoMidia === 'imagem') {
+    try {
+      localPreviewUrl = URL.createObjectURL(file);
+    } catch {}
+  }
+
   const pendingMsg = {
-    id:           tempMsgId,
-    conversa_id:  _convAtiva.id,
-    mensagem:     textoMsg,
-    tipo:         tipoMidia,
-    arquivo_url:  null,
-    arquivo_nome: file.name,
-    mime_type:    file.type || 'application/octet-stream',
-    direcao:      'enviada',
-    status:       'pending',
-    criado_em:    new Date().toISOString(),
+    id:                tempMsgId,
+    conversa_id:       _convAtiva.id,
+    mensagem:          textoMsg,
+    tipo:              tipoMidia,
+    arquivo_url:       localPreviewUrl,
+    local_preview_url: localPreviewUrl,
+    arquivo_nome:      file.name,
+    mime_type:         file.type || 'application/octet-stream',
+    direcao:           'enviada',
+    status:            'pending',
+    criado_em:         new Date().toISOString(),
   };
   _mensagens.push(pendingMsg);
   renderMensagens();
@@ -1506,7 +1503,8 @@ async function waEnviarArquivo(file, caption = '') {
       conversa_id:          _convAtiva.id,
       mensagem:             textoMsg,
       tipo:                 tipoMidia,
-      arquivo_url:          null,
+      arquivo_url:          localPreviewUrl,
+      local_preview_url:    localPreviewUrl,
       arquivo_nome:         file.name,
       mime_type:            isVideo ? 'video/mp4' : file.type,
       direcao:              'enviada',
@@ -1517,9 +1515,9 @@ async function waEnviarArquivo(file, caption = '') {
 
     const idx = _mensagens.findIndex(m => m.id === tempMsgId);
     if (idx !== -1) {
-      _mensagens[idx] = { ...msgData, status: 'enviado' };
+      _mensagens[idx] = { ...msgData, local_preview_url: localPreviewUrl || _mensagens[idx].local_preview_url, status: 'enviado' };
     } else {
-      _mensagens.push({ ...msgData, status: 'enviado' });
+      _mensagens.push({ ...msgData, local_preview_url: localPreviewUrl, status: 'enviado' });
     }
 
     renderMensagens();
