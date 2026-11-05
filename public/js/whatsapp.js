@@ -107,7 +107,7 @@ function obterIniciais(nome) {
   return result || '?';
 }
 
-// ─── Formatação de Prévia de Mídia na Lista (B10) ─────────────────────────────
+// ─── Formatação de Prévia de Mídia na Lista (B10 / B25) ───────────────────────
 function formatarPreviewUltimaMensagem(item, tipoFallback) {
   if (!item) return '<em>Sem mensagens</em>';
 
@@ -115,25 +115,45 @@ function formatarPreviewUltimaMensagem(item, tipoFallback) {
   let tipo = '';
   let mime = '';
   let arqNome = '';
+  let status = '';
 
   if (typeof item === 'object') {
     txt = (item.ultima_mensagem || item.mensagem || '').trim();
     tipo = (item.ultimo_tipo || item.tipo || '').toLowerCase();
     mime = (item.ultimo_mime || item.mime_type || '').toLowerCase();
     arqNome = (item.ultimo_arquivo || item.arquivo_nome || '').toLowerCase();
+    status = (item.ultimo_status || item.status || '').toLowerCase();
   } else {
     txt = String(item || '').trim();
     tipo = String(tipoFallback || '').toLowerCase();
   }
 
+  // B25: Mensagem com status de falha ou erro explícito
+  const isFalha = status === 'erro' || status === 'failed' || /não enviado/i.test(txt) || /falha no envio/i.test(txt);
+  if (isFalha) {
+    if (tipo === 'audio' || tipo === 'ptt' || /áudio/i.test(txt) || /\.(ogg|opus|mp3|wav|m4a|webm)$/i.test(arqNome)) {
+      return '<span style="color:#ef4444;font-weight:600">⚠️ Áudio não enviado</span>';
+    }
+    if (tipo === 'imagem' || tipo === 'image' || /foto|imagem/i.test(txt)) {
+      return '<span style="color:#ef4444;font-weight:600">⚠️ Imagem não enviada</span>';
+    }
+    if (tipo === 'video' || /vídeo|video/i.test(txt)) {
+      return '<span style="color:#ef4444;font-weight:600">⚠️ Vídeo não enviado</span>';
+    }
+    if (tipo === 'documento' || tipo === 'arquivo' || /arquivo|documento/i.test(txt)) {
+      return '<span style="color:#ef4444;font-weight:600">⚠️ Arquivo não enviado</span>';
+    }
+    return '<span style="color:#ef4444;font-weight:600">⚠️ Mensagem não enviada</span>';
+  }
+
   // 1. Áudio: 🎤 Áudio
-  if (tipo === 'audio' || tipo === 'ptt' || /^\[?áudio\]?$/i.test(txt) || txt.includes('🎤') || mime.startsWith('audio/')) {
+  if (tipo === 'audio' || tipo === 'ptt' || /^\[?áudio\]?$/i.test(txt) || txt.includes('🎤') || mime.startsWith('audio/') || /\.(ogg|opus|mp3|wav|m4a|webm)$/i.test(arqNome)) {
     return '🎤 Áudio';
   }
 
   // 2. Vídeo: 🎬 Vídeo
-  if (tipo === 'video' || txt.startsWith('🎥') || txt.startsWith('🎬') || mime.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm)$/i.test(arqNome) || /\.(mp4|mov|avi|mkv|webm)$/i.test(txt)) {
-    const cleanTxt = txt.replace(/^(🎥|🎬)\s*(Vídeo:?\s*)?/i, '').replace(/\.(mp4|mov|avi|mkv|webm)$/i, '').trim();
+  if (tipo === 'video' || txt.startsWith('🎥') || txt.startsWith('🎬') || mime.startsWith('video/') || /\.(mp4|mov|avi|mkv)$/i.test(arqNome) || /\.(mp4|mov|avi|mkv)$/i.test(txt)) {
+    const cleanTxt = txt.replace(/^(🎥|🎬)\s*(Vídeo:?\s*)?/i, '').replace(/\.(mp4|mov|avi|mkv)$/i, '').trim();
     return cleanTxt && !/^(video|vídeo)$/i.test(cleanTxt) ? `🎬 Vídeo: ${escHtml(cleanTxt)}` : '🎬 Vídeo';
   }
 
@@ -153,9 +173,21 @@ function formatarPreviewUltimaMensagem(item, tipoFallback) {
     return '📎 Arquivo';
   }
 
-  // 6. Texto
+  // 6. Texto válido
   if (txt) {
     return escHtml(txt.slice(0, 50));
+  }
+
+  // 7. B25: Conversa com mensagens ativas na conversa aberta nunca deve virar "Sem mensagens"
+  if (typeof item === 'object' && item.id && _convAtiva?.id === item.id && _mensagens.length > 0) {
+    const ultValida = [..._mensagens].reverse().find(m => m.status !== 'erro' && m.status !== 'failed');
+    if (ultValida) {
+      if (ultValida.tipo === 'audio') return '🎤 Áudio';
+      if (ultValida.tipo === 'imagem') return '📷 Foto';
+      if (ultValida.tipo === 'video') return '🎬 Vídeo';
+      if (ultValida.tipo === 'arquivo' || ultValida.tipo === 'documento') return '📎 Arquivo';
+      if (ultValida.mensagem) return escHtml(ultValida.mensagem.slice(0, 50));
+    }
   }
 
   return '<em>Sem mensagens</em>';
@@ -2312,6 +2344,35 @@ async function enviarAudio(blob) {
       renderMensagens();
     }
     Toast.show(`❌ Falha no envio do áudio: ${err}`, 'error');
+
+    // B25: Preserva última mensagem válida anterior na prévia da lista ou exibe "Áudio não enviado"
+    const ultValida = [..._mensagens].reverse().find(m => m.id !== tempAudId && m.status !== 'erro' && m.status !== 'failed');
+    _conversas = _conversas.map(c => {
+      if (c.id !== _convAtiva.id) return c;
+      if (ultValida) {
+        let ultTexto = ultValida.mensagem;
+        if (!ultTexto) {
+          if (ultValida.tipo === 'audio') ultTexto = '🎤 Áudio';
+          else if (ultValida.tipo === 'imagem') ultTexto = '📷 Foto';
+          else if (ultValida.tipo === 'video') ultTexto = '🎬 Vídeo';
+          else if (ultValida.tipo === 'arquivo' || ultValida.tipo === 'documento') ultTexto = '📎 Arquivo';
+        }
+        return {
+          ...c,
+          ultima_mensagem: ultTexto || c.ultima_mensagem || '🎤 Áudio',
+          ultimo_tipo: ultValida.tipo || c.ultimo_tipo || 'audio',
+          ultimo_status: ultValida.status || 'enviado',
+        };
+      }
+      return {
+        ...c,
+        ultima_mensagem: 'Áudio não enviado',
+        ultimo_tipo: 'audio',
+        ultimo_status: 'erro',
+      };
+    });
+    renderListaConversas();
+    document.getElementById('conv-item-' + _convAtiva.id)?.classList.add('active');
   }
 
   cancelarGravacao();

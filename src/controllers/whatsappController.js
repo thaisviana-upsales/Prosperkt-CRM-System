@@ -950,23 +950,57 @@ async function listarConversas(req, res) {
       // Ultima mensagem por conversa
       const ids = conversas.map(c => c.id);
       let ultimaMap = {};
+      let ultimaValidaMap = {};
       if (ids.length > 0) {
         const { data: msgs } = await sb.from(MENSAGENS_TABLE)
-          .select('conversa_id,mensagem,direcao,criado_em,tipo,arquivo_nome,mime_type')
+          .select('conversa_id,mensagem,direcao,criado_em,tipo,arquivo_nome,mime_type,status')
           .in('conversa_id', ids)
           .order('criado_em', { ascending: false });
-        (msgs || []).forEach(m => { if (!ultimaMap[m.conversa_id]) ultimaMap[m.conversa_id] = m; });
+        (msgs || []).forEach(m => {
+          if (!ultimaMap[m.conversa_id]) ultimaMap[m.conversa_id] = m;
+          if (!ultimaValidaMap[m.conversa_id] && m.status !== 'erro' && m.status !== 'failed') {
+            ultimaValidaMap[m.conversa_id] = m;
+          }
+        });
       }
-      const comUltima = conversas.map(c => ({
-        ...c,
-        ultima_mensagem: ultimaMap[c.id]?.mensagem || null,
-        ultima_direcao:  ultimaMap[c.id]?.direcao  || null,
-        ultimo_tipo:     ultimaMap[c.id]?.tipo     || null,
-        ultimo_arquivo:  ultimaMap[c.id]?.arquivo_nome || null,
-        ultimo_mime:     ultimaMap[c.id]?.mime_type || null,
-        // nao_lidas: usa o campo do banco (incrementado pelo webhook ao receber, zerado ao abrir)
-        nao_lidas: c.nao_lidas || 0,
-      }));
+      const comUltima = conversas.map(c => {
+        const ult = ultimaMap[c.id];
+        const ultValida = ultimaValidaMap[c.id];
+        const isErro = ult?.status === 'erro' || ult?.status === 'failed';
+
+        // B25: Determina tipo e mensagem da prévia preservando histórico real
+        let tipoEfetivo = ult?.tipo || c.ultimo_tipo || null;
+        let msgEfetiva  = ult?.mensagem || null;
+
+        if (isErro) {
+          // Se a última mensagem deu erro, prefere a mensagem válida anterior se existir;
+          // senão, exibe status claro de "Áudio não enviado".
+          if (ultValida) {
+            tipoEfetivo = ultValida.tipo || tipoEfetivo;
+            msgEfetiva  = ultValida.mensagem || c.ultima_mensagem || (ultValida.tipo === 'audio' ? '[Áudio]' : null);
+          } else {
+            msgEfetiva = ult?.tipo === 'audio' ? 'Áudio não enviado' : 'Mensagem não enviada';
+          }
+        } else if (!msgEfetiva) {
+          if (tipoEfetivo === 'audio') msgEfetiva = '[Áudio]';
+          else if (tipoEfetivo === 'imagem') msgEfetiva = '[Imagem]';
+          else if (tipoEfetivo === 'video') msgEfetiva = '[Vídeo]';
+          else if (tipoEfetivo === 'arquivo' || tipoEfetivo === 'documento') msgEfetiva = '[Arquivo]';
+          else msgEfetiva = c.ultima_mensagem || null;
+        }
+
+        return {
+          ...c,
+          ultima_mensagem: msgEfetiva,
+          ultima_direcao:  ult?.direcao  || c.ultima_direcao || null,
+          ultimo_tipo:     tipoEfetivo,
+          ultimo_arquivo:  ult?.arquivo_nome || c.ultimo_arquivo || null,
+          ultimo_mime:     ult?.mime_type || c.ultimo_mime || null,
+          ultimo_status:   ult?.status || null,
+          // nao_lidas: usa o campo do banco (incrementado pelo webhook ao receber, zerado ao abrir)
+          nao_lidas: c.nao_lidas || 0,
+        };
+      });
       const totalReal = (count !== null && count !== undefined) ? count : comUltima.length;
       console.log('WHATSAPP_CONVERSAS_LIST_SUCCESS', { total: totalReal, retornadas: comUltima.length, offset: offsetNum });
       return res.json({

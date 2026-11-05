@@ -328,7 +328,7 @@ async function enviarAudio(req, res) {
     // ── 8. Atualiza conversa ───────────────────────────────────────────────
     try {
       await sb.from(CONVERSAS_TABLE).update({
-        ultima_mensagem: '[Áudio]',
+        ultima_mensagem: evoOk ? '[Áudio]' : (conversa.ultima_mensagem || 'Áudio não enviado'),
         ultima_direcao:  'enviada',
         ultima_msg_em:   agora,
         atualizado_em:   agora,
