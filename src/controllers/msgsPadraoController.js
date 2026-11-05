@@ -8,10 +8,53 @@
 const crypto = require('crypto');
 const { getProvider } = require('../database/dbProvider');
 
+/**
+ * obterPrimeiroNomeContato — extrai o primeiro nome limpo para saudações em scripts (B28).
+ */
+function obterPrimeiroNomeContato(nomeBruto, fallback = '') {
+  if (!nomeBruto || typeof nomeBruto !== 'string') return fallback;
+
+  let str = nomeBruto.trim().replace(/\s+/g, ' ');
+  if (!str) return fallback;
+
+  // 1. Ignora identificadores técnicos (LID, número de telefone)
+  if (/^LID:\d+/i.test(str) || /^\+?\d[\d\s().-]{7,}$/.test(str)) {
+    return fallback;
+  }
+
+  // 2. Trata hífen ou outros separadores de descrição (ex: 'tuane - teste', 'Ana / RH')
+  const separadores = /[-–—|/(]/;
+  if (separadores.test(str)) {
+    const partes = str.split(separadores);
+    const antes = partes[0].trim();
+    if (/[a-zA-ZÀ-ÖØ-öø-ÿ]{2,}/.test(antes)) {
+      str = antes;
+    }
+  }
+
+  // 3. Extrai as palavras alfabéticas
+  const palavras = str.match(/[a-zA-ZÀ-ÖØ-öø-ÿ]+/g);
+  if (!palavras || palavras.length === 0) {
+    return fallback;
+  }
+
+  // 4. Pega a primeira palavra útil
+  let primeira = palavras[0];
+  const prefixos = /^(sr|sra|dr|dra|mr|mrs|prof)\.?$/i;
+  if (prefixos.test(primeira) && palavras.length > 1) {
+    primeira = palavras[1];
+  }
+
+  if (!primeira) return fallback;
+
+  return primeira.charAt(0).toUpperCase() + primeira.slice(1).toLowerCase() || fallback;
+}
+
 /** Substitui variáveis dinâmicas no texto */
 function substituir(texto, vars = {}) {
+  const nomeLimpo = obterPrimeiroNomeContato(vars.nome_lead || vars.nome || '');
   return (texto || '')
-    .replace(/\[nome_lead\]/gi,     vars.nome_lead     || '')
+    .replace(/\[nome_lead\]/gi,     nomeLimpo)
     .replace(/\[nome_vendedor\]/gi, vars.nome_vendedor || '')
     .replace(/\[nome_empresa\]/gi,  vars.nome_empresa  || vars.empresa || '')
     .replace(/\[telefone_lead\]/gi, vars.telefone_lead || '')
@@ -19,7 +62,7 @@ function substituir(texto, vars = {}) {
     .replace(/\[etapa\]/gi,         vars.etapa         || '')
     .replace(/\[empresa\]/gi,       vars.empresa       || vars.nome_empresa || '')
     // Variáveis modernas (picker v3)
-    .replace(/\[Nome\]/g,           vars.nome_lead     || vars.nome || '')
+    .replace(/\[Nome\]/g,           nomeLimpo)
     .replace(/\[Empresa\]/g,        vars.empresa       || vars.nome_empresa || '')
     .replace(/\[Vendedor\]/g,       vars.nome_vendedor || vars.vendedor || '')
     .replace(/\[Produto\]/g,        vars.produto       || '')

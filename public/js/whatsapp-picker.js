@@ -84,6 +84,59 @@ function substituirVars(t){
 }
 
 /**
+ * obterPrimeiroNomeContato — extrai o primeiro nome limpo para saudações em scripts (B28).
+ * 
+ * Regras:
+ * 1. Remove espaços extras e caracteres de controle.
+ * 2. Ignora identificadores técnicos como telefone ou LID puro (retorna fallback).
+ * 3. Se contiver hífen/separador de descrição (ex: 'tuane - teste', 'Marcos / Comercial'),
+ *    usa a parte antes do separador quando fizer sentido (tiver letras alfabéticas).
+ * 4. Pega a primeira palavra útil (composta por letras).
+ * 5. Se a primeira palavra for prefixo formal (Dr., Dra., Sr., Sra., etc.), usa a próxima se houver.
+ * 6. Formata com inicial maiúscula e restante minúsculo (Title Case).
+ * 7. Se não houver nome, retorna o fallback neutro ('').
+ */
+function obterPrimeiroNomeContato(nomeBruto, fallback = '') {
+  if (!nomeBruto || typeof nomeBruto !== 'string') return fallback;
+
+  let str = nomeBruto.trim().replace(/\s+/g, ' ');
+  if (!str) return fallback;
+
+  // 1. Ignora identificadores técnicos (LID, número de telefone)
+  if (/^LID:\d+/i.test(str) || /^\+?\d[\d\s().-]{7,}$/.test(str)) {
+    return fallback;
+  }
+
+  // 2. Trata hífen ou outros separadores de descrição (ex: 'tuane - teste', 'Ana / RH')
+  const separadores = /[-–—|/(]/;
+  if (separadores.test(str)) {
+    const partes = str.split(separadores);
+    const antes = partes[0].trim();
+    if (/[a-zA-ZÀ-ÖØ-öø-ÿ]{2,}/.test(antes)) {
+      str = antes;
+    }
+  }
+
+  // 3. Extrai as palavras alfabéticas
+  const palavras = str.match(/[a-zA-ZÀ-ÖØ-öø-ÿ]+/g);
+  if (!palavras || palavras.length === 0) {
+    return fallback;
+  }
+
+  // 4. Pega a primeira palavra útil
+  let primeira = palavras[0];
+  const prefixos = /^(sr|sra|dr|dra|mr|mrs|prof)\.?$/i;
+  if (prefixos.test(primeira) && palavras.length > 1) {
+    primeira = palavras[1];
+  }
+
+  if (!primeira) return fallback;
+
+  // 5. Title Case (primeira letra maiúscula, restante minúsculo)
+  return primeira.charAt(0).toUpperCase() + primeira.slice(1).toLowerCase() || fallback;
+}
+
+/**
  * carregarVarsLead — busca dados do lead vinculado à conversa ativa.
  * Popula _leadVars com todos os dados disponíveis.
  * Adicionar novas fontes de dados aqui quando necessário.
@@ -92,9 +145,13 @@ async function carregarVarsLead(){
   const conv  = (typeof _convAtiva !== 'undefined') ? _convAtiva : {};
   const user  = (typeof _usuario   !== 'undefined') ? _usuario   : {};
 
+  const nomeBruto = conv.nome_contato || conv.lead_nome || '';
+  const primeiroNome = obterPrimeiroNomeContato(nomeBruto);
+
   // Dados base imediatamente disponíveis na conversa ativa
   _leadVars = {
-    nome:         conv.nome_contato || conv.lead_nome || '',
+    nome:         primeiroNome,
+    nomeCompleto: nomeBruto,
     empresa:      conv.lead_empresa || '',
     vendedor:     conv.vendedor_nome || user.nome || '',
     telefone:     conv.telefone      || '',
@@ -292,7 +349,7 @@ function usarMensagem(id, texto) {
 
   // Limpa placeholders que ficaram sem valor (ex: [Nome], [Empresa])
   // para não enviar payload quebrado para a Evolution
-  const textoFinal = textoComVars
+  let textoFinal = textoComVars
     .replace(/\[Nome\]/gi, '')
     .replace(/\[Empresa\]/gi, '')
     .replace(/\[Vendedor\]/gi, '')
@@ -304,6 +361,14 @@ function usarMensagem(id, texto) {
     .replace(/\[telefone_lead\]/gi, '')
     .replace(/\[funil\]/gi, '')
     .replace(/\[etapa\]/gi, '')
+    .trim();
+
+  // B28: Limpeza de pontuação órfã quando [Nome] não está preenchido
+  textoFinal = textoFinal
+    .replace(/\b(Oi|Olá|Ola),\s*([!?])/gi, '$1$2')
+    .replace(/\b(Oi|Olá|Ola),\s*([a-zA-Z])/gi, '$1! $2')
+    .replace(/,\s*,/g, ',')
+    .replace(/[ \t]{2,}/g, ' ')
     .trim();
 
   console.log('SCRIPT_MESSAGE_RENDERED', { id, textoFinalSlice: textoFinal.slice(0, 80), temConteudo: textoFinal.length > 0 });
@@ -454,6 +519,9 @@ function init(){
   document.getElementById('pk-close-btn')?.addEventListener('click',fecharPickerFull);
   document.getElementById('pk-overlay')?.addEventListener('click',fecharPickerFull);
 }
+
+// Exporta globalmente para testes e integrações
+window.obterPrimeiroNomeContato = obterPrimeiroNomeContato;
 
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init);
 else init();
