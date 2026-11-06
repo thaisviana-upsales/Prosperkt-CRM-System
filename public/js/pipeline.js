@@ -1076,11 +1076,47 @@ async function abrirLead(id) {
     _motivosPerda.map(m=>{ const v=m.nome||m; return `<option value="${v}">${v}</option>`; }).join('');
   const motAtual = l.motivo_perda||l.perdido_motivo||'';
   motivoSel.value=motAtual;
-  // Funil do lead
-  const funilId = _filtros.funil || l.funil_id || (l.funil_id_real||'');
-  await onFlFunilChange(funilId);
-  document.getElementById('fl-funil').value=funilId;
-  document.getElementById('fl-etapa').value=l.etapa_id||'';
+  // Funil e Etapa atuais do lead (B30)
+  _leadEmEdicao = l;
+  _leadIdAberto = id;
+  const funilIdAtual = l.funil_id || l.funil_id_real || '';
+  const etapaIdAtual = l.etapa_id || '';
+
+  const fSel = document.getElementById('fl-funil');
+  const funisAtivos = _funis.filter(f => f.ativo !== false && f.ativo !== 0 && f.ativo !== '0');
+  const funilAtualAtivo = funisAtivos.some(f => f.id === funilIdAtual);
+
+  if (funilIdAtual && !funilAtualAtivo) {
+    // B30: Funil do lead está inativo — exibe com indicação "(inativo)" sem remover da lista
+    let nomeFunilInativo = l.funil_nome || '';
+    if (!nomeFunilInativo) {
+      try {
+        const rf = await Auth.api('GET', `/funis/${funilIdAtual}`);
+        if (rf?.ok && rf.data?.dados?.nome) {
+          nomeFunilInativo = rf.data.dados.nome;
+        }
+      } catch (e) {
+        console.warn('[B30] Erro ao buscar funil inativo:', e);
+      }
+    }
+    if (!nomeFunilInativo) nomeFunilInativo = 'Funil Inativo';
+
+    fSel.innerHTML = `
+      <option value="${funilIdAtual}" data-inativo="true" selected>${nomeFunilInativo} (inativo)</option>
+      ${funisAtivos.map(f => `<option value="${f.id}">${f.nome}</option>`).join('')}
+    `;
+    fSel.value = funilIdAtual;
+  } else {
+    fSel.innerHTML = funisAtivos.map(f => `<option value="${f.id}"${f.id === funilIdAtual ? ' selected' : ''}>${f.nome}</option>`).join('');
+    if (funilIdAtual) {
+      fSel.value = funilIdAtual;
+    } else if (_filtros.funil) {
+      fSel.value = _filtros.funil;
+    }
+  }
+
+  const funilParaCarregar = fSel.value || funilIdAtual || _filtros.funil;
+  await onFlFunilChange(funilParaCarregar, etapaIdAtual, l.etapa_nome);
   document.getElementById('fl-resp').value=l.responsavel_id||'';
   // Campos comerciais
   document.getElementById('fl-valor-venda').value = l.valor_venda||'';
@@ -1419,14 +1455,29 @@ function atualizarStatusBadge(status) {
   label.style.color = cfg.cor;
 }
 
-async function onFlFunilChange(overrideFunilId) {
-  const funilId=overrideFunilId||document.getElementById('fl-funil').value;
+async function onFlFunilChange(overrideFunilId, etapaPreSelecionada, etapaNomeFallback) {
+  const funilId=overrideFunilId||document.getElementById('fl-funil')?.value;
   if (!funilId) return;
   const r=await Auth.api('GET',`/funis/${funilId}`);
   if (!r?.ok) return;
-  const etapas=r.data.dados.etapas||[];
+  const etapas=r.data.dados?.etapas||[];
   const sel=document.getElementById('fl-etapa');
-  sel.innerHTML=etapas.map(e=>`<option value="${e.id}">${e.nome}</option>`).join('');
+  if (!sel) return;
+
+  // B30: Se foi informada etapa do lead que não está nas etapas ativas retornadas, adiciona com indicação inativa
+  if (etapaPreSelecionada && !etapas.some(e => e.id === etapaPreSelecionada)) {
+    const nomeEtapa = etapaNomeFallback || _leadEmEdicao?.etapa_nome || 'Etapa Atual';
+    sel.innerHTML = `
+      <option value="${etapaPreSelecionada}" selected>${nomeEtapa} (inativa)</option>
+      ${etapas.map(e => `<option value="${e.id}">${e.nome}</option>`).join('')}
+    `;
+    sel.value = etapaPreSelecionada;
+  } else {
+    sel.innerHTML = etapas.map(e => `<option value="${e.id}">${e.nome}</option>`).join('');
+    if (etapaPreSelecionada) {
+      sel.value = etapaPreSelecionada;
+    }
+  }
 }
 
 function showTab(tab) {
@@ -1448,9 +1499,19 @@ async function salvarLead() {
   alertEl.style.display='none';
   if (!nome) { alertEl.className='alert alert-error'; alertEl.textContent='Nome é obrigatório.'; alertEl.style.display=''; return; }
 
-  const etapaId=document.getElementById('fl-etapa').value;
-  const funilId=document.getElementById('fl-funil').value;
-  const statusAtual=document.getElementById('fl-status').value;
+  const etapaId=document.getElementById('fl-etapa')?.value;
+  const funilId=document.getElementById('fl-funil')?.value;
+  const statusAtual=document.getElementById('fl-status')?.value;
+
+  // B30: Bloquear salvar se funil ou etapa ficarem vazios
+  const funilIdValidar = funilId || (id ? _leadEmEdicao?.funil_id : '') || '';
+  const etapaIdValidar = etapaId || (id ? _leadEmEdicao?.etapa_id : '') || '';
+  if (!funilIdValidar || !etapaIdValidar) {
+    alertEl.className='alert alert-error';
+    alertEl.textContent='Funil e Etapa são obrigatórios. O lead não pode ser salvo com funil ou etapa vazios.';
+    alertEl.style.display='';
+    return;
+  }
 
   // ── Detecção de ganho (etapa ou status) ──────────────────────
   const etapaSel = _etapas.find(e=>e.id===etapaId);
@@ -2235,7 +2296,14 @@ function bindEvents() {
       console.warn('[CONTA_AZUL_TAB_RENDER_ERROR] _leadEmEdicao não definido ainda');
     }
   });
-  document.getElementById('fl-funil').addEventListener('change', () => onFlFunilChange());
+  document.getElementById('fl-funil').addEventListener('change', async (e) => {
+    // B30: Se usuário trocar funil, remove a opção inativa para que a lista mostre apenas funis ativos
+    const optInativa = e.target.querySelector('option[data-inativo="true"]');
+    if (optInativa && e.target.value !== optInativa.value) {
+      optInativa.remove();
+    }
+    await onFlFunilChange();
+  });
   // Modal motivo de perda
   document.getElementById('btn-motivo-confirmar').addEventListener('click', confirmarMotivo);
   document.getElementById('btn-motivo-cancelar').addEventListener('click', fecharModalMotivo);

@@ -903,6 +903,11 @@ async function atualizar(req, res) {
       allow.forEach(k => { if (req.body[k] !== undefined) upd[k] = req.body[k]; });
       if (req.body.responsavel_id && req.usuario.role !== 'VENDEDOR') upd.responsavel_id = req.body.responsavel_id;
 
+      // B30: Proteção contra apagar funil/etapa/pipeline com valores vazios/nulos
+      if (upd.funil_id === '' || upd.funil_id === null) delete upd.funil_id;
+      if (upd.etapa_id === '' || upd.etapa_id === null) delete upd.etapa_id;
+      if (upd.pipeline_id === '' || upd.pipeline_id === null) delete upd.pipeline_id;
+
       // ── Bloqueia se etapa destino é de ganho e campos obrigatórios faltam ──
       // Cobre: campo Etapa em Dados, drag-and-drop via PATCH, automações
       if (req.body.etapa_id && req.body.etapa_id !== atual.etapa_id) {
@@ -1136,7 +1141,11 @@ async function atualizar(req, res) {
     if (!atual) return res.status(404).json({ sucesso:false, erro:'Lead não encontrado.' });
     if (req.usuario.role==='VENDEDOR' && atual.responsavel_id !== req.usuario.id) return res.status(403).json({ sucesso:false, erro:'Acesso negado.' });
     const campos = {};
-    ['nome','email','telefone','empresa','cargo','valor','origem','data_fechamento','motivo_perda','dados_extras','previsao_proxima_compra','cnpj'].forEach(k => { if (req.body[k] !== undefined) campos[k] = req.body[k]; });
+    ['nome','email','telefone','empresa','cargo','valor','origem','data_fechamento','motivo_perda','dados_extras','previsao_proxima_compra','cnpj','funil_id','etapa_id','pipeline_id'].forEach(k => { if (req.body[k] !== undefined) campos[k] = req.body[k]; });
+    // B30: Proteção contra apagar funil/etapa/pipeline com valores vazios/nulos
+    if (campos.funil_id === '' || campos.funil_id === null) delete campos.funil_id;
+    if (campos.etapa_id === '' || campos.etapa_id === null) delete campos.etapa_id;
+    if (campos.pipeline_id === '' || campos.pipeline_id === null) delete campos.pipeline_id;
     if (req.body.tags !== undefined) campos.tags = JSON.stringify(req.body.tags);
     if (req.body.responsavel_id && req.usuario.role !== 'VENDEDOR') campos.responsavel_id = req.body.responsavel_id;
     campos.atualizado_em = new Date().toISOString();
