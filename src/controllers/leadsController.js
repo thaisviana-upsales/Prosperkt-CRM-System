@@ -693,6 +693,18 @@ async function buscarPorId(req, res) {
   }
 }
 
+// B35: Prevenção contra duplo clique na criação de leads (janela de 5 segundos)
+const _recentCreates = new Map(); // chave -> { lead, timestamp }
+const _pendingCreates = new Map(); // chave -> Promise
+
+function limparCreatesAntigos() {
+  const agora = Date.now();
+  for (const [k, v] of _recentCreates.entries()) {
+    if (agora - v.timestamp > 10000) _recentCreates.delete(k);
+  }
+}
+setInterval(limparCreatesAntigos, 15000).unref?.();
+
 // ── POST /api/leads ───────────────────────────────────────────────────────────
 async function criar(req, res) {
   const { sb, isSupa, sqlite } = getProvider();
@@ -715,6 +727,30 @@ async function criar(req, res) {
   if (!ehLeadAutomatico && !etapa_id) {
     return res.status(400).json({ sucesso:false, erro:'Etapa é obrigatória.' });
   }
+
+  // B35: Prevenção de duplicidade por duplo clique
+  const chaveDeduplicacao = `${req.usuario?.id || 'anon'}_${(nome || '').trim().toLowerCase()}_${(telefone || '').replace(/\D/g, '')}_${(email || '').trim().toLowerCase()}_${funil_id || pipeline_id || ''}_${etapa_id || ''}`;
+
+  if (_pendingCreates.has(chaveDeduplicacao)) {
+    console.log('[B35_DEDUPLICACAO] Requisição concorrente em andamento detectada para:', nome);
+    try {
+      const leadExistente = await _pendingCreates.get(chaveDeduplicacao);
+      if (leadExistente) return res.status(201).json({ sucesso: true, dados: leadExistente, deduplicado: true });
+    } catch (_) {}
+  }
+
+  const recente = _recentCreates.get(chaveDeduplicacao);
+  if (recente && (Date.now() - recente.timestamp) < 5000) {
+    console.log('[B35_DEDUPLICACAO] Duplo clique em janela de 5s detectado para:', nome, 'retornando lead existente:', recente.lead?.id);
+    return res.status(201).json({ sucesso: true, dados: recente.lead, deduplicado: true });
+  }
+
+  let resolvePending, rejectPending;
+  const pendingPromise = new Promise((resolve, reject) => {
+    resolvePending = resolve;
+    rejectPending = reject;
+  });
+  _pendingCreates.set(chaveDeduplicacao, pendingPromise);
 
   let respId;
   if (req.usuario.role === 'VENDEDOR') {
@@ -867,7 +903,10 @@ async function criar(req, res) {
         });
       }
 
-      return res.status(201).json({ sucesso:true, dados: normalizeLead(data) });
+      const leadRetorno = normalizeLead(data);
+      _recentCreates.set(chaveDeduplicacao, { lead: leadRetorno, timestamp: Date.now() });
+      if (resolvePending) resolvePending(leadRetorno);
+      return res.status(201).json({ sucesso:true, dados: leadRetorno });
     }
 
 
@@ -936,10 +975,16 @@ async function criar(req, res) {
         dados_extras: dados_extras || null,
       }).catch(e => console.error('[SLA_CONTATO_1]', e.message));
     });
-    return res.status(201).json({ sucesso:true, dados: sqlite.prepare('SELECT * FROM leads WHERE id=?').get(id) });
+    const leadRetorno = sqlite.prepare('SELECT * FROM leads WHERE id=?').get(id);
+    _recentCreates.set(chaveDeduplicacao, { lead: leadRetorno, timestamp: Date.now() });
+    if (resolvePending) resolvePending(leadRetorno);
+    return res.status(201).json({ sucesso:true, dados: leadRetorno });
   } catch(e) {
+    if (rejectPending) rejectPending(e);
     console.error('[leads.criar]', e.message);
     return res.status(500).json({ sucesso:false, erro:e.message });
+  } finally {
+    _pendingCreates.delete(chaveDeduplicacao);
   }
 }
 

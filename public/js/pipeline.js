@@ -1443,6 +1443,7 @@ function resetModal() {
   document.getElementById('fl-status').value = 'ABERTO';
   atualizarStatusBadge('ABERTO');
   document.getElementById('ml-alert').style.display = 'none';
+  _setSalvandoState(false);
   document.getElementById('nova-nota').value = '';
   // Botão excluir e clonar: oculta no novo lead
   document.getElementById('ml-excluir').style.display = 'none';
@@ -1634,12 +1635,37 @@ function showTab(tab) {
   });
 }
 
+let _salvandoLead = false;
+
+function _setSalvandoState(salvando) {
+  _salvandoLead = salvando;
+  const btn = document.getElementById('ml-salvar');
+  const txt = document.getElementById('ml-salvar-txt');
+  const spinner = document.getElementById('ml-spinner');
+  if (btn) {
+    btn.disabled = salvando;
+    btn.style.pointerEvents = salvando ? 'none' : '';
+    btn.style.opacity = salvando ? '0.7' : '';
+  }
+  if (txt) txt.textContent = salvando ? 'Salvando...' : 'Salvar';
+  if (spinner) {
+    if (salvando) spinner.classList.remove('hidden');
+    else spinner.classList.add('hidden');
+  }
+}
+
 async function salvarLead() {
+  if (_salvandoLead) return;
+
   const id=document.getElementById('fl-id').value;
   const nome=document.getElementById('fl-nome').value.trim();
   const alertEl=document.getElementById('ml-alert');
-  alertEl.style.display='none';
-  if (!nome) { alertEl.className='alert alert-error'; alertEl.textContent='Nome é obrigatório.'; alertEl.style.display=''; return; }
+  if (alertEl) alertEl.style.display='none';
+  if (!nome) {
+    if (alertEl) { alertEl.className='alert alert-error'; alertEl.textContent='Nome é obrigatório.'; alertEl.style.display=''; }
+    document.getElementById('fl-nome')?.focus();
+    return;
+  }
 
   const etapaId=document.getElementById('fl-etapa')?.value;
   const funilId=document.getElementById('fl-funil')?.value;
@@ -1649,15 +1675,21 @@ async function salvarLead() {
   const funilIdValidar = funilId || (id ? _leadEmEdicao?.funil_id : '') || '';
   const etapaIdValidar = etapaId || (id ? _leadEmEdicao?.etapa_id : '') || '';
   if (!funilIdValidar || !etapaIdValidar) {
-    alertEl.className='alert alert-error';
-    alertEl.textContent='Funil e Etapa são obrigatórios. O lead não pode ser salvo com funil ou etapa vazios.';
-    alertEl.style.display='';
+    if (alertEl) {
+      alertEl.className='alert alert-error';
+      alertEl.textContent='Funil e Etapa são obrigatórios. O lead não pode ser salvo com funil ou etapa vazios.';
+      alertEl.style.display='';
+    }
     if (!etapaIdValidar) document.getElementById('fl-etapa')?.focus();
     else document.getElementById('fl-funil')?.focus();
     return;
   }
 
-  // ── Detecção de ganho (etapa ou status) ──────────────────────
+  // B35: Ativa estado de carregamento imediatamente no clique e impede duplo envio
+  _setSalvandoState(true);
+
+  try {
+    // ── Detecção de ganho (etapa ou status) ──────────────────────
   const etapaSel = _etapas.find(e=>e.id===etapaId);
   const isGanhoEtapa = etapaSel?.is_ganho || etapaSel?.probabilidade>=100 ||
     /venda|vendas|ganho|fechad|fechamento/i.test(etapaSel?.nome||'');
@@ -1853,13 +1885,6 @@ async function salvarLead() {
 
   // ── Máscara CNPJ (bind único no init) ────────────────────────────────────
   // A função _mascaraCnpj e o bind já estão definidos globalmente abaixo.
-
-  const btn=document.getElementById('ml-salvar');
-  btn.disabled=true;
-  document.getElementById('ml-salvar-txt').textContent='Salvando...';
-  document.getElementById('ml-spinner').classList.remove('hidden');
-
-  try {
     if (id) {
       // Lead existente: detecta etapaMudou ANTES do PATCH
       // Compara etapa do formulário com a etapa original (não com _leads cache que pode estar desatualizado)
@@ -1937,13 +1962,13 @@ async function salvarLead() {
         fecharModal();
         carregarLeads().catch(() => {}); // background refresh
       } else {
-        alertEl.className='alert alert-error'; alertEl.textContent=r?.data?.erro||'Erro.'; alertEl.style.display='';
+        const msg = r?.data?.erro||'Erro ao criar lead.';
+        alertEl.className='alert alert-error'; alertEl.textContent=msg; alertEl.style.display='';
+        Toast.show(msg, 'error');
       }
     }
   } finally {
-    btn.disabled=false;
-    document.getElementById('ml-salvar-txt').textContent='Salvar';
-    document.getElementById('ml-spinner').classList.add('hidden');
+    _setSalvandoState(false);
   }
 }
 
@@ -1979,7 +2004,10 @@ async function adicionarNota() {
   }
 }
 
-function fecharModal() { document.getElementById('ov-lead').classList.remove('open'); }
+function fecharModal() {
+  document.getElementById('ov-lead').classList.remove('open');
+  _setSalvandoState(false);
+}
 
 async function clonarLead() {
   const id = document.getElementById('fl-id').value;
