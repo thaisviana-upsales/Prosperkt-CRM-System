@@ -384,20 +384,54 @@ async function buscarPorId(req, res) {
         etapas = etapas.filter(e => !ETAPAS_CARTEIRA_REMOVIDAS.includes(e.nome));
       }
       etapas = etapas.filter(e => !ETAPAS_GLOBAIS_REMOVIDAS.includes(e.nome));
+
+      // B34: Deduplicação de etapas por ID e por nome normalizado (evita repetições)
+      const seenIds = new Set();
+      const seenNomes = new Set();
+      const etapasDedup = [];
+      for (const e of etapas) {
+        if (!e || !e.id) continue;
+        const nomeNorm = (e.nome || '').trim().toLowerCase();
+        if (seenIds.has(e.id) || (nomeNorm && seenNomes.has(nomeNorm))) continue;
+        seenIds.add(e.id);
+        if (nomeNorm) seenNomes.add(nomeNorm);
+        etapasDedup.push(e);
+      }
+      etapas = etapasDedup;
+
       return res.json({ sucesso:true, dados:{ ...funil, pipeline_id: pipelineId, etapas } });
     }
     const { getDb } = require('../database/db');
     const db = getDb();
     const funil = db.prepare(`SELECT f.*, p.id as pipeline_id FROM funis f LEFT JOIN pipelines p ON p.funil_id=f.id WHERE f.id=?`).get(req.params.id);
     if (!funil) return res.status(404).json({ sucesso:false, erro:'Funil não encontrado.' });
-    let etapas = db.prepare(`SELECT e.* FROM etapas e JOIN pipelines p ON e.pipeline_id=p.id WHERE p.funil_id=? AND e.ativo=1 AND (e.oculta IS NULL OR e.oculta=0) ORDER BY e.ordem`).all(req.params.id);
+    const pipe = db.prepare(`SELECT id FROM pipelines WHERE funil_id=? ORDER BY criado_em LIMIT 1`).get(req.params.id);
+    const pipelineId = pipe?.id || null;
+    let etapas = pipelineId
+      ? db.prepare(`SELECT * FROM etapas WHERE pipeline_id=? AND ativo=1 AND (oculta IS NULL OR oculta=0) ORDER BY ordem`).all(pipelineId)
+      : [];
     // Filtra etapas removidas: Carteira Recorrente e globais (Tratativa)
     const isCarteira = /carteira\s*recorrente/i.test(funil.nome || '');
     if (isCarteira) {
       etapas = etapas.filter(e => !ETAPAS_CARTEIRA_REMOVIDAS.includes(e.nome));
     }
     etapas = etapas.filter(e => !ETAPAS_GLOBAIS_REMOVIDAS.includes(e.nome));
-    return res.json({ sucesso:true, dados:{ ...funil, etapas } });
+
+    // B34: Deduplicação de etapas por ID e por nome normalizado
+    const seenIds = new Set();
+    const seenNomes = new Set();
+    const etapasDedup = [];
+    for (const e of etapas) {
+      if (!e || !e.id) continue;
+      const nomeNorm = (e.nome || '').trim().toLowerCase();
+      if (seenIds.has(e.id) || (nomeNorm && seenNomes.has(nomeNorm))) continue;
+      seenIds.add(e.id);
+      if (nomeNorm) seenNomes.add(nomeNorm);
+      etapasDedup.push(e);
+    }
+    etapas = etapasDedup;
+
+    return res.json({ sucesso:true, dados:{ ...funil, pipeline_id: pipelineId, etapas } });
   } catch(e) { return res.status(500).json({ sucesso:false, erro:e.message }); }
 }
 

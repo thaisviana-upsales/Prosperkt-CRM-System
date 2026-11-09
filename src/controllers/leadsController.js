@@ -711,6 +711,11 @@ async function criar(req, res) {
   const origemLead = (origem || '').toLowerCase().trim();
   const ehLeadAutomatico = origemLead && origemLead !== 'manual';
 
+  // B34: Bloquear salvar lead sem etapa
+  if (!ehLeadAutomatico && !etapa_id) {
+    return res.status(400).json({ sucesso:false, erro:'Etapa é obrigatória.' });
+  }
+
   let respId;
   if (req.usuario.role === 'VENDEDOR') {
     // Vendedor criando lead manual → fica com ele mesmo

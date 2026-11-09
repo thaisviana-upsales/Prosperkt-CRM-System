@@ -1116,9 +1116,11 @@ function abrirModalMotivo(callback) {
 }
 
 // ── Modal ─────────────────────────────────────────────────────
-function abrirNovoLead(etapaId) {
+async function abrirNovoLead(etapaSugeridaId) {
   resetModal();
-  onFlFunilChange().then(()=>{ document.getElementById('fl-etapa').value=etapaId; });
+  const fSel = document.getElementById('fl-funil');
+  const funilId = fSel?.value;
+  await onFlFunilChange(funilId, etapaSugeridaId);
   document.getElementById('ov-lead').classList.add('open');
   document.getElementById('fl-nome').focus();
 }
@@ -1461,7 +1463,10 @@ function resetModal() {
   // Exclui funis inativos (ex: Tráfego Pago) do select de criação/edição de lead
   const funisCriacaoAtivos = _funis.filter(f => f.ativo !== false && f.ativo !== 0 && f.ativo !== '0');
   fSel.innerHTML = funisCriacaoAtivos.map(f => `<option value="${f.id}">${f.nome}</option>`).join('');
-  fSel.value = _filtros.funil || (funisCriacaoAtivos[0]?.id || '');
+  const funilFiltroValido = funisCriacaoAtivos.find(f => f.id === _filtros.funil);
+  fSel.value = funilFiltroValido ? funilFiltroValido.id : (funisCriacaoAtivos[0]?.id || '');
+  const eSel = document.getElementById('fl-etapa');
+  if (eSel) eSel.innerHTML = '<option value="">Carregando etapas...</option>';
   const rSel = document.getElementById('fl-resp');
   rSel.innerHTML = _usuarios.map(u => `<option value="${u.id}">${u.nome}</option>`).join('');
   if (_usuario.role === 'VENDEDOR') { rSel.value = _usuario.id; rSel.disabled = true; }
@@ -1545,28 +1550,76 @@ function atualizarStatusBadge(status) {
 }
 
 async function onFlFunilChange(overrideFunilId, etapaPreSelecionada, etapaNomeFallback) {
-  const funilId=overrideFunilId||document.getElementById('fl-funil')?.value;
-  if (!funilId) return;
-  const r=await Auth.api('GET',`/funis/${funilId}`);
-  if (!r?.ok) return;
-  const etapas=r.data.dados?.etapas||[];
-  const sel=document.getElementById('fl-etapa');
+  const funilId = overrideFunilId || document.getElementById('fl-funil')?.value;
+  const sel = document.getElementById('fl-etapa');
   if (!sel) return;
+  if (!funilId) {
+    sel.innerHTML = '<option value="">— Selecione um funil —</option>';
+    return;
+  }
 
-  // B30: Se foi informada etapa do lead que não está nas etapas ativas retornadas, adiciona com indicação inativa
-  if (etapaPreSelecionada && !etapas.some(e => e.id === etapaPreSelecionada)) {
+  sel.innerHTML = '<option value="">Carregando etapas...</option>';
+  const r = await Auth.api('GET', `/funis/${funilId}`);
+  if (!r?.ok) {
+    sel.innerHTML = '<option value="">Erro ao carregar etapas</option>';
+    return;
+  }
+
+  const etapasRaw = r.data.dados?.etapas || [];
+
+  // B34: Deduplicação estrita de etapas por ID e por nome normalizado
+  const seenIds = new Set();
+  const seenNomes = new Set();
+  const etapas = [];
+  for (const e of etapasRaw) {
+    if (!e || !e.id) continue;
+    const nomeNorm = (e.nome || '').trim().toLowerCase();
+    if (seenIds.has(e.id) || (nomeNorm && seenNomes.has(nomeNorm))) continue;
+    seenIds.add(e.id);
+    if (nomeNorm) seenNomes.add(nomeNorm);
+    etapas.push(e);
+  }
+
+  if (etapas.length === 0) {
+    sel.innerHTML = '<option value="">— Nenhuma etapa ativa —</option>';
+    return;
+  }
+
+  // Resolução da etapa a ser selecionada:
+  let idParaSelecionar = null;
+
+  // 1. Se foi passada etapaPreSelecionada e ela existe nas etapas do funil:
+  if (etapaPreSelecionada && etapas.some(e => e.id === etapaPreSelecionada)) {
+    idParaSelecionar = etapaPreSelecionada;
+  }
+  // 2. Se etapaPreSelecionada pertence a outro funil, tenta casar por nome equivalente no novo funil:
+  else if (etapaPreSelecionada && !etapaNomeFallback) {
+    const etapaObj = _etapas.find(e => e.id === etapaPreSelecionada);
+    if (etapaObj?.nome) {
+      const matchPorNome = etapas.find(e => (e.nome || '').trim().toLowerCase() === etapaObj.nome.trim().toLowerCase());
+      if (matchPorNome) idParaSelecionar = matchPorNome.id;
+    }
+  }
+
+  // 3. Se estiver editando lead existente (_leadEmEdicao) e a etapa atual não existe mais nas ativas:
+  if (!idParaSelecionar && _leadEmEdicao && etapaPreSelecionada) {
+    // B30: preserva indicação de inativa
     const nomeEtapa = etapaNomeFallback || _leadEmEdicao?.etapa_nome || 'Etapa Atual';
     sel.innerHTML = `
       <option value="${etapaPreSelecionada}" selected>${nomeEtapa} (inativa)</option>
       ${etapas.map(e => `<option value="${e.id}">${e.nome}</option>`).join('')}
     `;
     sel.value = etapaPreSelecionada;
-  } else {
-    sel.innerHTML = etapas.map(e => `<option value="${e.id}">${e.nome}</option>`).join('');
-    if (etapaPreSelecionada) {
-      sel.value = etapaPreSelecionada;
-    }
+    return;
   }
+
+  // 4. B34: Selecionar primeira etapa ativa automaticamente se não houver etapa selecionada ou ao trocar funil
+  if (!idParaSelecionar) {
+    idParaSelecionar = etapas[0].id;
+  }
+
+  sel.innerHTML = etapas.map(e => `<option value="${e.id}"${e.id === idParaSelecionar ? ' selected' : ''}>${e.nome}</option>`).join('');
+  sel.value = idParaSelecionar;
 }
 
 function showTab(tab) {
@@ -1592,13 +1645,15 @@ async function salvarLead() {
   const funilId=document.getElementById('fl-funil')?.value;
   const statusAtual=document.getElementById('fl-status')?.value;
 
-  // B30: Bloquear salvar se funil ou etapa ficarem vazios
+  // B30 & B34: Bloquear salvar se funil ou etapa ficarem vazios
   const funilIdValidar = funilId || (id ? _leadEmEdicao?.funil_id : '') || '';
   const etapaIdValidar = etapaId || (id ? _leadEmEdicao?.etapa_id : '') || '';
   if (!funilIdValidar || !etapaIdValidar) {
     alertEl.className='alert alert-error';
     alertEl.textContent='Funil e Etapa são obrigatórios. O lead não pode ser salvo com funil ou etapa vazios.';
     alertEl.style.display='';
+    if (!etapaIdValidar) document.getElementById('fl-etapa')?.focus();
+    else document.getElementById('fl-funil')?.focus();
     return;
   }
 
@@ -2344,7 +2399,7 @@ function bindEvents() {
   });
 
   // Modal
-  document.getElementById('btn-novo-lead').addEventListener('click', () => abrirNovoLead(_etapas[0]?.id||''));
+  document.getElementById('btn-novo-lead').addEventListener('click', () => abrirNovoLead());
   document.getElementById('ml-close').addEventListener('click', fecharModal);
   document.getElementById('ml-cancelar').addEventListener('click', fecharModal);
   document.getElementById('ml-salvar').addEventListener('click', salvarLead);
@@ -2391,7 +2446,8 @@ function bindEvents() {
     if (optInativa && e.target.value !== optInativa.value) {
       optInativa.remove();
     }
-    await onFlFunilChange();
+    // B34: Ao trocar funil, reseta etapa para a primeira etapa ativa do novo funil
+    await onFlFunilChange(e.target.value);
   });
   // Modal motivo de perda
   document.getElementById('btn-motivo-confirmar').addEventListener('click', confirmarMotivo);
