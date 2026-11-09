@@ -1078,12 +1078,13 @@ async function listarMensagens(req, res) {
     const { sb, isSupa } = getProvider();
     const { id } = req.params;
     const { limit = 50, offset = 0, antes_de, apos_de } = req.query;
-    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 300);
+    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
     const offsetNum = Math.max(parseInt(offset, 10) || 0, 0);
 
     if (isSupa) {
+      // 1. Busca leve da conversa com projeção dos campos necessários (B31)
       const { data: conversa, error: errC } = await sb.from(CONVERSAS_TABLE)
-        .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa,responsavel_id)')
+        .select('id, telefone, status, vendedor_id, lead_id, nome_contato, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa,responsavel_id)')
         .eq('id', id).single();
       if (errC || !conversa) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
 
@@ -1093,9 +1094,16 @@ async function listarMensagens(req, res) {
       if (req.usuario.role === 'VENDEDOR' && !ehDonoDaConversa && !ehDonoDoLead)
         return res.status(403).json({ sucesso: false, erro: 'Acesso negado.' });
 
-      // Se é o responsável do lead mas a conversa estava sem vendedor_id ou com outro, auto-sincroniza
+      // Se é o responsável do lead mas a conversa estava sem vendedor_id ou com outro, auto-sincroniza sem bloquear
       if (ehDonoDoLead && !ehDonoDaConversa) {
-        await sb.from(CONVERSAS_TABLE).update({ vendedor_id: req.usuario.id, atualizado_em: new Date().toISOString() }).eq('id', id);
+        (async () => {
+          try {
+            const { error: errUp } = await sb.from(CONVERSAS_TABLE).update({ vendedor_id: req.usuario.id, atualizado_em: new Date().toISOString() }).eq('id', id);
+            if (errUp) console.warn('[WA] sync vendedor warn:', errUp.message);
+          } catch (e) {
+            console.warn('[WA] sync vendedor exception:', e.message);
+          }
+        })();
         conversa.vendedor_id = req.usuario.id;
       }
 
@@ -1115,8 +1123,12 @@ async function listarMensagens(req, res) {
              .order('criado_em', { ascending: true })
              .order('id', { ascending: true })
              .limit(limitNum);
+      } else if (offsetNum === 0) {
+        // Carga inicial rápida: índice criado_em DESC direto com limit (sem range scan) (B31)
+        q = q.order('criado_em', { ascending: false })
+             .order('id', { ascending: false })
+             .limit(limitNum);
       } else {
-        // Padrão: busca as mais recentes da conversa
         q = q.order('criado_em', { ascending: false })
              .order('id', { ascending: false })
              .range(offsetNum, offsetNum + limitNum - 1);

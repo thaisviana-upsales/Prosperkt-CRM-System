@@ -487,6 +487,9 @@ async function abrirConversa(id) {
   document.getElementById('wa-messages').style.display = '';
   document.getElementById('wa-input-bar').style.display = '';
 
+  // B31: Exibe skeleton loading instantâneo (0ms) na área de mensagens
+  renderSkeletonMensagens();
+
   // ── MOBILE: abre chat em tela cheia ──────────────────────────
   const isMobile = window.innerWidth <= 768;
   const waChat = document.getElementById('wa-chat');
@@ -813,11 +816,31 @@ async function abrirOuCriarConversaLead(leadId, tel, nome) {
   return resolverConversaLead(leadId, tel, nome);
 }
 
+// ─── Skeleton Loading para área de mensagens (B31) ───────────────────────────
+function renderSkeletonMensagens() {
+  const el = document.getElementById('wa-messages');
+  if (!el) return;
+  el.innerHTML = `
+    <div class="wa-skeleton-wrap">
+      <div class="wa-skeleton-bubble received" style="width:230px;height:44px"></div>
+      <div class="wa-skeleton-bubble sent" style="width:190px;height:38px;animation-delay:.15s"></div>
+      <div class="wa-skeleton-bubble received" style="width:270px;height:56px;animation-delay:.3s"></div>
+      <div class="wa-skeleton-bubble sent" style="width:210px;height:48px;animation-delay:.45s"></div>
+      <div class="wa-skeleton-bubble received" style="width:170px;height:36px;animation-delay:.6s"></div>
+    </div>
+  `;
+}
+
 // ─── Carregar mensagens ───────────────────────────────────────────────────────
 async function carregarMensagens(convId, silencioso = false) {
   _temMaisMensagensAntigas = true;
   _carregandoMaisMensagens = false;
   _mensagens = []; // limpa histórico anterior para não misturar conversas
+
+  // B31: Se não for silencioso, garante que o skeleton está ativo enquanto aguarda a API
+  if (!silencioso) {
+    renderSkeletonMensagens();
+  }
 
   const r = await Auth.api('GET', `/whatsapp/conversas/${convId}/mensagens?limit=50`);
   if (!r?.ok) {
@@ -1673,26 +1696,23 @@ async function salvarNovaConversa() {
     fecharModal();
     Toast.show('Conversa iniciada!', 'success');
 
-    // FIX: injeta a nova conversa no topo da lista ANTES de carregarConversas,
-    // evitando race condition onde a conversa ainda não aparece na resposta da API
+    // B31: Injeta imediatamente a nova conversa no topo da lista e abre sem travar a interface
     const novaConv = r.data?.dados;
+    const convId = novaConv?.id || r.data?.dados?.id;
+
     if (novaConv?.id) {
       _conversas = _conversas.filter(c => c.id !== novaConv.id);
       _conversas.unshift(novaConv);
+      renderListaConversas();
     }
 
-    await carregarConversas();
-
-    // Garante que a conversa existe na lista antes de abrir
-    const convId = novaConv?.id || r.data?.dados?.id;
+    // Abre a conversa imediatamente com feedback visual instantâneo
     if (convId) {
-      // Se após carregarConversas a conversa sumiu (latência), reinserimos
-      if (!_conversas.find(c => c.id === convId)) {
-        if (novaConv) _conversas.unshift(novaConv);
-        renderListaConversas();
-      }
-      await abrirConversa(convId);
+      abrirConversa(convId);
     }
+
+    // Sincroniza a lista completa em background sem bloquear o usuário
+    carregarConversas(true).catch(() => {});
   } else {
     alertEl.className = 'alert alert-error';
     alertEl.textContent = r?.data?.erro || 'Erro ao criar conversa.';

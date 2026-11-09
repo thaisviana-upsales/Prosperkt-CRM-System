@@ -876,6 +876,37 @@ body.sidebar-collapsed .main-content.wa-main {
 .wa-typing span:nth-child(3) { animation-delay: .4s; }
 @keyframes typBounce { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-6px)} }
 
+/* ── Skeleton Loading na área de mensagens (B31) ───────────────── */
+.wa-skeleton-wrap {
+  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  pointer-events: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+.wa-skeleton-bubble {
+  border-radius: 14px;
+  position: relative;
+  overflow: hidden;
+  animation: waSkeletonPulse 1.4s ease-in-out infinite;
+}
+.wa-skeleton-bubble.received {
+  align-self: flex-start;
+  background: rgba(255, 255, 255, 0.06);
+  border-bottom-left-radius: 3px;
+}
+.wa-skeleton-bubble.sent {
+  align-self: flex-end;
+  background: rgba(37, 211, 102, 0.12);
+  border-bottom-right-radius: 3px;
+}
+@keyframes waSkeletonPulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.995); }
+  50% { opacity: 0.8; transform: scale(1); }
+}
+
 /* ── Scrollbar global discreta ─────────────────────────────────── */
 ::-webkit-scrollbar { width: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }
