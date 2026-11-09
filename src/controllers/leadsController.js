@@ -467,31 +467,76 @@ function normalizeLead(l) {
 }
 
 // ── GET /api/leads ────────────────────────────────────────────────────────────
+// Helpers de período para filtros de data compatíveis com Dashboard (B32)
+function calcPeriodoLeads(dataTipo, dataPeriodo, dataInicio, dataFim) {
+  const agora = new Date();
+  const pad  = n => String(n).padStart(2,'0');
+  const iso  = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  if (!dataPeriodo) return null;
+  let ini, fim;
+  if (dataPeriodo === 'hoje') {
+    ini = fim = iso(agora);
+  } else if (dataPeriodo === 'ontem') {
+    const d = new Date(agora); d.setDate(d.getDate()-1);
+    ini = fim = iso(d);
+  } else if (dataPeriodo === '7d') {
+    const d = new Date(agora); d.setDate(d.getDate()-6);
+    ini = iso(d); fim = iso(agora);
+  } else if (dataPeriodo === 'essa_semana') {
+    const dow = agora.getDay();
+    const diffSeg = dow === 0 ? 6 : dow - 1;
+    const seg = new Date(agora); seg.setDate(seg.getDate() - diffSeg);
+    ini = iso(seg); fim = iso(agora);
+  } else if (dataPeriodo === '30d') {
+    const d = new Date(agora); d.setDate(d.getDate()-29);
+    ini = iso(d); fim = iso(agora);
+  } else if (dataPeriodo === 'mes_atual') {
+    ini = `${agora.getFullYear()}-${pad(agora.getMonth()+1)}-01`;
+    const lastDay = new Date(agora.getFullYear(), agora.getMonth()+1, 0);
+    fim = iso(lastDay);
+  } else if (dataPeriodo === 'mes_ant') {
+    const m = agora.getMonth();
+    const y = m === 0 ? agora.getFullYear()-1 : agora.getFullYear();
+    const mm = m === 0 ? 12 : m;
+    ini = `${y}-${pad(mm)}-01`;
+    const lastDay = new Date(y, mm, 0);
+    fim = iso(lastDay);
+  } else if (dataPeriodo === 'personalizado') {
+    ini = dataInicio || null;
+    fim = dataFim    || null;
+  }
+  return { ini, fim };
+}
+
+function campoDataLeads(dataTipo) {
+  if (dataTipo === 'fechamento' || dataTipo === 'ganho') return 'ganho_em';
+  if (dataTipo === 'perdido' || dataTipo === 'perda') return 'perdido_em';
+  return 'criado_em';
+}
+
 async function listar(req, res) {
   const { sb, isSupa, sqlite } = getProvider();
-  const { funil_id, etapa_id, responsavel_id, status, busca, excluir_carteira } = req.query;
-  const excluiCarteira = excluir_carteira === 'true' && !funil_id;
+  const { funil_id, etapa_id, responsavel_id, status, busca, excluir_carteira, data_tipo, data_periodo, data_inicio, data_fim } = req.query;
+  const isVendedor = (req.usuario?.role || '').toUpperCase() === 'VENDEDOR';
+  const ehTodosNovos = !funil_id || excluir_carteira === 'true';
 
   // Log de diagnóstico do filtro por vendedor
-  console.log('[FILTRO_VENDEDOR_BACKEND_RECEBIDO] leads.listar | responsavel_id:', responsavel_id || '(nao enviado)', '| role:', req.usuario?.role, '| funil_id:', funil_id || '(todos)');
+  console.log('[FILTRO_VENDEDOR_BACKEND_RECEBIDO] leads.listar | responsavel_id:', responsavel_id || '(nao enviado)', '| role:', req.usuario?.role, '| funil_id:', funil_id || '(todos-novos)');
 
   try {
     if (isSupa) {
-
-      // Resolve id da Carteira Recorrente e funis inativos se necessário
-      let carteiraFunilId = null;
-      let admFunilId      = null;
       let funisExcluirIds = [];
-      if (excluiCarteira) {
+      if (ehTodosNovos) {
+        // Alinha exatamente com a regra do Dashboard: exclui Carteira Recorrente, Adm de Vendas e funis inativos
         const [{ data: cr }, { data: adm }, { data: inativos }] = await Promise.all([
-          sb.from('funis').select('id').ilike('nome','%Carteira%').limit(3),
-          sb.from('funis').select('id').or('nome.ilike.%Adm%,nome.ilike.%Administra%').limit(3),
-          sb.from('funis').select('id').in('ativo', [0, false]),
+          sb.from('funis').select('id,nome').ilike('nome', '%Carteira%').limit(10),
+          sb.from('funis').select('id,nome').or('nome.ilike.%Adm%,nome.ilike.%Administra%').limit(10),
+          sb.from('funis').select('id,nome').in('ativo', [0, false]),
         ]);
-        carteiraFunilId = (cr || []).find(f => f)?.id || null;
-        admFunilId      = (adm || []).find(f => f)?.id || null;
-        const inatIds   = (inativos || []).map(f => f.id);
-        funisExcluirIds = [...new Set([carteiraFunilId, admFunilId, ...inatIds].filter(Boolean))];
+        const crIds = (cr || []).filter(f => /carteira/i.test(f.nome || '')).map(f => f.id);
+        const admIds = (adm || []).filter(f => /adm|administra/i.test(f.nome || '')).map(f => f.id);
+        const inatIds = (inativos || []).map(f => f.id);
+        funisExcluirIds = [...new Set([...crIds, ...admIds, ...inatIds].filter(Boolean))];
       }
 
       let q = sb.from('leads').select(`
@@ -501,42 +546,54 @@ async function listar(req, res) {
         funil:funis!funil_id(id,nome,cor)
       `);
 
-      if (etapa_id)       q = q.eq('etapa_id', etapa_id);
-      if (responsavel_id) q = q.eq('responsavel_id', responsavel_id);
+      if (etapa_id) q = q.eq('etapa_id', etapa_id);
+
+      // Vendedor sempre visualiza leads sob sua responsabilidade oficial
+      if (isVendedor) {
+        q = q.eq('responsavel_id', req.usuario.id);
+      } else if (responsavel_id) {
+        q = q.eq('responsavel_id', responsavel_id);
+      }
 
       // ── Filtro funil + busca ────────────────────────────────────────────────
-      // Quando há funil_id + busca: busca nos leads daquele funil (por funil_id direto
-      // OU por pipeline_id pertencente ao funil — para leads com funil_id null mas
-      // que estão no pipeline correto)
       if (funil_id && busca) {
-        // Busca os pipeline_ids do funil para cobrir leads com funil_id = null
         const { data: pipes } = await sb.from('pipelines').select('id').eq('funil_id', funil_id);
         const pipeIds = (pipes || []).map(p => p.id);
-
         const buscaFilter = `nome.ilike.%${busca}%,email.ilike.%${busca}%,telefone.ilike.%${busca}%,empresa.ilike.%${busca}%`;
-
         if (pipeIds.length) {
-          // Lead pertence ao funil se: funil_id = X OU pipeline_id in (pipes do funil)
-          // E (nome LIKE % OR email LIKE % OR ...)
-          // PostgREST: and(or(funil_id.eq.X,pipeline_id.in.(ids)),or(busca...))
           const funilFilter = `funil_id.eq.${funil_id},pipeline_id.in.(${pipeIds.join(',')})`;
           q = q.or(`and(or(${funilFilter}),or(${buscaFilter}))`);
         } else {
-          // Sem pipelines: filtra só por funil_id + busca
           q = q.eq('funil_id', funil_id).or(buscaFilter);
         }
-        console.log('[LEADS_BUSCA_FUNIL] funil_id:', funil_id, '| pipes:', pipeIds.length, '| busca:', busca);
       } else if (funil_id) {
         q = q.eq('funil_id', funil_id);
       } else if (busca) {
         q = q.or(`nome.ilike.%${busca}%,email.ilike.%${busca}%,telefone.ilike.%${busca}%,empresa.ilike.%${busca}%`);
       }
 
-      // Exclui funis operacionais (Carteira + Adm + inativos) em "Todos - Novos"
-      if (funisExcluirIds.length) q = q.not('funil_id', 'in', `(${funisExcluirIds.join(',')})`);
+      // Em modo Todos - Novos: exclui funis operacionais mas PRESERVA leads com funil_id null (B32)
+      if (ehTodosNovos) {
+        if (funisExcluirIds.length) {
+          q = q.or(`funil_id.is.null,funil_id.not.in.(${funisExcluirIds.join(',')})`);
+        }
+        // Exclui clones de Carteira Recorrente (igual ao Dashboard)
+        q = q.is('tipo_clone', null);
+      }
 
-      if (status)         q = q.eq('status', toSupaStatus(status));
-      if (req.usuario.role === 'VENDEDOR') q = q.eq('responsavel_id', req.usuario.id);
+      // Filtro de data opcional (mesma lógica e timezone UTC-3 do Dashboard)
+      const periodo = calcPeriodoLeads(data_tipo, data_periodo, data_inicio, data_fim);
+      if (periodo?.ini || periodo?.fim) {
+        const campo = campoDataLeads(data_tipo);
+        const ini = periodo.ini ? periodo.ini + 'T00:00:00-03:00' : null;
+        const fim = periodo.fim ? periodo.fim + 'T23:59:59.999-03:00' : null;
+        if (ini) q = q.gte(campo, ini);
+        if (fim) q = q.lte(campo, fim);
+        if (data_tipo === 'perdido') q = q.not('perdido_em', 'is', null);
+        if (data_tipo === 'fechamento' || data_tipo === 'ganho') q = q.not('ganho_em', 'is', null);
+      }
+
+      if (status) q = q.eq('status', toSupaStatus(status));
       q = q.is('deleted_at', null);
       q = q.order('criado_em', { ascending: false });
 
@@ -555,15 +612,12 @@ async function listar(req, res) {
     }
 
     // SQLite
-    // Resolve Carteira Recorrente e funis inativos para exclusão
-    let carteiraFunilIdSql = null;
-    let funisInativosSql = [];
-    if (excluiCarteira) {
-      const cr = sqlite.prepare(`SELECT id FROM funis WHERE nome LIKE '%Carteira Recorrente%' LIMIT 1`).get();
-      carteiraFunilIdSql = cr?.id || null;
-      // Funis inativos (ex: Tráfego Pago)
+    let funisExcluirSql = [];
+    if (ehTodosNovos) {
+      const cr = sqlite.prepare(`SELECT id FROM funis WHERE nome LIKE '%Carteira%'`).all();
+      const adm = sqlite.prepare(`SELECT id FROM funis WHERE nome LIKE '%Adm%' OR nome LIKE '%Administra%'`).all();
       const inat = sqlite.prepare(`SELECT id FROM funis WHERE ativo=0`).all();
-      funisInativosSql = inat.map(f => f.id).filter(id => id !== carteiraFunilIdSql);
+      funisExcluirSql = [...new Set([...cr.map(f=>f.id), ...adm.map(f=>f.id), ...inat.map(f=>f.id)])];
     }
 
     let sql = `SELECT l.*, u.nome as responsavel_nome, e.nome as etapa_nome, e.cor as etapa_cor,
@@ -575,20 +629,32 @@ async function listar(req, res) {
       LEFT JOIN funis f ON p.funil_id=f.id
       WHERE 1=1`;
     const params = [];
-    if (funil_id)          { sql += ' AND p.funil_id=?';                                     params.push(funil_id); }
-    if (carteiraFunilIdSql){ sql += ' AND (p.funil_id IS NULL OR p.funil_id<>?)';            params.push(carteiraFunilIdSql); }
-    // Exclui funis inativos (Tráfego Pago etc.) em "Todos - Novos"
-    if (funisInativosSql.length) {
-      const ph = funisInativosSql.map(()=>'?').join(',');
-      sql += ` AND (p.funil_id IS NULL OR p.funil_id NOT IN (${ph}))`;
-      params.push(...funisInativosSql);
+    if (funil_id) {
+      sql += ' AND (l.funil_id=? OR p.funil_id=?)';
+      params.push(funil_id, funil_id);
+    } else if (funisExcluirSql.length) {
+      const ph = funisExcluirSql.map(()=>'?').join(',');
+      sql += ` AND (l.funil_id IS NULL OR l.funil_id NOT IN (${ph}))`;
+      params.push(...funisExcluirSql);
     }
-    if (etapa_id)          { sql += ' AND l.etapa_id=?';                                     params.push(etapa_id); }
-    if (status)            { sql += ' AND l.status=?';                                       params.push(status); }
-    if (responsavel_id)    { sql += ' AND l.responsavel_id=?';                               params.push(responsavel_id); }
-    if (req.usuario.role === 'VENDEDOR') { sql += ' AND l.responsavel_id=?';                 params.push(req.usuario.id); }
-    if (busca) { sql += ' AND (l.nome LIKE ? OR l.email LIKE ? OR l.telefone LIKE ? OR l.empresa LIKE ?)'; const q=`%${busca}%`; params.push(q,q,q,q); }
-    sql += ' ORDER BY l.criado_em DESC';
+    if (ehTodosNovos) {
+      sql += ' AND l.tipo_clone IS NULL';
+    }
+    if (etapa_id) { sql += ' AND l.etapa_id=?'; params.push(etapa_id); }
+    if (status)   { sql += ' AND l.status=?';   params.push(status); }
+    if (isVendedor) {
+      sql += ' AND l.responsavel_id=?';
+      params.push(req.usuario.id);
+    } else if (responsavel_id) {
+      sql += ' AND l.responsavel_id=?';
+      params.push(responsavel_id);
+    }
+    if (busca) {
+      sql += ' AND (l.nome LIKE ? OR l.email LIKE ? OR l.telefone LIKE ? OR l.empresa LIKE ?)';
+      const q = `%${busca}%`;
+      params.push(q, q, q, q);
+    }
+    sql += ' AND l.deleted_at IS NULL ORDER BY l.criado_em DESC';
     const leads = sqlite.prepare(sql).all(...params);
     return res.json({ sucesso:true, dados:leads, total:leads.length });
   } catch(e) {

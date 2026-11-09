@@ -418,26 +418,34 @@ async function aplicarFiltros() {
     // ── Normalização de nomes: etapas que NÃO devem aparecer no modo Todos ──
     // Segunda camada de defesa (primeira é o backend). Evita duplicidade visual.
     const NOMES_INVALIDOS_TODOS = new Set([
-      'Tratativa em andamento',
-      'Tratativa em Andamento',
-      'TRATATIVA EM ANDAMENTO',
-      'Tratativa andamento',
-      'Tratativa',
-      'Contato em Tratativa',
-      'BASE-Antiga', // etapa exclusiva da Carteira Recorrente — não deve aparecer no Todos
+      'tratativa em andamento',
+      'tratativa andamento',
+      'tratativa',
+      'contato em tratativa',
+      'base-antiga', // etapa exclusiva da Carteira Recorrente — não deve aparecer no Todos
     ]);
+
+    const normalizarEtapa = str => (str || '').trim().toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
     const seen = new Set();
     const etapasDedup = [];
     for (const e of todasEtapas.sort((a, b) => a.ordem - b.ordem)) {
       if (isCarteiraRecorrente(e.funil_nome || '')) continue;
-      if (NOMES_INVALIDOS_TODOS.has(e.nome)) {
+      const chaveNorm = normalizarEtapa(e.nome);
+      if (NOMES_INVALIDOS_TODOS.has(chaveNorm) || NOMES_INVALIDOS_TODOS.has((e.nome || '').trim().toLowerCase())) {
         console.log('[PIPELINE_TODOS_FILTRO] etapa removida do modo Todos:', e.nome, '| funil:', e.funil_nome);
         continue;
       }
+      if (!_nomeParaIds[chaveNorm]) _nomeParaIds[chaveNorm] = [];
+      _nomeParaIds[chaveNorm].push(e.id);
       if (!_nomeParaIds[e.nome]) _nomeParaIds[e.nome] = [];
       _nomeParaIds[e.nome].push(e.id);
-      if (!seen.has(e.nome)) { seen.add(e.nome); etapasDedup.push(e); }
+
+      if (!seen.has(chaveNorm)) {
+        seen.add(chaveNorm);
+        etapasDedup.push(e);
+      }
     }
     _etapas = etapasDedup;
     _leads  = rLeads?.data?.dados || [];
@@ -519,22 +527,18 @@ function renderKanban() {
   const leadsAlocados = new Set();
 
   _etapas.forEach(etapa => {
-    // Em modo "Todos": agrupa leads de TODAS as etapas com o mesmo nome
+    // Em modo "Todos": agrupa leads de TODAS as etapas com o mesmo nome / chave normalizada (B32)
     let leads;
-    if (modoTodos && _nomeParaIds[etapa.nome]?.length > 1) {
-      leads = _leads.filter(l => _nomeParaIds[etapa.nome].includes(l.etapa_id));
+    if (modoTodos) {
+      const chaveNorm = (etapa.nome || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const idsCompativeis = new Set([
+        ...(_nomeParaIds[chaveNorm] || []),
+        ...(_nomeParaIds[etapa.nome] || []),
+        etapa.id
+      ]);
+      leads = _leads.filter(l => idsCompativeis.has(l.etapa_id));
     } else {
       leads = _leads.filter(l => l.etapa_id === etapa.id);
-    }
-
-    // ── Visibilidade SDR: VENDEDOR não vê leads ainda sob responsabilidade SDR ──
-    // Identifica se o responsável do lead é SDR usando lista de SDRs (se disponível)
-    // Heurística: se o responsável não está em _usuarios (que só tem VENDEDOR e SUPER_ADMIN),
-    // e o usuário atual é VENDEDOR, o lead está na fila SDR e deve ser ocultado
-    if (_usuario?.role === 'VENDEDOR') {
-      const vendedorIds = new Set((_usuarios || []).map(u => u.id));
-      vendedorIds.add(_usuario.id); // inclui a si mesmo
-      leads = leads.filter(l => !l.responsavel_id || vendedorIds.has(l.responsavel_id));
     }
 
     // Marca todos os leads desta coluna como alocados
@@ -588,16 +592,11 @@ function renderKanban() {
     });
   });
 
-  // ── Leads órfãos: etapa_id null/inválida ou não mapeada nas colunas padrão (B16) ──
-  // Garante que NENHUM lead em aberto se perca, inclusive em "Todos - Novos"
-  let leadsOrfaos = _leads.filter(l => !leadsAlocados.has(l.id));
-  if (_usuario?.role === 'VENDEDOR') {
-    const vendedorIds = new Set((_usuarios || []).map(u => u.id));
-    vendedorIds.add(_usuario.id);
-    leadsOrfaos = leadsOrfaos.filter(l => !l.responsavel_id || vendedorIds.has(l.responsavel_id));
-  }
+  // ── Leads em etapas não mapeadas nas colunas dedup ou sem etapa (B16/B32) ──
+  // Garante que NENHUM lead do vendedor logado fique oculto no Kanban
+  const leadsOrfaos = _leads.filter(l => !leadsAlocados.has(l.id));
   if (leadsOrfaos.length > 0) {
-    console.warn('[KANBAN_ORFAOS] leads sem etapa reconhecida nas colunas:', leadsOrfaos.length,
+    console.log('[KANBAN_OUTRAS_ETAPAS] leads em outras etapas ou sem etapa:', leadsOrfaos.length,
       '| ids:', leadsOrfaos.map(l => l.id).join(','));
     const primeiraEtapa = _etapas[0];
     const colOrfaos = document.createElement('div');
@@ -605,15 +604,14 @@ function renderKanban() {
     colOrfaos.innerHTML = `
       <div class="col-header">
         <div class="col-dot" style="background:var(--text-muted)"></div>
-        <span class="col-title" style="color:var(--text-muted)">Sem etapa / Outras</span>
+        <span class="col-title" style="color:var(--text-muted)">Outras Etapas / Sem etapa</span>
         <span class="col-count">${leadsOrfaos.length}</span>
       </div>
       <div class="col-body" data-etapa="${primeiraEtapa?.id || ''}">
         ${leadsOrfaos.map(l => renderCard(l, modoTodos)).join('')}
       </div>`;
-    wrap.insertBefore(colOrfaos, wrap.firstChild); // coloca no início do kanban
+    wrap.appendChild(colOrfaos); // adiciona no kanban
     colOrfaos.querySelectorAll('.lead-card').forEach(card => {
-      // Leads órfãos também precisam do handler WA
       const btnWaOrfao = card.querySelector('.btn-wa-nav');
       if (btnWaOrfao) {
         btnWaOrfao.addEventListener('click', (ev) => {
@@ -622,11 +620,19 @@ function renderKanban() {
           const leadId = btnWaOrfao.dataset.waLeadId;
           const tel    = btnWaOrfao.dataset.waTel;
           const nome   = btnWaOrfao.dataset.waNome || '';
-          if (!tel) { alert('Este lead não possui telefone WhatsApp válido.'); return; }
-          window.location.href = `/whatsapp.html?lead_id=${encodeURIComponent(leadId)}&phone=${encodeURIComponent(tel)}&nome=${encodeURIComponent(nome)}`;
+          const urlDestino = `/whatsapp.html?lead_id=${encodeURIComponent(leadId)}&phone=${encodeURIComponent(tel)}&nome=${encodeURIComponent(nome)}`;
+          console.log('ABRIR_WHATSAPP_DO_LEAD:', { leadId, telefoneNormalizado: tel, urlDestino });
+          window.location.href = urlDestino;
         });
       }
       card.addEventListener('click', () => abrirLead(card.dataset.id));
+      card.addEventListener('dragstart', ev => {
+        _dragLeadId = card.dataset.id;
+        _dragEtapaOrigem = card.dataset.etapaId || (primeiraEtapa?.id || '');
+        card.classList.add('dragging');
+        ev.dataTransfer.effectAllowed = 'move';
+      });
+      card.addEventListener('dragend', () => card.classList.remove('dragging'));
     });
   }
 }
