@@ -23,7 +23,7 @@
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
   <div>
     <h1 class="page-title" style="font-size:1.15rem;margin-bottom:1px" id="page-title">Pipeline</h1>
-    <p class="page-subtitle" style="font-size:.68rem;margin:0" id="page-sub">Selecione um funil para visualizar</p>
+    <p class="page-subtitle" style="font-size:.68rem;margin:0" id="page-sub">Carregando funis e etapas...</p>
   </div>
   <button class="btn btn-primary" id="btn-novo-lead" style="font-size:.78rem;padding:7px 14px">
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -34,7 +34,7 @@
 <div class="filter-bar">
   <div class="filter-group">
     <span class="filter-label">Funil</span>
-    <select id="sel-funil" class="filter-select"><option value="">Todos</option></select>
+    <select id="sel-funil" class="filter-select"><option value="" disabled selected>Carregando funis...</option></select>
   </div>
   <div class="filter-group">
     <span class="filter-label">Vendedor</span>
@@ -75,7 +75,30 @@
   <button class="btn-clear-filters" id="btn-clear">Limpar filtros</button>
 </div>
 
-<div class="kanban-wrap" id="kanban"></div>
+<div class="kanban-wrap" id="kanban">
+  <div class="kanban-skeleton-wrap">
+    <div class="kanban-col-skeleton">
+      <div class="skel-header"><div class="skel-dot"></div><div class="skel-title skel-shimmer" style="width:110px"></div><div class="skel-badge skel-shimmer"></div></div>
+      <div class="skel-card skel-shimmer"></div><div class="skel-card skel-shimmer"></div><div class="skel-card skel-shimmer"></div>
+    </div>
+    <div class="kanban-col-skeleton">
+      <div class="skel-header"><div class="skel-dot"></div><div class="skel-title skel-shimmer" style="width:130px"></div><div class="skel-badge skel-shimmer"></div></div>
+      <div class="skel-card skel-shimmer"></div><div class="skel-card skel-shimmer"></div>
+    </div>
+    <div class="kanban-col-skeleton">
+      <div class="skel-header"><div class="skel-dot"></div><div class="skel-title skel-shimmer" style="width:125px"></div><div class="skel-badge skel-shimmer"></div></div>
+      <div class="skel-card skel-shimmer"></div><div class="skel-card skel-shimmer"></div><div class="skel-card skel-shimmer"></div>
+    </div>
+    <div class="kanban-col-skeleton">
+      <div class="skel-header"><div class="skel-dot"></div><div class="skel-title skel-shimmer" style="width:115px"></div><div class="skel-badge skel-shimmer"></div></div>
+      <div class="skel-card skel-shimmer"></div><div class="skel-card skel-shimmer"></div>
+    </div>
+    <div class="kanban-col-skeleton">
+      <div class="skel-header"><div class="skel-dot"></div><div class="skel-title skel-shimmer" style="width:95px"></div><div class="skel-badge skel-shimmer"></div></div>
+      <div class="skel-card skel-shimmer"></div>
+    </div>
+  </div>
+</div>
 </main>
 </div>
 

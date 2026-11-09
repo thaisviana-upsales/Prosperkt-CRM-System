@@ -844,3 +844,65 @@
     padding: 14px 14px;
   }
 }
+
+/* ── Skeleton Loading do Kanban (B33) ─────────────────────────── */
+.kanban-skeleton-wrap {
+  display: flex;
+  gap: 10px;
+  overflow-x: hidden;
+  width: 100%;
+  pointer-events: none;
+}
+.kanban-col-skeleton {
+  flex: 0 0 222px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  gap: 9px;
+  min-height: 420px;
+}
+.kanban-col-skeleton .skel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.kanban-col-skeleton .skel-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+}
+.kanban-col-skeleton .skel-title {
+  height: 12px;
+  border-radius: 4px;
+  flex: 1;
+}
+.kanban-col-skeleton .skel-badge {
+  width: 22px;
+  height: 14px;
+  border-radius: 10px;
+}
+.kanban-col-skeleton .skel-card {
+  height: 84px;
+  border-radius: 9px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+}
+.skel-shimmer {
+  background: linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.03) 75%);
+  background-size: 200% 100%;
+  animation: skelShimmerPipeline 1.4s infinite ease-in-out;
+  border-radius: 5px;
+}
+@keyframes skelShimmerPipeline {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}

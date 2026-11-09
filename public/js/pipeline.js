@@ -5,6 +5,7 @@
  */
 
 let _funis=[], _etapas=[], _leads=[], _usuarios=[], _usuario=null;
+let _loadingFunis = true; // B33: Estado de carregamento dos funis
 let _funilAtivo=null, _pipelineAtivo=null;
 let _dragLeadId=null, _dragEtapaOrigem=null;
 let _motivosPerda=[], _produtos=[];
@@ -22,6 +23,36 @@ let _leadEmEdicao = null;
 let _leadProdutos = []; // itens persistidos no banco (com id)
 let _leadProdutosNovas = []; // linhas ainda não salvas no banco
 let _leadIdAberto = null; // id do lead cujo modal está aberto
+
+// ── Skeleton do Kanban (B33) ─────────────────────────────────────────────────
+function renderSkeletonKanban() {
+  const wrap = document.getElementById('kanban');
+  if (!wrap) return;
+  wrap.innerHTML = `
+    <div class="kanban-skeleton-wrap">
+      <div class="kanban-col-skeleton">
+        <div class="skel-header"><div class="skel-dot"></div><div class="skel-title skel-shimmer" style="width:110px"></div><div class="skel-badge skel-shimmer"></div></div>
+        <div class="skel-card skel-shimmer"></div><div class="skel-card skel-shimmer"></div><div class="skel-card skel-shimmer"></div>
+      </div>
+      <div class="kanban-col-skeleton">
+        <div class="skel-header"><div class="skel-dot"></div><div class="skel-title skel-shimmer" style="width:130px"></div><div class="skel-badge skel-shimmer"></div></div>
+        <div class="skel-card skel-shimmer"></div><div class="skel-card skel-shimmer"></div>
+      </div>
+      <div class="kanban-col-skeleton">
+        <div class="skel-header"><div class="skel-dot"></div><div class="skel-title skel-shimmer" style="width:125px"></div><div class="skel-badge skel-shimmer"></div></div>
+        <div class="skel-card skel-shimmer"></div><div class="skel-card skel-shimmer"></div><div class="skel-card skel-shimmer"></div>
+      </div>
+      <div class="kanban-col-skeleton">
+        <div class="skel-header"><div class="skel-dot"></div><div class="skel-title skel-shimmer" style="width:115px"></div><div class="skel-badge skel-shimmer"></div></div>
+        <div class="skel-card skel-shimmer"></div><div class="skel-card skel-shimmer"></div>
+      </div>
+      <div class="kanban-col-skeleton">
+        <div class="skel-header"><div class="skel-dot"></div><div class="skel-title skel-shimmer" style="width:95px"></div><div class="skel-badge skel-shimmer"></div></div>
+        <div class="skel-card skel-shimmer"></div>
+      </div>
+    </div>
+  `;
+}
 
 // ── Indicador de carregamento discreto ───────────────────────────────────────
 // Não trava a tela; apenas mostra feedback visual enquanto fetches estão em curso
@@ -81,17 +112,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ── Init ──────────────────────────────────────────────────────
 async function init() {
+  // B33: Feedback visual instantâneo com skeleton (0ms)
+  renderSkeletonKanban();
+
   _usuario = await Sidebar.init('pipeline');
   if (!_usuario) return;
+
   await Promise.all([carregarFunis(), carregarUsuarios(), carregarMotivos(), carregarProdutos()]);
 
   const params = new URLSearchParams(location.search);
   const paramFunil = params.get('funil_id');
-  if (paramFunil && _funis.find(f=>f.id===paramFunil)) _filtros.funil = paramFunil;
+  if (paramFunil && _funis.find(f => f.id === paramFunil)) {
+    _filtros.funil = paramFunil;
+  } else {
+    _filtros.funil = ''; // B33: Seleciona automaticamente "Todos - Novos"
+  }
 
   popularSelFunil();
   popularSelResp();
-  document.getElementById('sel-funil').value = _filtros.funil;
+
   await aplicarFiltros();
   bindEvents();
 
@@ -137,8 +176,28 @@ async function _verificarAlertasPipeline() {
 }
 
 async function carregarFunis() {
-  const r = await Auth.api('GET','/funis?somente_ativos=true');
-  _funis = r?.data?.dados || [];
+  _loadingFunis = true;
+  let funis = null;
+  try {
+    const cached = sessionStorage.getItem('pkt_cache_funis_ativos');
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Date.now() - parsed.ts < 5 * 60 * 1000 && Array.isArray(parsed.dados) && parsed.dados.length > 0) {
+        funis = parsed.dados;
+      }
+    }
+  } catch {}
+
+  if (!funis) {
+    const r = await Auth.api('GET','/funis?somente_ativos=true');
+    funis = r?.data?.dados || [];
+    try {
+      sessionStorage.setItem('pkt_cache_funis_ativos', JSON.stringify({ ts: Date.now(), dados: funis }));
+    } catch {}
+  }
+
+  _funis = funis || [];
+  _loadingFunis = false;
 }
 
 async function carregarUsuarios() {
@@ -350,6 +409,11 @@ function isCarteiraRecorrente(nome) {
 
 function popularSelFunil() {
   const sel = document.getElementById('sel-funil');
+  if (!sel) return;
+  if (_loadingFunis) {
+    sel.innerHTML = '<option value="" disabled selected>Carregando funis...</option>';
+    return;
+  }
   const funisNovos    = _funis.filter(f => !isCarteiraRecorrente(f.nome));
   const funisCarteira = _funis.filter(f =>  isCarteiraRecorrente(f.nome));
   sel.innerHTML =
@@ -357,7 +421,7 @@ function popularSelFunil() {
     funisNovos.map(f=>`<option value="${f.id}">${f.nome}</option>`).join('') +
     (funisCarteira.length ? '<option disabled>──────────────</option>' : '') +
     funisCarteira.map(f=>`<option value="${f.id}">${f.nome}</option>`).join('');
-  sel.value = _filtros.funil;
+  sel.value = _filtros.funil || '';
 }
 
 function popularSelResp() {
@@ -374,6 +438,11 @@ function popularSelResp() {
 
 // ── Filtros ───────────────────────────────────────────────────
 async function aplicarFiltros() {
+  if (_loadingFunis) {
+    renderSkeletonKanban();
+    return;
+  }
+
   const funilId = _filtros.funil;
   _nomeParaIds = {};
   const t0 = performance.now();
@@ -514,10 +583,24 @@ function formatarNomeEtapa(nomeEtapa) {
 
 function renderKanban() {
   const wrap = document.getElementById('kanban');
+  if (!wrap) return;
+
+  // B33: Enquanto carrega os funis/colunas, mantém skeleton em vez de tela vazia
+  if (_loadingFunis) {
+    renderSkeletonKanban();
+    return;
+  }
+
   wrap.innerHTML = '';
 
+  // B33: Evitar render de colunas sem funis
+  if (!_funis.length) {
+    wrap.innerHTML = '<div style="color:var(--text-muted);padding:48px;text-align:center">Nenhum funil ativo encontrado.</div>';
+    return;
+  }
+
   if (!_etapas.length) {
-    wrap.innerHTML = '<div style="color:var(--text-muted);padding:48px;text-align:center">Nenhuma etapa encontrada. Verifique se os funis possuém pipelines e etapas configuradas.</div>';
+    wrap.innerHTML = '<div style="color:var(--text-muted);padding:48px;text-align:center">Nenhuma etapa encontrada. Verifique se os funis possuem pipelines e etapas configuradas.</div>';
     return;
   }
 
