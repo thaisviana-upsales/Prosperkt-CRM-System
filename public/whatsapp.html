@@ -194,7 +194,10 @@
           <div class="wa-info-value" id="info-empresa">—</div>
         </div>
         <div class="wa-info-section">
-          <div class="wa-info-label">Vendedor responsável</div>
+          <div class="wa-info-label" style="display:flex;justify-content:space-between;align-items:center">
+            <span>Vendedor responsável</span>
+            <button class="btn btn-sm btn-outline" id="btn-transferir-conversa" style="display:none;padding:2px 8px;font-size:.72rem" title="Transferir conversa para outro vendedor">Transferir</button>
+          </div>
           <div class="wa-info-value" id="info-vendedor">—</div>
         </div>
         <div class="wa-info-section">
@@ -245,6 +248,35 @@
     <div style="display:flex;gap:10px;margin-top:20px;justify-content:flex-end">
       <button class="btn btn-secondary" id="modal-cancelar">Cancelar</button>
       <button class="btn btn-primary" id="modal-salvar">Abrir Conversa</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Transferir Conversa (B36) -->
+<div class="modal-ov" id="modal-transferir-ov">
+  <div class="modal-box" style="max-width:380px;width:92%">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h3 style="font-size:1rem;font-weight:800">Transferir Conversa</h3>
+      <button class="wa-icon-btn" id="modal-transferir-close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="modal-transferir-alert" class="alert" style="display:none;margin-bottom:12px"></div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="input-group">
+        <label class="input-label">Novo vendedor responsável *</label>
+        <select id="tc-vendedor" class="input">
+          <option value="">Selecione um vendedor...</option>
+        </select>
+      </div>
+      <div class="input-group">
+        <label class="input-label">Motivo (opcional)</label>
+        <input id="tc-motivo" class="input" placeholder="Ex: Redistribuição de carteira">
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px;justify-content:flex-end">
+      <button class="btn btn-secondary btn-sm" id="btn-cancelar-transferir">Cancelar</button>
+      <button class="btn btn-primary btn-sm" id="btn-confirmar-transferir">Confirmar Transferência</button>
     </div>
   </div>
 </div>

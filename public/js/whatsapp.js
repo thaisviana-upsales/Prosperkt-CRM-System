@@ -538,6 +538,14 @@ async function abrirConversa(id) {
   document.getElementById('info-empresa').textContent = _convAtiva.lead_empresa || '—';
   document.getElementById('info-vendedor').textContent = _convAtiva.vendedor_nome || '—';
 
+  // B36: Se usuário for SUPER_ADMIN ou GESTOR, exibe botão de transferir conversa
+  const btnTransf = document.getElementById('btn-transferir-conversa');
+  if (btnTransf) {
+    const u = Auth.getUsuario?.();
+    const podeTransferir = u?.role === 'SUPER_ADMIN' || u?.role === 'GESTOR';
+    btnTransf.style.display = podeTransferir ? '' : 'none';
+  }
+
   if (_convAtiva.lead_id) {
     const linkWrap = document.getElementById('info-lead-link-wrap');
     linkWrap.style.display = '';
@@ -1714,9 +1722,135 @@ async function salvarNovaConversa() {
     // Sincroniza a lista completa em background sem bloquear o usuário
     carregarConversas(true).catch(() => {});
   } else {
-    alertEl.className = 'alert alert-error';
+    alertEl.className = r?.data?.bloqueado_outro_responsavel ? 'alert alert-warning' : 'alert alert-error';
     alertEl.textContent = r?.data?.erro || 'Erro ao criar conversa.';
     alertEl.style.display = '';
+  }
+}
+
+// ─── Transferir conversa (B36) ────────────────────────────────────────────────
+let _vendedoresTransfer = [];
+
+async function carregarVendedoresTransfer() {
+  if (_vendedoresTransfer.length > 0) return _vendedoresTransfer;
+  try {
+    const r = await Auth.api('GET', '/usuarios/responsaveis');
+    let lista = r?.ok ? (r.data?.dados || r.data || []) : [];
+    if (!Array.isArray(lista) || lista.length === 0) {
+      const r2 = await Auth.api('GET', '/usuarios');
+      lista = r2?.ok ? (r2.data?.dados || r2.data || []) : [];
+    }
+    _vendedoresTransfer = (Array.isArray(lista) ? lista : []).filter(u => u.ativo !== false && u.ativo !== 0);
+  } catch (e) {
+    console.warn('[WA] carregarVendedoresTransfer erro:', e.message);
+  }
+  return _vendedoresTransfer;
+}
+
+async function abrirModalTransferirConversa() {
+  if (!_convAtiva) return;
+  const modal = document.getElementById('modal-transferir-ov');
+  const alertEl = document.getElementById('modal-transferir-alert');
+  const selectVend = document.getElementById('tc-vendedor');
+  const motivoInput = document.getElementById('tc-motivo');
+
+  if (!modal) return;
+  if (alertEl) alertEl.style.display = 'none';
+  if (motivoInput) motivoInput.value = '';
+
+  const vendedores = await carregarVendedoresTransfer();
+  if (selectVend) {
+    selectVend.innerHTML = '<option value="">Selecione um vendedor...</option>';
+    vendedores.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v.id;
+      opt.textContent = `${v.nome} (${v.role || 'VENDEDOR'})`;
+      if (v.id === _convAtiva.vendedor_id) {
+        opt.textContent += ' — (Atual)';
+        opt.disabled = true;
+      }
+      selectVend.appendChild(opt);
+    });
+  }
+
+  modal.classList.add('open');
+}
+
+function fecharModalTransferir() {
+  const modal = document.getElementById('modal-transferir-ov');
+  if (modal) modal.classList.remove('open');
+}
+
+async function confirmarTransferirConversa() {
+  if (!_convAtiva) return;
+  const selectVend = document.getElementById('tc-vendedor');
+  const motivoInput = document.getElementById('tc-motivo');
+  const alertEl = document.getElementById('modal-transferir-alert');
+  const btnConf = document.getElementById('btn-confirmar-transferir');
+
+  const novoVendedorId = selectVend ? selectVend.value : null;
+  const motivo = motivoInput?.value?.trim() || null;
+
+  if (!novoVendedorId) {
+    if (alertEl) {
+      alertEl.className = 'alert alert-error';
+      alertEl.textContent = 'Selecione o novo vendedor responsável.';
+      alertEl.style.display = '';
+    }
+    return;
+  }
+
+  const optSelected = selectVend?.options[selectVend.selectedIndex];
+  const nomeVend = optSelected ? optSelected.textContent.split(' (')[0] : 'novo vendedor';
+
+  if (!confirm(`Deseja realmente transferir esta conversa para ${nomeVend}?`)) {
+    return;
+  }
+
+  if (btnConf) {
+    btnConf.disabled = true;
+    btnConf.textContent = 'Transferindo...';
+  }
+
+  try {
+    const r = await Auth.api('PATCH', `/whatsapp/conversas/${_convAtiva.id}/transferir`, {
+      novo_vendedor_id: novoVendedorId,
+      motivo
+    });
+
+    if (r?.ok) {
+      fecharModalTransferir();
+      Toast.show(`Conversa transferida para ${nomeVend}!`, 'success');
+
+      _convAtiva.vendedor_id = novoVendedorId;
+      _convAtiva.vendedor_nome = nomeVend;
+      const infoVend = document.getElementById('info-vendedor');
+      if (infoVend) infoVend.textContent = nomeVend;
+
+      const convInList = _conversas.find(c => c.id === _convAtiva.id);
+      if (convInList) {
+        convInList.vendedor_id = novoVendedorId;
+        convInList.vendedor_nome = nomeVend;
+        renderListaConversas();
+      }
+    } else {
+      if (alertEl) {
+        alertEl.className = 'alert alert-error';
+        alertEl.textContent = r?.data?.erro || 'Erro ao transferir conversa.';
+        alertEl.style.display = '';
+      }
+    }
+  } catch (e) {
+    if (alertEl) {
+      alertEl.className = 'alert alert-error';
+      alertEl.textContent = 'Erro ao transferir conversa: ' + e.message;
+      alertEl.style.display = '';
+    }
+  } finally {
+    if (btnConf) {
+      btnConf.disabled = false;
+      btnConf.textContent = 'Confirmar Transferência';
+    }
   }
 }
 
@@ -1902,12 +2036,26 @@ function bindEvents() {
     });
   }
 
-  // Modal
+  // Modal Nova Conversa
   document.getElementById('modal-close').addEventListener('click', fecharModal);
   document.getElementById('modal-cancelar').addEventListener('click', fecharModal);
   document.getElementById('modal-salvar').addEventListener('click', salvarNovaConversa);
   document.getElementById('modal-ov').addEventListener('click', e => {
     if (e.target === document.getElementById('modal-ov')) fecharModal();
+  });
+
+  // Modal Transferir Conversa (B36)
+  const btnTransf = document.getElementById('btn-transferir-conversa');
+  if (btnTransf) btnTransf.addEventListener('click', abrirModalTransferirConversa);
+  const btnTransfClose = document.getElementById('modal-transferir-close');
+  if (btnTransfClose) btnTransfClose.addEventListener('click', fecharModalTransferir);
+  const btnTransfCancel = document.getElementById('btn-cancelar-transferir');
+  if (btnTransfCancel) btnTransfCancel.addEventListener('click', fecharModalTransferir);
+  const btnTransfConfirm = document.getElementById('btn-confirmar-transferir');
+  if (btnTransfConfirm) btnTransfConfirm.addEventListener('click', confirmarTransferirConversa);
+  const modalTransfOv = document.getElementById('modal-transferir-ov');
+  if (modalTransfOv) modalTransfOv.addEventListener('click', e => {
+    if (e.target === modalTransfOv) fecharModalTransferir();
   });
 
   // Input mensagem

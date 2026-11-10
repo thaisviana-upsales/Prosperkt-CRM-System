@@ -314,6 +314,7 @@ router.get   ('/whatsapp/conversas/:id',          autenticar, whatsappCtrl.busca
 router.get   ('/whatsapp/conversas/:id/mensagens',autenticar, whatsappCtrl.listarMensagens);
 router.post  ('/whatsapp/conversas/:id/mensagens',autenticar, whatsappCtrl.enviarMensagem);
 router.patch ('/whatsapp/conversas/:id/status',   autenticar, whatsappCtrl.atualizarStatus);
+router.patch ('/whatsapp/conversas/:id/transferir', autenticar, exigirRole('GESTOR'), whatsappCtrl.transferirConversa);
 router.patch ('/whatsapp/conversas/:id',          autenticar, whatsappCtrl.atualizarConversa);
 
 // ── Proxy seguro de mídia — serve áudio/imagem sem expor EVOLUTION_API_KEY ──

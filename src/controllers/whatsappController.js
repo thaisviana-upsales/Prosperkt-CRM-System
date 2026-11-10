@@ -1649,7 +1649,7 @@ async function enviarMensagem(req, res) {
 // ─────────────────────────────────────────────────────────────────────────────
 async function criarOuAbrirConversa(req, res) {
   try {
-    const { sb, isSupa } = getProvider();
+    const { sb, isSupa, sqlite } = getProvider();
     const { telefone, lead_id, nome_contato, vendedor_id } = req.body;
     if (!telefone) return res.status(400).json({ sucesso: false, erro: 'Telefone obrigatório.' });
 
@@ -1659,24 +1659,188 @@ async function criarOuAbrirConversa(req, res) {
 
     let responsavelId = vendedor_id || null;
     let nomeContato = nome_contato || null;
+    let leadObj = null;
 
     if (lead_id) {
       if (isSupa) {
         const { data: ld } = await sb.from('leads').select('nome,responsavel_id').eq('id', lead_id).single();
         if (ld) {
+          leadObj = ld;
           if (!responsavelId) responsavelId = ld.responsavel_id;
           if (!nomeContato)   nomeContato   = ld.nome;
         }
       } else {
-        const ld = getDb().prepare('SELECT nome,responsavel_id FROM leads WHERE id = ?').get(lead_id);
+        const ld = sqlite ? sqlite.prepare('SELECT nome,responsavel_id FROM leads WHERE id = ?').get(lead_id) : null;
         if (ld) {
+          leadObj = ld;
           if (!responsavelId) responsavelId = ld.responsavel_id;
           if (!nomeContato)   nomeContato   = ld.nome;
         }
       }
     }
-    if (!responsavelId) responsavelId = req.usuario.id;
 
+    // 1. Busca se já existe conversa ativa para esse telefone ou lead (B36)
+    let conversaExistente = null;
+    if (isSupa) {
+      if (lead_id) {
+        const { data: byLead } = await sb.from(CONVERSAS_TABLE)
+          .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,responsavel_id)')
+          .eq('lead_id', lead_id)
+          .neq('status', 'FECHADA')
+          .order('criado_em', { ascending: false })
+          .limit(1);
+        if (byLead?.[0]) conversaExistente = byLead[0];
+      }
+      if (!conversaExistente) {
+        const variantes = waLeadSvc.phoneVariants(tel);
+        for (const v of variantes) {
+          const { data: byTel } = await sb.from(CONVERSAS_TABLE)
+            .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,responsavel_id)')
+            .eq('telefone', v)
+            .neq('status', 'FECHADA')
+            .order('criado_em', { ascending: false })
+            .limit(1);
+          if (byTel?.[0]) {
+            conversaExistente = byTel[0];
+            break;
+          }
+        }
+      }
+    } else if (sqlite) {
+      if (lead_id) {
+        conversaExistente = sqlite.prepare(`
+          SELECT c.*, u.nome AS vendedor_nome, l.responsavel_id AS lead_responsavel_id
+          FROM ${CONVERSAS_TABLE} c
+          LEFT JOIN usuarios u ON c.vendedor_id = u.id
+          LEFT JOIN leads l ON c.lead_id = l.id
+          WHERE c.lead_id = ? AND c.status != 'FECHADA'
+          ORDER BY c.criado_em DESC LIMIT 1
+        `).get(lead_id);
+      }
+      if (!conversaExistente) {
+        const variantes = waLeadSvc.phoneVariants(tel);
+        for (const v of variantes) {
+          conversaExistente = sqlite.prepare(`
+            SELECT c.*, u.nome AS vendedor_nome, l.responsavel_id AS lead_responsavel_id
+            FROM ${CONVERSAS_TABLE} c
+            LEFT JOIN usuarios u ON c.vendedor_id = u.id
+            LEFT JOIN leads l ON c.lead_id = l.id
+            WHERE c.telefone = ? AND c.status != 'FECHADA'
+            ORDER BY c.criado_em DESC LIMIT 1
+          `).get(v);
+          if (conversaExistente) break;
+        }
+      }
+    }
+
+    // 2. Proteção de posse da conversa (B36)
+    if (conversaExistente) {
+      const vendedorAtualId = conversaExistente.vendedor_id;
+      const leadRespId = conversaExistente.leads?.responsavel_id || conversaExistente.lead_responsavel_id || leadObj?.responsavel_id;
+      const responsavelEfetivoId = vendedorAtualId || leadRespId;
+
+      const isDono = responsavelEfetivoId === req.usuario.id;
+      const isAdminOrGestor = req.usuario.role === 'SUPER_ADMIN' || req.usuario.role === 'GESTOR';
+
+      // Se pertence a outro responsável e o usuário logado é VENDEDOR comum:
+      // BLOQUEIA acesso e impede transferência não autorizada
+      if (responsavelEfetivoId && !isDono && !isAdminOrGestor) {
+        let nomeResponsavel = conversaExistente.usuarios?.nome || conversaExistente.vendedor_nome || 'outro responsável';
+        if ((!nomeResponsavel || nomeResponsavel === 'outro responsável') && isSupa && responsavelEfetivoId) {
+          const { data: uData } = await sb.from('usuarios').select('nome').eq('id', responsavelEfetivoId).single();
+          if (uData?.nome) nomeResponsavel = uData.nome;
+        }
+
+        console.warn('WHATSAPP_CONVERSA_ACESSO_NEGADO_OUTRO_RESPONSAVEL', {
+          conversaId: conversaExistente.id,
+          telefone: tel,
+          usuarioTentou: req.usuario.id,
+          usuarioRole: req.usuario.role,
+          responsavelAtualId: responsavelEfetivoId,
+          nomeResponsavel
+        });
+
+        req.log?.({
+          acao: 'WHATSAPP_TENTATIVA_ABRIR_CONVERSA_OUTRO_RESPONSAVEL',
+          entidade: 'conversas_whatsapp',
+          entidade_id: conversaExistente.id,
+          usuario_id: req.usuario.id,
+          detalhes: {
+            telefone: tel,
+            responsavel_atual_id: responsavelEfetivoId,
+            responsavel_atual_nome: nomeResponsavel
+          }
+        });
+
+        return res.status(403).json({
+          sucesso: false,
+          bloqueado_outro_responsavel: true,
+          conversa_id: conversaExistente.id,
+          responsavel_id: responsavelEfetivoId,
+          responsavel_nome: nomeResponsavel,
+          erro: `Este contato já pertence a outro responsável (${nomeResponsavel}). Acesso negado e posse preservada.`
+        });
+      }
+
+      // Se é SUPER_ADMIN ou GESTOR: abre sem transferir a posse
+      if (responsavelEfetivoId && !isDono && isAdminOrGestor) {
+        console.log('WHATSAPP_CONVERSA_OPEN_AS_ADMIN', {
+          conversaId: conversaExistente.id,
+          telefone: tel,
+          adminId: req.usuario.id,
+          vendedorOriginal: vendedorAtualId
+        });
+
+        req.log?.({
+          acao: 'WHATSAPP_OPEN_CONVERSA_SUPER_ADMIN',
+          entidade: 'conversas_whatsapp',
+          entidade_id: conversaExistente.id,
+          usuario_id: req.usuario.id,
+          detalhes: {
+            telefone: tel,
+            vendedor_original: vendedorAtualId
+          }
+        });
+
+        const conv = await waLeadSvc.vincularOuCriarConversaParaLead({
+          leadId: lead_id,
+          telefone: tel,
+          nome: nomeContato,
+          vendedorId: vendedorAtualId, // Mantém intacto o vendedor original
+          permitirTransferencia: false,
+          contexto: 'LEAD_OPEN'
+        });
+
+        return res.json({ sucesso: true, dados: conv || conversaExistente });
+      }
+
+      // Se a conversa não tem nenhum responsável atribuído, o usuário pode assumir
+      if (!responsavelEfetivoId) {
+        const conv = await waLeadSvc.vincularOuCriarConversaParaLead({
+          leadId: lead_id,
+          telefone: tel,
+          nome: nomeContato,
+          vendedorId: req.usuario.id,
+          permitirTransferencia: true,
+          contexto: 'LEAD_OPEN'
+        });
+        return res.json({ sucesso: true, dados: conv || conversaExistente });
+      }
+
+      // Se é o próprio dono da conversa, abre normalmente
+      const conv = await waLeadSvc.vincularOuCriarConversaParaLead({
+        leadId: lead_id,
+        telefone: tel,
+        nome: nomeContato,
+        vendedorId: req.usuario.id,
+        permitirTransferencia: false,
+        contexto: 'LEAD_OPEN'
+      });
+      return res.json({ sucesso: true, dados: conv || conversaExistente });
+    }
+
+    // 3. Se não existe conversa anterior, cria nova vinculada ao usuário logado
+    if (!responsavelId) responsavelId = req.usuario.id;
     console.log('WHATSAPP_CONVERSA_RESOLVE_START', { tel, lead_id, nomeContato, responsavelId });
 
     const conversa = await waLeadSvc.vincularOuCriarConversaParaLead({
@@ -1878,7 +2042,15 @@ async function buscarConversa(req, res) {
         .eq('id', req.params.id).single();
       if (error || !data) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
 
-      if (req.usuario.role === 'VENDEDOR' && data.leads?.responsavel_id === req.usuario.id && data.vendedor_id !== req.usuario.id) {
+      const ehDonoDaConversa = data.vendedor_id === req.usuario.id;
+      const ehDonoDoLead     = data.leads?.responsavel_id === req.usuario.id;
+
+      // B36: Vendedor comum só pode visualizar conversas próprias ou de seus leads
+      if (req.usuario.role === 'VENDEDOR' && !ehDonoDaConversa && !ehDonoDoLead) {
+        return res.status(403).json({ sucesso: false, erro: 'Acesso negado a esta conversa.' });
+      }
+
+      if (req.usuario.role === 'VENDEDOR' && ehDonoDoLead && !ehDonoDaConversa) {
         await sb.from(CONVERSAS_TABLE).update({ vendedor_id: req.usuario.id, atualizado_em: new Date().toISOString() }).eq('id', data.id);
         data.vendedor_id = req.usuario.id;
       }
@@ -1888,7 +2060,16 @@ async function buscarConversa(req, res) {
     const db = getDb();
     const conversa = db.prepare(`SELECT c.*, u.nome AS vendedor_nome, l.nome AS lead_nome, l.empresa AS lead_empresa, l.responsavel_id AS lead_responsavel_id FROM conversas_whatsapp c LEFT JOIN usuarios u ON c.vendedor_id = u.id LEFT JOIN leads l ON c.lead_id = l.id WHERE c.id = ?`).get(req.params.id);
     if (!conversa) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
-    if (req.usuario.role === 'VENDEDOR' && conversa.lead_responsavel_id === req.usuario.id && conversa.vendedor_id !== req.usuario.id) {
+
+    const ehDonoDaConversa = conversa.vendedor_id === req.usuario.id;
+    const ehDonoDoLead     = conversa.lead_responsavel_id === req.usuario.id;
+
+    // B36: Vendedor comum só pode visualizar conversas próprias ou de seus leads
+    if (req.usuario.role === 'VENDEDOR' && !ehDonoDaConversa && !ehDonoDoLead) {
+      return res.status(403).json({ sucesso: false, erro: 'Acesso negado a esta conversa.' });
+    }
+
+    if (req.usuario.role === 'VENDEDOR' && ehDonoDoLead && !ehDonoDaConversa) {
       db.prepare('UPDATE conversas_whatsapp SET vendedor_id = ?, atualizado_em = ? WHERE id = ?').run(req.usuario.id, new Date().toISOString(), conversa.id);
       conversa.vendedor_id = req.usuario.id;
     }
@@ -4746,6 +4927,7 @@ module.exports = {
   // debug inbound
   debugLastInbound,
   atualizarConversa,
+  transferirConversa,
 };
 
 // ─── PATCH /api/whatsapp/conversas/:id ────────────────────────────────────────
@@ -4794,5 +4976,112 @@ async function debugLastInbound(req, res) {
     });
   } catch(e) {
     return res.status(500).json({ sucesso: false, erro: e.message });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PATCH /api/whatsapp/conversas/:id/transferir
+// Transfere a responsabilidade de uma conversa WhatsApp para outro vendedor (B36)
+// Restrito a GESTOR e SUPER_ADMIN
+// ─────────────────────────────────────────────────────────────────────────────
+async function transferirConversa(req, res) {
+  try {
+    const { sb, isSupa, sqlite } = getProvider();
+    const { id } = req.params;
+    const { novo_vendedor_id, motivo } = req.body;
+
+    if (req.usuario.role === 'VENDEDOR') {
+      return res.status(403).json({ sucesso: false, erro: 'Acesso negado. Apenas Gestor ou Super Admin podem transferir conversas.' });
+    }
+
+    if (!novo_vendedor_id) {
+      return res.status(400).json({ sucesso: false, erro: 'novo_vendedor_id é obrigatório.' });
+    }
+
+    let novoVendedorNome = null;
+    if (isSupa) {
+      const { data: u, error: errU } = await sb.from('usuarios').select('id,nome,ativo').eq('id', novo_vendedor_id).single();
+      if (errU || !u) return res.status(404).json({ sucesso: false, erro: 'Novo vendedor não encontrado.' });
+      if (u.ativo === false) return res.status(400).json({ sucesso: false, erro: 'Não é possível transferir para um vendedor inativo.' });
+      novoVendedorNome = u.nome;
+    } else if (sqlite) {
+      const u = sqlite.prepare('SELECT id,nome,ativo FROM usuarios WHERE id = ?').get(novo_vendedor_id);
+      if (!u) return res.status(404).json({ sucesso: false, erro: 'Novo vendedor não encontrado.' });
+      if (u.ativo === 0 || u.ativo === false) return res.status(400).json({ sucesso: false, erro: 'Não é possível transferir para um vendedor inativo.' });
+      novoVendedorNome = u.nome;
+    }
+
+    const agora = new Date().toISOString();
+
+    if (isSupa) {
+      const { data: convAtual, error: errC } = await sb.from(CONVERSAS_TABLE).select('*').eq('id', id).single();
+      if (errC || !convAtual) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
+
+      const vendedorAnterior = convAtual.vendedor_id;
+
+      const { data: updConv, error: errUpd } = await sb.from(CONVERSAS_TABLE)
+        .update({ vendedor_id: novo_vendedor_id, atualizado_em: agora })
+        .eq('id', id)
+        .select('*, usuarios!conversas_whatsapp_vendedor_id_fkey(nome), leads!conversas_whatsapp_lead_id_fkey(nome,empresa,responsavel_id)')
+        .single();
+      if (errUpd) throw errUpd;
+
+      // Se a conversa possui lead vinculado, sincroniza o responsavel_id do lead
+      if (convAtual.lead_id) {
+        try {
+          await sb.from('leads').update({ responsavel_id: novo_vendedor_id, atualizado_em: agora }).eq('id', convAtual.lead_id);
+          console.log('TRANSFERIR_CONVERSA_SYNC_LEAD_OK', { lead_id: convAtual.lead_id, novo_vendedor_id });
+        } catch (eL) {
+          console.warn('[WA] transferirConversa sync lead warn:', eL.message);
+        }
+      }
+
+      req.log?.({
+        acao: 'WHATSAPP_TRANSFERIR_CONVERSA',
+        entidade: 'conversas_whatsapp',
+        entidade_id: id,
+        antes: { vendedor_id: vendedorAnterior },
+        depois: { vendedor_id: novo_vendedor_id, motivo }
+      });
+
+      console.log('WHATSAPP_CONVERSA_TRANSFERRED', {
+        conversaId: id,
+        de: vendedorAnterior,
+        para: novo_vendedor_id,
+        transferidoPor: req.usuario.id
+      });
+
+      return res.json({
+        sucesso: true,
+        dados: {
+          ...updConv,
+          vendedor_nome: novoVendedorNome
+        }
+      });
+    }
+
+    if (sqlite) {
+      const convAtual = sqlite.prepare(`SELECT * FROM ${CONVERSAS_TABLE} WHERE id = ?`).get(id);
+      if (!convAtual) return res.status(404).json({ sucesso: false, erro: 'Conversa não encontrada.' });
+
+      const vendedorAnterior = convAtual.vendedor_id;
+      sqlite.prepare(`UPDATE ${CONVERSAS_TABLE} SET vendedor_id = ?, atualizado_em = ? WHERE id = ?`).run(novo_vendedor_id, agora, id);
+
+      if (convAtual.lead_id) {
+        sqlite.prepare('UPDATE leads SET responsavel_id = ?, atualizado_em = ? WHERE id = ?').run(novo_vendedor_id, agora, convAtual.lead_id);
+      }
+
+      return res.json({
+        sucesso: true,
+        dados: {
+          ...convAtual,
+          vendedor_id: novo_vendedor_id,
+          vendedor_nome: novoVendedorNome
+        }
+      });
+    }
+  } catch (e) {
+    console.error('[WA] transferirConversa:', e);
+    return res.status(500).json({ sucesso: false, erro: 'Erro ao transferir conversa.', detalhe: e.message });
   }
 }

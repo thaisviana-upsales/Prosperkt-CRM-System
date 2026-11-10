@@ -107,7 +107,7 @@ function phoneVariants(tel) {
  * @param {'IMPORT'|'LEAD_OPEN'} [params.contexto='IMPORT']
  * @returns {Promise<Object|null>}
  */
-async function vincularOuCriarConversaParaLead({ leadId, telefone, nome, vendedorId, contexto = 'IMPORT' }) {
+async function vincularOuCriarConversaParaLead({ leadId, telefone, nome, vendedorId, contexto = 'IMPORT', permitirTransferencia = false }) {
   const { sb, isSupa, sqlite } = getProvider();
 
   const isImport = contexto === 'IMPORT';
@@ -171,11 +171,14 @@ async function vincularOuCriarConversaParaLead({ leadId, telefone, nome, vendedo
       }
     }
 
-    // 4. Se encontrou conversa existente: atualiza vínculos
+    // 4. Se encontrou conversa existente: atualiza vínculos sem transferir posse indevidamente (B36)
     if (conversa) {
       const upd = {};
       if (leadId && !conversa.lead_id) upd.lead_id = leadId;
-      if (vendedorId && conversa.vendedor_id !== vendedorId) upd.vendedor_id = vendedorId;
+      // B36: Só atribui vendedor_id se a conversa ainda não tiver nenhum, ou se transferência foi explicitamente autorizada
+      if (vendedorId && (!conversa.vendedor_id || (permitirTransferencia && conversa.vendedor_id !== vendedorId))) {
+        upd.vendedor_id = vendedorId;
+      }
       if (nome && !conversa.nome_contato) upd.nome_contato = nome;
 
       if (Object.keys(upd).length > 0) {
@@ -262,7 +265,8 @@ async function vincularOuCriarConversaParaLead({ leadId, telefone, nome, vendedo
 
     if (conversa) {
       const updLead = leadId && !conversa.lead_id ? leadId : conversa.lead_id;
-      const updVend = vendedorId || conversa.vendedor_id;
+      // B36: Só atribui vendedor_id se a conversa ainda não tiver nenhum, ou se transferência foi explicitamente autorizada
+      const updVend = (!conversa.vendedor_id || permitirTransferencia) ? (vendedorId || conversa.vendedor_id) : conversa.vendedor_id;
       const updNome = nome || conversa.nome_contato;
 
       db.prepare(`UPDATE ${CONVERSAS_TABLE} SET lead_id = ?, vendedor_id = ?, nome_contato = ?, atualizado_em = ? WHERE id = ?`)
